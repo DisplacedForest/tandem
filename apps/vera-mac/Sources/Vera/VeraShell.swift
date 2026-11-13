@@ -409,7 +409,7 @@ struct VeraSidebar: View {
         } label: {
             railGlyph(.more, selected: moreSelected)
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
         .help("More").accessibilityLabel("More destinations")
     }
 
@@ -543,7 +543,7 @@ struct SidebarProjectRow: View {
             } label: {
                 InterfaceIconView(icon: .more, size: InterfaceIconSize.small).frame(width: 22, height: 28)
             }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             .opacity(hovering || revealsControls || focused != nil ? 1 : 0)
             .focused($focused, equals: .options)
             .help("Project options").accessibilityLabel("Options for \(project.name)")
