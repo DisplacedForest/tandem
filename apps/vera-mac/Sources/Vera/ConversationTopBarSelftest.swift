@@ -174,6 +174,20 @@ extension SelfTest {
                     "Rename and instructions act on the chat that opened them after the selection moves")
         try require(captured?.resolve(in: [second]) == nil, "A captured chat that was deleted resolves to nothing")
         try require(ConversationTopBarTarget(nil) == nil, "No chat, nothing to act on")
+        let live = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: nil)
+        live.conversations = [first, second]
+        live.selectedID = first.id
+        guard let opened = ConversationTopBarTarget(live.selected) else { throw SelfTestFailure("The selected chat can be captured") }
+        live.selectedID = second.id
+        opened.rename(to: "Raised bed plan", in: live)
+        try require(live.conversations.first { $0.id == first.id }?.title == "Raised bed plan"
+                    && live.conversations.first { $0.id == second.id }?.title == second.title && live.selected?.id == second.id,
+                    "Rename confirmed after the selection moved renames the chat it was opened on and leaves the selected one alone")
+        guard let subject = opened.instructionsSubject(in: live) else { throw SelfTestFailure("The captured chat still resolves") }
+        live.setConversationInstructions(subject.id, "Keep it short.")
+        try require(subject.id == first.id && live.conversations.first { $0.id == first.id }?.instructions == "Keep it short."
+                    && live.conversations.first { $0.id == second.id }?.instructions == nil,
+                    "Instructions saved after the selection moved go to the chat they were opened on")
 
         try require(ConversationTopBarModel.chatTitle(ConversationTopBarShot.titledChat(), companionThread: false) == ConversationTopBarShot.chatTitle,
                     "A titled chat shows its title")

@@ -86,6 +86,14 @@ struct ConversationTopBarTarget: Hashable, Identifiable, Sendable {
     func resolve(in conversations: [Conversation]) -> Conversation? {
         conversations.first { $0.id == id }
     }
+
+    @MainActor func rename(to title: String, in store: ChatStore) {
+        store.renameConversation(id, title: title)
+    }
+
+    @MainActor func instructionsSubject(in store: ChatStore) -> Conversation? {
+        resolve(in: store.conversations)
+    }
 }
 
 struct ConversationSidebarControl {
@@ -231,11 +239,11 @@ struct ConversationTopBar: View {
         }
         .alert("Rename chat", isPresented: $renaming, presenting: renameTarget) { target in
             TextField("Title", text: $renameText)
-            Button("Rename") { store.renameConversation(target.id, title: renameText) }
+            Button("Rename") { target.rename(to: renameText, in: store) }
             Button("Cancel", role: .cancel) {}
         }
         .sheet(item: $instructionsTarget) { target in
-            if let captured = target.resolve(in: store.conversations) { ConversationInstructionsEditor(conversation: captured) }
+            if let captured = target.instructionsSubject(in: store) { ConversationInstructionsEditor(conversation: captured) }
         }
         .sheet(isPresented: $showingCompanionSettings) {
             DotSettingsView().environmentObject(store).environmentObject(config)
