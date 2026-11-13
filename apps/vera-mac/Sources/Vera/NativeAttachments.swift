@@ -50,13 +50,12 @@ final class NativeAttachmentStore: Sendable {
     private let loadability = LoadabilityCache()
     let directory: URL
 
-    static var standardDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Vera", isDirectory: true)
-            .appendingPathComponent("attachments", isDirectory: true)
-    }
+    static let supportFolderName = "Vera"
+
+    static var standardDirectory: URL { AppLocations.current.attachments }
 
     init(directory: URL = NativeAttachmentStore.standardDirectory) {
+        AppLocations.refuseRealData(directory)
         self.directory = directory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
@@ -131,16 +130,27 @@ final class NativeAttachmentStore: Sendable {
         return entries.filter { !referenced.contains($0.lastPathComponent) }
     }
 
-    func sweepOrphans(keeping referenced: Set<String>) {
-        removeOrphans(orphanCandidates(keeping: referenced))
+    func sweepOrphans(keeping referenced: Set<String>, permit: StartupCleanup) {
+        removeOrphans(orphanCandidates(keeping: referenced), permit: permit)
     }
 
-    func removeOrphans(_ candidates: [URL]) {
+    func removeOrphans(_ candidates: [URL], permit: StartupCleanup) {
         let root = directory.standardizedFileURL.path
-        for entry in candidates
-        where entry.deletingLastPathComponent().standardizedFileURL.path == root {
+        guard permit.allows(folder: directory), !Self.isSymbolicLink(directory.path) else { return }
+        for entry in candidates where entry.deletingLastPathComponent().standardizedFileURL.path == root {
+            guard Self.isRegularFile(entry.path) else { continue }
             try? FileManager.default.removeItem(at: entry)
         }
+    }
+
+    static func isRegularFile(_ path: String) -> Bool {
+        let type = (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType
+        return type == .typeRegular
+    }
+
+    static func isSymbolicLink(_ path: String) -> Bool {
+        let type = (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType
+        return type == .typeSymbolicLink
     }
 
     static func sniff(_ data: Data) -> (ext: String, mime: String)? {

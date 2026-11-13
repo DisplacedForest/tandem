@@ -641,11 +641,22 @@ extension SelfTest {
     }
 
     private static func taskScheduleCheckIns() async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("vera-check-ins-parent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        try await taskScheduleCheckIns(within: parent)
+        try NativeTaskFixture.require(try FileManager.default.contentsOfDirectory(atPath: parent.path).isEmpty,
+                                      "The scheduled check-in test leaves nothing behind in its scratch folder")
+    }
+
+    private static func taskScheduleCheckIns(within parent: URL) async throws {
         let require = NativeTaskFixture.require
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let directory = parent.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let url = directory.appendingPathComponent("chat.sqlite")
+        let artifacts = directory.appendingPathComponent("artifacts", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let repository = try LocalChatRepository(url: url)
+        let repository = try LocalChatRepository(url: url, artifactDirectory: artifacts,
+                                                 projectsDirectory: directory.appendingPathComponent("projects", isDirectory: true))
         let counter = NativeTaskEngineCounter()
         let harness = try NativeTaskEngineHarness.make(repository: repository, counter: counter) { job in
             if job.phase == "plan", await counter.count("generate:plan") <= 2 { throw NativeTaskGenerationFailure(code: "provider_quota") }
@@ -670,7 +681,7 @@ extension SelfTest {
         let before = try repository.messages(conversationID: conversationID).count
 
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativeAssistantName: "Sol",
-                              artifactPersistenceEnabled: false)
+                              attachmentStore: NativeAttachmentStore(directory: artifacts), artifactPersistenceEnabled: false)
         store.nativeScheduleStore = scheduleStore
         store.reloadSchedules()
         try require(store.waitingScheduledWorkCount == 1, "The store sees one waiting run")

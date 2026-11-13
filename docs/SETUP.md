@@ -37,7 +37,7 @@ Remote URL and Off unregister the local engine and remove its login job. They pr
 
 An engine update verifies its download and stages the executable before stopping the current version. It retains the previous executable and launch settings until the new version answers its health check. Failed starts restore that previous version. An interrupted activation leaves a recovery record so reopening Tandem in Local mode restores the previous settings before trying another update. If recovery fails, Tandem keeps the recovery files and reports the failure. Binary rollback does not reverse changes an engine has already made to its data.
 
-An explicit `VERA_CONFIG_DIR` also relocates engine binaries, data, logs and its job file, using a separate launchd identity. Its job file stays under that root and is started explicitly by the app. This isolates engine storage, not Keychain credentials or every other app service.
+With `VERA_CONFIG_DIR` set, the app keeps what it stores inside that folder: its database and `config.json`, the engine's binaries, data, logs and job file (under a separate launchd identity, started explicitly by the app), and a `data` folder that holds attachments, project files, the assistant's files and memory check reports. Nothing in the default locations, `~/.vera` and the app's Application Support folder, is read, written or removed. The setting doesn't separate Keychain entries or app preferences, so a run with it still uses the same saved credentials and preferences as a normal run.
 
 ### Run the engine without Docker (macOS arm64)
 
@@ -395,7 +395,7 @@ The **Library** destination in the rail lists everything the app produces: docum
 
 All artifacts live in one store in the app's local database next to the conversations. File bytes, such as images and document files, are kept in the app's attachments directory under Application Support, so artifacts survive a relaunch. The app does not remove files from the attachments directory when it starts.
 
-The first launch after the upgrade imports the earlier canvas library, `artifacts.json` in the app's Application Support folder, as canvas artifacts and renames the original to `artifacts-migrated.json`, which stays as a backup. The import runs once. Editing a canvas piece's source in the side panel is no longer saved, so revise it from chat.
+The first launch after the upgrade imports the earlier canvas library, `artifacts.json` in the app's Application Support folder, as canvas artifacts and renames the original to `artifacts-migrated.json`, which stays as a backup. If that backup already exists, the original gets the next free numbered name, such as `artifacts-migrated-2.json`, and the older backup is kept. The import never runs for a database created in that launch. The import runs once. Editing a canvas piece's source in the side panel is no longer saved, so revise it from chat.
 
 Deleting a conversation that has artifacts asks whether to keep them or delete them too. Kept artifacts remain in Library, still named after the conversation they came from, and no longer offer Open in conversation.
 

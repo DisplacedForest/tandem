@@ -281,7 +281,7 @@ final class ChatStore: ObservableObject {
          capabilityDeclarations: [NativeToolDeclaration] = [],
          pulseFeed: (any PulseFeedProviding)? = nil,
          attachmentStore: NativeAttachmentStore = NativeAttachmentStore(),
-         sweepOrphanedAttachments: Bool = false,
+         startupCleanup: StartupCleanup? = nil,
          nativeTaskConfiguration: NativeTaskConfiguration? = nil,
          nativeTaskClient: NativeTaskClient? = nil,
          nativeResearchOptions: NativeTaskResearchOptions = .standard,
@@ -358,8 +358,10 @@ final class ChatStore: ObservableObject {
         selectedID = conversations.first?.id
         prepareRuleRecords()
         loadArtifacts()
-        if artifactPersistenceEnabled, let artifactRepository,
-           (repository as? LocalChatRepository)?.database.path == LocalChatRepository.defaultURL.path {
+        if artifactPersistenceEnabled, let artifactRepository, let local = repository as? LocalChatRepository,
+           local.database.path == LocalChatRepository.defaultURL.path,
+           Self.legacyImportAllowed(databaseCreatedThisLaunch: local.createdThisLaunch, headless: AppLocations.isHeadless,
+                                    locations: AppLocations.current, index: Self.artifactsURL) {
             do { try Self.importLegacyCanvasLibrary(from: Self.artifactsURL, into: artifactRepository) }
             catch {
                 chatConfigurationError = "Earlier canvas pieces couldn't move into Artifacts: \(error.localizedDescription)"
@@ -372,12 +374,14 @@ final class ChatStore: ObservableObject {
             reconcileTaskArtifacts(conversationID: conversation.id)
         }
 
-        if sweepOrphanedAttachments, let repository,
-           let referenced = try? repository.referencedAttachmentFileNames() {
+        if let startupCleanup, let local = repository as? LocalChatRepository,
+           startupCleanup.allows(database: URL(fileURLWithPath: local.database.path)),
+           let referenced = try? local.strictReferencedAttachmentFileNames() {
             let store = attachmentStore
             let candidates = store.orphanCandidates(keeping: referenced)
-            if !candidates.isEmpty {
-                Task.detached(priority: .utility) { store.removeOrphans(candidates) }
+            let mentionsNothing = referenced.isEmpty
+            if !candidates.isEmpty && !mentionsNothing {
+                Task.detached(priority: .utility) { store.removeOrphans(candidates, permit: startupCleanup) }
             }
         }
     }
@@ -385,10 +389,10 @@ final class ChatStore: ObservableObject {
     // MARK: - Canvas / artifacts
 
     static var artifactsURL: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Vera", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("artifacts.json")
+        let index = AppLocations.current.artifactsIndex
+        AppLocations.refuseRealData(index)
+        try? FileManager.default.createDirectory(at: index.deletingLastPathComponent(), withIntermediateDirectories: true)
+        return index
     }
 
     func loadArtifacts() {

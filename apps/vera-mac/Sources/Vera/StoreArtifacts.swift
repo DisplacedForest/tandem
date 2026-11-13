@@ -242,6 +242,7 @@ extension ChatStore {
 
     @discardableResult
     static func importLegacyCanvasLibrary(from url: URL, into repository: any ArtifactRepository) throws -> Int {
+        AppLocations.refuseRealData(url)
         guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
         let artifacts = try JSONDecoder().decode([Artifact].self, from: Data(contentsOf: url))
         for artifact in artifacts {
@@ -249,10 +250,28 @@ extension ChatStore {
                 artifact, sourceKey: "canvas-library:\(artifact.id)", conversationID: nil, originTitle: nil,
                 messageID: nil), revising: nil)
         }
-        let backup = url.deletingLastPathComponent().appendingPathComponent("artifacts-migrated.json")
-        if FileManager.default.fileExists(atPath: backup.path) { try FileManager.default.removeItem(at: backup) }
-        try FileManager.default.moveItem(at: url, to: backup)
+        try FileManager.default.moveItem(at: url, to: freeLegacyBackup(in: url.deletingLastPathComponent()))
         return artifacts.count
+    }
+
+    static func freeLegacyBackup(in folder: URL) -> URL {
+        let first = folder.appendingPathComponent("artifacts-migrated.json")
+        guard AppLocations.fileType(first.path) != nil else { return first }
+        var number = 2
+        while AppLocations.fileType(folder.appendingPathComponent("artifacts-migrated-\(number).json").path) != nil { number += 1 }
+        return folder.appendingPathComponent("artifacts-migrated-\(number).json")
+    }
+
+    static func legacyImportAllowed(databaseCreatedThisLaunch: Bool, headless: Bool, locations: AppLocations, index: URL) -> Bool {
+        guard !databaseCreatedThisLaunch, !headless else { return false }
+        switch locations.situation {
+        case .plain:
+            return true
+        case .setting:
+            return AppLocations.isInside(index, locations.dataRoot, includingFolder: false)
+        case .headless:
+            return false
+        }
     }
 
     func requestDeleteConversation(_ id: String) {

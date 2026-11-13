@@ -48,10 +48,7 @@ protocol ProjectRepository: Sendable {
 extension LocalChatRepository: ProjectRepository {
     static let projectFileByteLimit = 50 * 1024 * 1024
 
-    static var standardProjectsDirectory: URL {
-        NativeAttachmentStore.standardDirectory.deletingLastPathComponent()
-            .appendingPathComponent("projects", isDirectory: true)
-    }
+    static var standardProjectsDirectory: URL { AppLocations.current.projects }
 
     static func migrateProjects(_ db: Database) throws {
         try db.execute(sql: """

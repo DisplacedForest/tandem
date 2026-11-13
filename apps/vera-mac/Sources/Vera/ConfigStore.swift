@@ -5,14 +5,7 @@ import SwiftUI
 /// Environment variables always win over file values at resolve time (the file is the editable
 /// layer underneath).
 enum ConfigFile {
-    /// `~/.vera/config.json`, or `$VERA_CONFIG_DIR/config.json` when set — the override
-    /// supports test sandboxes and non-standard layouts without touching the real config.
-    static var defaultURL: URL {
-        if let dir = ProcessInfo.processInfo.environment["VERA_CONFIG_DIR"], !dir.isEmpty {
-            return URL(fileURLWithPath: dir).appendingPathComponent("config.json")
-        }
-        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vera/config.json")
-    }
+    static var defaultURL: URL { AppLocations.current.configFile }
 
     static func read(at url: URL = defaultURL) -> [String: Any] {
         guard let data = try? Data(contentsOf: url),
