@@ -92,13 +92,13 @@ extension SelfTest {
         .close: IconGeometry(bytes: 196, hash: 8390395120732435969),
         .info: IconGeometry(bytes: 533, hash: 7047778675819240951),
         .warning: IconGeometry(bytes: 1021, hash: 6844464036137675511),
-        .connect: IconGeometry(bytes: 449, hash: 905839141765071649),
+        .connect: IconGeometry(bytes: 1370, hash: 16386569431639055677),
         .attach: IconGeometry(bytes: 444, hash: 14785805475343738788),
         .folder: IconGeometry(bytes: 2454, hash: 10116636564115222591),
         .research: IconGeometry(bytes: 1670, hash: 10270706448582035180),
         .document: IconGeometry(bytes: 2657, hash: 1140187331660743019),
         .image: IconGeometry(bytes: 1233, hash: 15084281777000784573),
-        .reminders: IconGeometry(bytes: 2536, hash: 15234358487964984702),
+        .reminders: IconGeometry(bytes: 914, hash: 13406093435795975882),
         .rules: IconGeometry(bytes: 810, hash: 4931027334619142328),
         .tool: IconGeometry(bytes: 438, hash: 17366720933809361075),
         .voice: IconGeometry(bytes: 519, hash: 13330080550912626834),
@@ -123,7 +123,7 @@ extension SelfTest {
         .trash: IconGeometry(bytes: 936, hash: 9336008833375516873),
         .link: IconGeometry(bytes: 1159, hash: 15524316508204179840),
         .copy: IconGeometry(bytes: 3221, hash: 146665332394702837),
-        .reply: IconGeometry(bytes: 921, hash: 14158836824330727499),
+        .reply: IconGeometry(bytes: 429, hash: 5208448157472655625),
         .selectText: IconGeometry(bytes: 1525, hash: 9022037510570118882),
         .addReaction: IconGeometry(bytes: 1328, hash: 11034650447187561382),
         .good: IconGeometry(bytes: 2455, hash: 12031135414672809284),
@@ -142,19 +142,8 @@ extension SelfTest {
         .checkboxOff: IconGeometry(bytes: 1825, hash: 5472626730620543207),
         .radioOn: IconGeometry(bytes: 226, hash: 17340246410702786588),
         .radioOff: IconGeometry(bytes: 224, hash: 10803538240702399099),
-    ]
-
-    static let candidateGeometry: [InterfaceIconCandidate: IconGeometry] = [
-        .connectStatus: IconGeometry(bytes: 1370, hash: 16386569431639055677),
-        .researchTelescope: IconGeometry(bytes: 769, hash: 4537033671586817260),
-        .remindersList: IconGeometry(bytes: 914, hash: 13406093435795975882),
-        .rulesShield: IconGeometry(bytes: 343, hash: 6387568544129092439),
-        .declinedHand: IconGeometry(bytes: 1183, hash: 5359133356539751217),
-        .refusedShield: IconGeometry(bytes: 958, hash: 3097556506170922716),
-        .timedOutStopwatch: IconGeometry(bytes: 776, hash: 6580490067836235028),
-        .fileAddedBlank: IconGeometry(bytes: 2496, hash: 869476924721325526),
-        .movedForward: IconGeometry(bytes: 326, hash: 14719823673505904522),
-        .replyLeft: IconGeometry(bytes: 429, hash: 5208448157472655625),
+        .pauseMark: IconGeometry(bytes: 349, hash: 17827940385213216514),
+        .tick: IconGeometry(bytes: 137, hash: 13913715157627685232),
     ]
 
     private static func checkIconFile(_ name: String, url: URL?, image: NSImage?, geometry: IconGeometry?) throws {
@@ -191,12 +180,8 @@ extension SelfTest {
     static func runConversationTopBar() throws {
         let require = NativeTaskFixture.require
 
-        let resources = InterfaceIcon.allCases.map(\.resource) + InterfaceIconCandidate.allCases.map(\.resource)
+        let resources = InterfaceIcon.allCases.map(\.resource)
         try require(Set(resources).count == resources.count, "Each icon meaning has its own file")
-        for candidate in InterfaceIconCandidate.allCases {
-            try checkIconFile(candidate.rawValue, url: candidate.url, image: candidate.image, geometry: candidateGeometry[candidate])
-            try require(candidate.resource.hasPrefix(candidate.role.resource + "-"), "The \(candidate.rawValue) icon sits beside the one it could replace")
-        }
         for icon in InterfaceIcon.allCases {
             try checkIconFile(icon.rawValue, url: icon.url, image: icon.image, geometry: iconGeometry[icon])
             let menu = InterfaceIconCache.shared.menuImage(icon.resource)
@@ -340,7 +325,7 @@ extension SelfTest {
             + [ConversationTopBarModel.moreTitle]
         try require(!every.contains { $0.localizedCaseInsensitiveContains("vera") || $0.contains("\u{2014}") },
                     "Menu wording stays plain")
-        print("  conversation top bar OK (\(InterfaceIcon.allCases.count) icons, \(InterfaceIconCandidate.allCases.count) alternates, menus, one sidebar control)")
+        print("  conversation top bar OK (\(InterfaceIcon.allCases.count) icons, menus, one sidebar control)")
     }
 }
 

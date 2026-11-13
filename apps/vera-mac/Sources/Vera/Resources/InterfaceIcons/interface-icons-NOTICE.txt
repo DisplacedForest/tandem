@@ -27,13 +27,13 @@ src/components/Icon/svg/Pin.tsx as interface-pin.svg
 src/components/Icon/svg/X.tsx as interface-close.svg
 src/components/Icon/svg/InfoCircle.tsx as interface-info.svg
 src/components/Icon/svg/Warning.tsx as interface-warning.svg
-src/components/Icon/svg/Connect.tsx as interface-connect.svg
+src/components/Icon/svg/Status.tsx as interface-connect.svg
 src/components/Icon/svg/Paperclip.tsx as interface-attach.svg
 src/components/Icon/svg/FolderDocumentsFinder.tsx as interface-folder.svg
 src/components/Icon/svg/DeepSearchTelescope.tsx as interface-research.svg
 src/components/Icon/svg/FileDocument.tsx as interface-document.svg
 src/components/Icon/svg/ImageSquare.tsx as interface-image.svg
-src/components/Icon/svg/NotebookCheck.tsx as interface-reminders.svg
+src/components/Icon/svg/Tasks.tsx as interface-reminders.svg
 src/components/Icon/svg/SettingsSlider.tsx as interface-rules.svg
 src/components/Icon/svg/Tools.tsx as interface-tool.svg
 src/components/Icon/svg/Voice4Bars.tsx as interface-voice.svg
@@ -58,7 +58,7 @@ src/components/Icon/svg/FolderPlus.tsx as interface-folder-added.svg
 src/components/Icon/svg/Trash.tsx as interface-trash.svg
 src/components/Icon/svg/Link.tsx as interface-link.svg
 src/components/Icon/svg/Copy.tsx as interface-copy.svg
-src/components/Icon/svg/Reply.tsx as interface-reply.svg
+src/components/Icon/svg/ArrowCurvedLeft.tsx as interface-reply.svg
 src/components/Icon/svg/SelectText.tsx as interface-select-text.svg
 src/components/Icon/svg/EmojiAdd.tsx as interface-add-reaction.svg
 src/components/Icon/svg/ThumbUp.tsx as interface-good.svg
@@ -77,16 +77,8 @@ src/components/Icon/svg/SquareCheckFilledCheckboxCheckedFilled.tsx as interface-
 src/components/Icon/svg/SquareCheckboxUnchecked.tsx as interface-checkbox-off.svg
 src/components/Icon/svg/RadioSelected.tsx as interface-radio-on.svg
 src/components/Icon/svg/EmptyCircle.tsx as interface-radio-off.svg
-src/components/Icon/svg/Status.tsx as interface-connect-status.svg
-src/components/Icon/svg/Telescope.tsx as interface-research-telescope.svg
-src/components/Icon/svg/Tasks.tsx as interface-reminders-list.svg
-src/components/Icon/svg/ShieldCheck.tsx as interface-rules-shield.svg
-src/components/Icon/svg/HandBack.tsx as interface-declined-hand.svg
-src/components/Icon/svg/ShieldLock.tsx as interface-refused-shield.svg
-src/components/Icon/svg/Stopwatch.tsx as interface-timed-out-stopwatch.svg
-src/components/Icon/svg/FileBlank.tsx as interface-file-added-blank.svg
-src/components/Icon/svg/Forward.tsx as interface-moved-forward.svg
-src/components/Icon/svg/ArrowCurvedLeft.tsx as interface-reply-left.svg
+src/components/Icon/svg/PauseSm.tsx as interface-pause-mark.svg
+src/components/Icon/svg/Check.tsx as interface-tick.svg
 
 MIT License
 

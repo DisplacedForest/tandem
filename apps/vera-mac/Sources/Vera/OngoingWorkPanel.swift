@@ -130,7 +130,7 @@ struct OngoingWorkGlyph: View {
             switch glyph {
             case .done:
                 Circle().fill(Theme.sage.opacity(0.18))
-                InterfaceIconView(icon: .done, size: InterfaceIconSize.regular).foregroundStyle(Theme.sage)
+                InterfaceIconView(icon: .tick, size: InterfaceIconSize.regular).foregroundStyle(Theme.sage)
             case .running:
                 Circle().stroke(Theme.cardStroke, lineWidth: 2).padding(4)
                 Circle().trim(from: 0, to: 0.3).stroke(Theme.sage, style: StrokeStyle(lineWidth: 2, lineCap: .round))
@@ -140,7 +140,7 @@ struct OngoingWorkGlyph: View {
                 InterfaceIconView(icon: .scheduled, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextPrimary)
             case .held:
                 Circle().fill(Theme.warmTextSecondary.opacity(0.16))
-                InterfaceIconView(icon: .paused, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextPrimary)
+                InterfaceIconView(icon: .pauseMark, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextPrimary)
             case .problem:
                 Circle().fill(Theme.accent.opacity(0.18))
                 InterfaceIconView(icon: .failed, size: InterfaceIconSize.regular).foregroundStyle(Theme.accent)

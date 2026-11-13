@@ -14,9 +14,6 @@ enum IconShot {
         case "icons-sheet":
             size = CGSize(width: 900, height: CGFloat((InterfaceIcon.allCases.count + 4) / 5) * 66 + 48)
             content = AnyView(sheet())
-        case "icons-conversation-candidates":
-            size = CGSize(width: 760, height: 760)
-            content = AnyView(candidates())
         case "icons-conversation-states":
             size = CGSize(width: 1180, height: 1320)
             content = AnyView(conversationStates())
@@ -74,58 +71,6 @@ enum IconShot {
         }
         .foregroundStyle(Theme.textPrimary)
         .padding(24)
-    }
-
-    static let candidateSizes: [CGFloat] = [16, 24]
-
-    private struct Choice {
-        let title: String
-        let current: String
-        let alternate: InterfaceIconCandidate
-    }
-
-    private static let choices = [
-        Choice(title: "Connect", current: "bolt.horizontal", alternate: .connectStatus),
-        Choice(title: "Research", current: "doc.text.magnifyingglass", alternate: .researchTelescope),
-        Choice(title: "Reminders", current: "checklist", alternate: .remindersList),
-        Choice(title: "Rules", current: "checklist", alternate: .rulesShield),
-        Choice(title: "Declined", current: "hand.raised.slash", alternate: .declinedHand),
-        Choice(title: "Not run", current: "nosign", alternate: .refusedShield),
-        Choice(title: "Timed out", current: "clock.badge.exclamationmark", alternate: .timedOutStopwatch),
-        Choice(title: "File created", current: "doc.badge.plus", alternate: .fileAddedBlank),
-        Choice(title: "File moved", current: "arrow.right.doc.on.clipboard", alternate: .movedForward),
-        Choice(title: "Reply", current: "arrowshape.turn.up.left", alternate: .replyLeft),
-    ]
-
-    private static func candidates() -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(choices, id: \.title) { choice in
-                HStack(alignment: .center, spacing: 28) {
-                    Text(choice.title).font(.system(size: 13, weight: .medium)).frame(width: 110, alignment: .leading)
-                    column("now") {
-                        ForEach(candidateSizes, id: \.self) { side in
-                            Image(systemName: choice.current).font(.system(size: side - 3)).frame(width: side, height: side)
-                        }
-                    }
-                    column("A") {
-                        ForEach(candidateSizes, id: \.self) { side in InterfaceIconView(icon: choice.alternate.role, size: side) }
-                    }
-                    column("B") {
-                        ForEach(candidateSizes, id: \.self) { side in InterfaceIconView(candidate: choice.alternate, size: side) }
-                    }
-                }
-            }
-        }
-        .foregroundStyle(Theme.textPrimary)
-        .padding(28)
-    }
-
-    private static func column<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 6) {
-            HStack(alignment: .center, spacing: 12) { content() }.frame(height: 30)
-            Text(title).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-        }
-        .frame(width: 110)
     }
 
     private static func conversationStates() -> some View {

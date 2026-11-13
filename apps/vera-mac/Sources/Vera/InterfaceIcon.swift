@@ -77,6 +77,8 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
     case checkboxOff
     case radioOn
     case radioOff
+    case tick
+    case pauseMark
 
     var resource: String {
         switch self {
@@ -155,6 +157,8 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
         case .checkboxOff: "interface-checkbox-off"
         case .radioOn: "interface-radio-on"
         case .radioOff: "interface-radio-off"
+        case .pauseMark: "interface-pause-mark"
+        case .tick: "interface-tick"
         }
     }
 
@@ -165,53 +169,6 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
     @MainActor var menuImage: Image? {
         InterfaceIconCache.shared.menuImage(resource).map { Image(nsImage: $0) }
     }
-}
-
-enum InterfaceIconCandidate: String, CaseIterable, Sendable {
-    case connectStatus
-    case researchTelescope
-    case remindersList
-    case rulesShield
-    case declinedHand
-    case refusedShield
-    case timedOutStopwatch
-    case fileAddedBlank
-    case movedForward
-    case replyLeft
-
-    var role: InterfaceIcon {
-        switch self {
-        case .connectStatus: .connect
-        case .researchTelescope: .research
-        case .remindersList: .reminders
-        case .rulesShield: .rules
-        case .declinedHand: .declined
-        case .refusedShield: .refused
-        case .timedOutStopwatch: .timedOut
-        case .fileAddedBlank: .fileAdded
-        case .movedForward: .moved
-        case .replyLeft: .reply
-        }
-    }
-
-    var resource: String {
-        switch self {
-        case .connectStatus: "interface-connect-status"
-        case .researchTelescope: "interface-research-telescope"
-        case .remindersList: "interface-reminders-list"
-        case .rulesShield: "interface-rules-shield"
-        case .declinedHand: "interface-declined-hand"
-        case .refusedShield: "interface-refused-shield"
-        case .timedOutStopwatch: "interface-timed-out-stopwatch"
-        case .fileAddedBlank: "interface-file-added-blank"
-        case .movedForward: "interface-moved-forward"
-        case .replyLeft: "interface-reply-left"
-        }
-    }
-
-    var url: URL? { VeraResources.url(resource, ext: "svg") }
-
-    @MainActor var image: NSImage? { InterfaceIconCache.shared.image(resource) }
 }
 
 enum InterfaceIconSize {
@@ -260,11 +217,6 @@ struct InterfaceIconView: View {
 
     init(icon: InterfaceIcon, size: CGFloat = InterfaceIconSize.regular) {
         resource = icon.resource
-        self.size = size
-    }
-
-    init(candidate: InterfaceIconCandidate, size: CGFloat = InterfaceIconSize.regular) {
-        resource = candidate.resource
         self.size = size
     }
 
