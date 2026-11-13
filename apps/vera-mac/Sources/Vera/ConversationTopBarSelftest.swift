@@ -146,6 +146,7 @@ extension SelfTest {
                     "Plugins shows the plugins icon")
         try require(SidebarDestination.chats.glyph == .home && SidebarDestination.library.glyph == AppSection.artifacts.glyph
                     && SidebarDestination.workflows.glyph == AppSection.agentic.glyph, "The rail and the screens agree on icons")
+        try require(SidebarRow.optionsLabel("Compost ratios") == "Options for Compost ratios", "A chat row's options button is named for its chat")
         try require(VeraResources.url("interface-icons-NOTICE", ext: "txt") != nil, "The icon notice ships inside the app")
 
         for section in AppSection.allCases {

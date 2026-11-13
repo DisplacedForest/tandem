@@ -115,6 +115,8 @@ struct SidebarRow: View {
     @State private var renameText = ""
     @State private var editingInstructions = false
 
+    static func optionsLabel(_ title: String) -> String { "Options for \(title)" }
+
     private func beginRename() {
         renameText = convo.title
         renaming = true
@@ -149,6 +151,7 @@ struct SidebarRow: View {
                         .foregroundStyle(Theme.textSecondary).frame(width: 22, height: 18).contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("Chat options").accessibilityLabel(Self.optionsLabel(convo.title))
             } else if convo.pinned {
                 InterfaceIconView(icon: .pin, size: InterfaceIconSize.mark)
                     .foregroundStyle(Theme.textSecondary)
