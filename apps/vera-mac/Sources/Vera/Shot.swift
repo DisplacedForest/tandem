@@ -42,6 +42,10 @@ enum Shot {
             WordsShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if view.hasPrefix("icons-") {
+            IconShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("card-") {
             CardShot.render(view: view, to: path, appearance: appearance)
             return

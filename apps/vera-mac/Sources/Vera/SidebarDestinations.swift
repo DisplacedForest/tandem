@@ -20,17 +20,17 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
         }
     }
 
-    var icon: String {
+    var glyph: InterfaceIcon {
         switch self {
-        case .chats: "house"
-        case .projects: AppSection.projects.icon
-        case .library: AppSection.artifacts.icon
-        case .scheduled: "clock"
-        case .integrations: AppSection.integrations.icon
-        case .pulse: AppSection.pulse.icon
-        case .workflows: "point.3.connected.trianglepath.dotted"
-        case .activity: "bolt"
-        case .memory: AppSection.memory.icon
+        case .chats: .home
+        case .projects: AppSection.projects.glyph
+        case .library: AppSection.artifacts.glyph
+        case .scheduled: AppSection.scheduled.glyph
+        case .integrations: AppSection.integrations.glyph
+        case .pulse: AppSection.pulse.glyph
+        case .workflows: AppSection.agentic.glyph
+        case .activity: .activity
+        case .memory: AppSection.memory.glyph
         }
     }
 
