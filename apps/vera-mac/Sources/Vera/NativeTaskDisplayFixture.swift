@@ -33,12 +33,13 @@ enum NativeTaskDisplayFixture {
         let queued = try snapshot(reference, id: remote, state: "queued")
         _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: queued)
         let bound = try repository.taskReference(id: reference.id)!
-        for (reason, phrase) in [("request_limit", "model request limit"), ("input_limit", "smaller research request"),
+        for (reason, phrase) in [("request_limit", "couldn't finish"), ("input_limit", "smaller research request"),
                                  ("request_conflict", "could not be resumed safely")] {
             let failed = try snapshot(reference, id: remote, state: "failed", checkpoint: ["failure_reason": reason])
             let restored = try JSONDecoder().decode(NativeTaskSnapshot.self, from: nativeTaskEncoded(failed))
             let display = try NativeTaskProjection.display(reference: bound, snapshot: restored)
-            try require(display.card.milestone.contains(phrase) && !display.card.milestone.contains(reason),
+            try require(display.card.milestone.contains(phrase) && !display.card.milestone.contains(reason)
+                        && !display.card.milestone.lowercased().contains("limit"),
                         "Persisted failure categories must become actionable plain language")
         }
         let unavailable = try snapshot(reference, id: remote, state: "blocked", checkpoint: ["native_unavailable": "hidden-binding"])

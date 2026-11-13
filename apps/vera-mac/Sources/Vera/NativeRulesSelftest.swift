@@ -182,6 +182,14 @@ extension SelfTest {
             throw NativeTaskFixture.Failure.assertion("The result serializes")
         }
         try require(cappedText.hasSuffix(NativeCommandRun.truncationMarker), "The model sees the truncation marker")
+        func slow(_ milliseconds: Int) -> String {
+            NativeCommandRun(id: "s", command: "make pdf", directory: root, outcome: .timedOut, durationMilliseconds: milliseconds).statusLine
+        }
+        try require(slow(120000).hasSuffix("Stopped after 2 minutes because the command took too long")
+                    && slow(45000).hasSuffix("Stopped after 45 seconds because the command took too long")
+                    && slow(1000).hasSuffix("Stopped after 1 second because the command took too long")
+                    && slow(60000).hasSuffix("Stopped after 1 minute because the command took too long"),
+                    "A command that took too long says how long in whole seconds or minutes")
 
         let started = Date()
         let timed = try await NativeCommandRunner.run(command: "sleep 30 & echo $!; wait", directory: directory, timeout: .seconds(1))

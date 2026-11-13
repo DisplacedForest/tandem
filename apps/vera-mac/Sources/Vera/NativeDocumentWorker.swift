@@ -322,7 +322,7 @@ enum NativeDocumentWorker {
         switch checkpoint.phase {
         case "outline":
             guard checkpoint.outlineAttempts < 3 else {
-                return try fail(&checkpoint, code: "input_limit", message: "The writing model could not plan this document within its limits. Start a new document with a shorter brief or fewer inputs.")
+                return try fail(&checkpoint, code: "input_limit", message: "The writing model could not fit a plan for this document. Start a new document with a shorter brief or fewer inputs.")
             }
             let prompt = messages(payload: payload, checkpoint: checkpoint, identity: identity)
             guard promptSize(prompt) <= promptBytes else {
@@ -344,7 +344,7 @@ enum NativeDocumentWorker {
                 checkpoint.outlineLimit = max(50, proposed)
                 checkpoint.outlineAttempts += 1
                 if checkpoint.outlineAttempts >= 3 {
-                    return try fail(&checkpoint, code: "input_limit", message: "The writing model could not plan this document within its limits. Start a new document with a shorter brief or fewer inputs.")
+                    return try fail(&checkpoint, code: "input_limit", message: "The writing model could not fit a plan for this document. Start a new document with a shorter brief or fewer inputs.")
                 }
                 return try pause(&checkpoint, "The planned outline is too long for the writing model. Retrying asks for a shorter plan.")
             }
