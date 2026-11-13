@@ -7,6 +7,8 @@ enum NativeTaskTools {
 
     static let description = "Start one piece of longer work only when the current user message explicitly asks for research or for a written document. Earlier conversation requests do not authorize more. Use worker_type research to investigate a question from web sources and deliver a cited report; use worker_type document to write a longer deliverable from the objective (the brief) and the deliverables (facts, notes or requirements to include). Give a short title for the result. Then reply with one short first-person sentence that says what you're going to do in the person's terms, for example: I'll compare quiet reading spaces at three public libraries using their official websites. End your turn there. The result arrives in this conversation by itself, so don't wait for it, don't say it's done, don't say where or how it will arrive, and don't describe it as started, queued or running somewhere else. Do not repeat its status on unrelated turns or expose internal identifiers."
 
+    static let missingArguments = "Provide the kind of work, an objective and deliverables."
+
     static let acknowledged = "Saved. Reply with one short first-person sentence saying what you'll do, then end your turn."
 
     static let generalWorkerType = "general"
@@ -53,7 +55,7 @@ enum NativeTaskTools {
                       case .string(let workerType) = arguments["worker_type"],
                       NativeResearchTaskRequest.chatWorkerTypes.contains(workerType) || (general != nil && workerType == generalWorkerType),
                       case .string(let objective) = arguments["objective"] else {
-                    throw NativeToolError.invalidArguments("Provide a worker type, an objective and deliverables.")
+                    throw NativeToolError.invalidArguments(missingArguments)
                 }
                 let request: NativeResearchTaskRequest
                 if workerType == generalWorkerType, let general {
@@ -75,7 +77,7 @@ enum NativeTaskTools {
                     }
                 } else {
                     guard case .array(let values) = arguments["deliverables"] else {
-                        throw NativeToolError.invalidArguments("Provide a worker type, an objective and deliverables.")
+                        throw NativeToolError.invalidArguments(missingArguments)
                     }
                     var title: String?
                     if let raw = arguments["title"] {

@@ -115,6 +115,6 @@ extension SelfTest {
         try require(IntegrationsText.scopes(["focused", "assistant"]).plain(name: "Ada") == "Focused chats, Ada", "The scope list names the companion")
         try require(IntegrationsText.scopes(["focused", "assistant"]).plain(name: nil) == "Focused chats, your companion", "The scope list reads plainly unnamed")
         try require(IntegrationsText.scopes(["assistant"]).plain(name: nil) == "Your companion", "A lone companion scope starts with a capital")
-        try require(IntegrationsText.scopes(["focused", "worker"]) == .literal("Focused chats, Background work"), "A list without the companion is finished text")
+        try require(IntegrationsText.scopes(["focused", "worker"]) == .literal("Focused chats, Research and documents"), "A list without the companion is finished text")
     }
 }

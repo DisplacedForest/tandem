@@ -59,12 +59,12 @@ struct CompanionOverviewModel: Equatable, Sendable {
 
     var isEmpty: Bool { activity.isEmpty && outputs.isEmpty && upcoming.isEmpty }
 
-    static let noTaskRules = "No task rules yet."
-    static let selectWorkHint = "Select a row in Recent activity to see which task these rules would cover."
+    static let noTaskRules = "No rules for this yet."
+    static let selectWorkHint = "Select a row in Recent activity to see what these rules would cover."
     static let noActivity = "Nothing yet. Research, documents and scheduled work show up here as they happen."
     static let noOutputs = "Documents and other results collect here."
     static let thisMac = "This Mac"
-    static let stopTitle = "Stop this task"
+    static let stopTitle = "Stop"
 
     static func pauseTitle(name: String, paused: Bool) -> String { paused ? "Resume \(name)" : "Pause \(name)" }
 

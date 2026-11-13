@@ -141,7 +141,7 @@ extension SelfTest {
         try require(paused.paused, "A paused companion reads as paused")
         try require(CompanionOverviewModel.pauseTitle(name: "Ada", paused: false) == "Pause Ada"
                     && CompanionOverviewModel.pauseTitle(name: "Ada", paused: true) == "Resume Ada"
-                    && CompanionOverviewModel.stopTitle == "Stop this task", "Global pause and per-task stop name different targets")
+                    && CompanionOverviewModel.stopTitle == "Stop", "Global pause and per-task stop name different targets")
 
         let options = [
             NativeDotServiceOption(id: "a", name: "Web search", detail: "", toolIDs: ["a"]),
