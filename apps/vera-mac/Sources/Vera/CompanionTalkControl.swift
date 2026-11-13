@@ -91,14 +91,8 @@ enum CompanionTalkTools {
     static let earlierLimit = 500
     static let extraSeconds: Double = 30
 
-    static func refusal(_ sentence: String, candidates: [CompanionTalkEntry] = []) -> NativeJSONValue {
-        var fields: [String: NativeJSONValue] = ["result": .string(sentence), "changed": .bool(false)]
-        if !candidates.isEmpty {
-            fields["candidates"] = .array(candidates.map { entry in
-                .object(["item": .string(entry.handle), "what": .string(entry.what), "state": .string(entry.phase.words)])
-            })
-        }
-        return .object(fields)
+    static func refusal(_ sentence: String) -> NativeJSONValue {
+        .object(["result": .string(sentence), "changed": .bool(false)])
     }
 
     static func text(_ arguments: [String: NativeJSONValue], _ key: String, limit: Int) -> String? {
@@ -108,17 +102,27 @@ enum CompanionTalkTools {
         return value
     }
 
+    static func unstoppable(_ phase: CompanionTalkPhase?) -> String {
+        switch phase {
+        case .stopping?: return CompanionTalkCopy.alreadyStopping
+        case .finished?: return CompanionTalkCopy.alreadyFinished
+        case .couldNotFinish?: return CompanionTalkCopy.alreadyEnded
+        default: return CompanionTalkCopy.notGoing
+        }
+    }
+
     static func firstInReply() -> Bool {
         let roundOne = NativeToolCallContext.round == 1
         let nothingBefore = NativeToolCallContext.otherToolRan == false
         return roundOne && nothingBefore
     }
 
-    static func typed(_ turn: NativeConversationTurn, _ words: NativeTypedWords) -> Bool {
+    static func typed(_ turn: NativeConversationTurn, _ words: NativeTypedWords, freshlyTyped: Bool) -> Bool {
+        let firstPerform = freshlyTyped
         let fromBox = turn.preferenceEligible == true
         let ownEvent = turn.companionEvent == nil
         let saidSomething = !words.said.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return fromBox && ownEvent && saidSomething
+        return firstPerform && fromBox && ownEvent && saidSomething
     }
 
     static func quoted(_ text: String) -> String {
@@ -176,7 +180,9 @@ enum CompanionTalkCopy {
     static let invalid = "Nothing was changed. Give one item code from the current list, and for an answer, one of its listed answers."
     static let notGoing = "Nothing was changed. That one isn't going right now, so there's nothing to stop. Say so plainly."
     static let alreadyStopping = "Nothing was changed. That one is already stopping. Say so plainly."
-    static let unclear = "Nothing was changed. It isn't clear which one the person means. Ask which one, using the plain descriptions below, and call nothing until they say."
+    static let unclear = "Nothing was changed. It isn't clear which one the person means. Ask which one, using the list you were given for this reply, and call nothing until they say."
+    static let alreadyFinished = "Nothing was changed. That one had already finished before the stop arrived. Say so plainly."
+    static let alreadyEnded = "Nothing was changed. That one had already ended before the stop arrived. Say so plainly."
     static let stopped = "Stopped."
     static let stopping = "It's stopping now and won't carry on."
     static let alreadyDone = " Before it stopped, these were already done, and they were not undone: see already_done. Say so plainly."
@@ -194,7 +200,7 @@ enum CompanionTalkCopy {
                           "request_conflict": "it couldn't be picked up again safely"]
 
     static let modelSentences: [String] = [couldNotStart, lead, tail, guide, approvalNote, otherWork, stopDescription, answerDescription, stopTitle, answerTitle,
-                                           notTyped, notFirst, notCurrent, unknownItem, invalid, notGoing, alreadyStopping, unclear, stopped,
+                                           notTyped, notFirst, notCurrent, unknownItem, invalid, notGoing, alreadyStopping, unclear, alreadyFinished, alreadyEnded, stopped,
                                            stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, notOffered, needsButton,
                                            answered, couldNotAnswer] + reasons.values.sorted() + CompanionTalkPhase.allCases.map(\.words)
 

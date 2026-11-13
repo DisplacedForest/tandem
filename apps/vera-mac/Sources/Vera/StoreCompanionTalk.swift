@@ -110,9 +110,9 @@ extension ChatStore {
         return text.isEmpty ? nil : text
     }
 
-    func companionTalkTools(_ control: CompanionTalkControl, turn: NativeConversationTurn, typed: NativeTypedWords,
+    func companionTalkTools(_ control: CompanionTalkControl, turn: NativeConversationTurn, typed: NativeTypedWords, freshlyTyped: Bool,
                             answerer: @escaping NativeInstructionAnswerer, timeout: Duration) -> [NativeToolDefinition] {
-        let typedHere = CompanionTalkTools.typed(turn, typed)
+        let typedHere = CompanionTalkTools.typed(turn, typed, freshlyTyped: freshlyTyped)
         let said = typed.said
         let earlier = companionTalkEarlier(turn)
         let ledger = CompanionTalkLedger()
@@ -140,15 +140,19 @@ extension ChatStore {
                 }
                 guard live.owned else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
                 guard let current = live.entry, current.canStop else {
-                    return CompanionTalkTools.refusal(live.entry?.phase == .stopping ? CompanionTalkCopy.alreadyStopping : CompanionTalkCopy.notGoing)
+                    return CompanionTalkTools.refusal(CompanionTalkTools.unstoppable(live.entry?.phase))
                 }
                 let about = CompanionTalkTools.about(stop: entry, among: entries, earlier: earlier)
                 let cleared = await NativeInstructionCheck.bounded(timeout) { await answerer(said, about) }
                 try Task.checkCancellation()
-                guard cleared else {
-                    return CompanionTalkTools.refusal(CompanionTalkCopy.unclear, candidates: entries.filter(\.canStop))
+                guard cleared else { return CompanionTalkTools.refusal(CompanionTalkCopy.unclear) }
+                let after = await MainActor.run { () -> (owned: Bool, entry: CompanionTalkEntry?) in
+                    (self.turnOwned(turn), self.companionTalkLive(entry.referenceID))
                 }
-                guard await MainActor.run(body: { self.turnOwned(turn) }) else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
+                guard after.owned else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
+                guard let still = after.entry, still.canStop else {
+                    return CompanionTalkTools.refusal(CompanionTalkTools.unstoppable(after.entry?.phase))
+                }
                 let outcome = await self.companionTalkStop(entry.referenceID)
                 if case .object(let fields) = outcome, fields["changed"] == .bool(true) { ledger.keep(key, outcome) }
                 return outcome
@@ -190,9 +194,7 @@ extension ChatStore {
                 let about = CompanionTalkTools.about(answer: picked.key, for: entry, among: entries, earlier: earlier)
                 let cleared = await NativeInstructionCheck.bounded(timeout) { await answerer(said, about) }
                 try Task.checkCancellation()
-                guard cleared else {
-                    return CompanionTalkTools.refusal(CompanionTalkCopy.unclear, candidates: entries.filter { $0.decisionID != nil })
-                }
+                guard cleared else { return CompanionTalkTools.refusal(CompanionTalkCopy.unclear) }
                 guard await MainActor.run(body: { self.turnOwned(turn) }) else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
                 let outcome = await self.companionTalkAnswer(entry.referenceID, choice: picked.value, decisionID: decisionID)
                 if case .object(let fields) = outcome, fields["changed"] == .bool(true) { ledger.keep(key, outcome) }
@@ -211,8 +213,14 @@ extension ChatStore {
             return CompanionTalkTools.refusal(CompanionTalkCopy.couldNotStop)
         }
         reloadNativeTaskReferences()
-        let snapshot = ((try? projection.taskProjection(id: id)) ?? nil)?.snapshot ?? reference.snapshot
+        let projected = ((try? projection.taskProjection(id: id)) ?? nil)?.snapshot
+        let seen = [projected, reference.snapshot].compactMap { $0 }
+        let snapshot = seen.first { $0.state.isTerminal } ?? projected ?? reference.snapshot
         let settled = snapshot?.state == .canceled
+        let endedFirst = snapshot.map { $0.state.isTerminal && $0.state != .canceled } ?? false
+        if endedFirst {
+            return CompanionTalkTools.refusal(snapshot?.state == .completed ? CompanionTalkCopy.alreadyFinished : CompanionTalkCopy.alreadyEnded)
+        }
         let effects = snapshot?.checkpoint.effects ?? []
         let done = effects.filter { $0.outcome.hasPrefix("done") }.map { CompanionTalkTools.clipped($0.title, CompanionTalkTools.noteLimit) }
         var unsure = effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title)

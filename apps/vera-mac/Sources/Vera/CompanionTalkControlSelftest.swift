@@ -148,11 +148,11 @@ enum CompanionTalkControlFixture {
         throw NativeTaskFixture.Failure.assertion(message)
     }
 
-    static func harness(name: String? = "Ada", reply: @escaping CompanionTalkTransport.Reply) async throws -> Harness {
-        let repository = try LocalChatRepository(inMemory: true)
-        let gate = NativeSessionGate()
-        let engine = NativeTaskLocalEngine(database: repository.database, pollSeconds: 0.05,
-                                           workers: { _ in ["companion": worker(gate: gate)] })
+    static func harness(name: String? = "Ada", reusing earlier: Harness? = nil, reply: @escaping CompanionTalkTransport.Reply) async throws -> Harness {
+        let repository = try earlier?.repository ?? LocalChatRepository(inMemory: true)
+        let gate = earlier?.gate ?? NativeSessionGate()
+        let engine = earlier?.engine ?? NativeTaskLocalEngine(database: repository.database, pollSeconds: 0.05,
+                                                              workers: { _ in ["companion": worker(gate: gate)] })
         let transport = CompanionTalkTransport(reply)
         let notes = NativeToolDefinition(id: CompanionAskedWorkFixture.notesToolID, name: "notes_lookup", title: "Read notes",
             description: "Read the shared notes page", parameters: .object(["type": .string("object")]),
@@ -163,10 +163,11 @@ enum CompanionTalkControlFixture {
             nativeAssistantName: name, nativeEnabledToolIDs: [CompanionAskedWorkFixture.notesToolID],
             nativeToolRegistry: NativeToolRegistry(definitions: [notes]),
             nativeTaskClient: engine.client, nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
-        let veto = CompanionTalkVeto()
+        let veto = earlier?.veto ?? CompanionTalkVeto()
         store.instructionCheck = { said, about in await veto.answer(said, about) }
+        if earlier != nil { store.conversations = try repository.listConversations() }
         store.loadDotProfile()
-        store.skipDotSetup()
+        if earlier == nil { store.skipDotSetup() }
         store.ensureVeraThread()
         store.stopNativeTaskRecovery()
         guard let projection = store.repository as? any NativeTaskProjectionRepository, let service = store.nativeTaskService else {
@@ -175,7 +176,7 @@ enum CompanionTalkControlFixture {
         store.nativeTaskTracker = NativeTaskTracker(repository: projection, client: engine.client, service: service, transport: engine.transport,
             configuredBase: { NativeTaskLocalEngine.identity.base }, onUpdate: { [weak store] updates in store?.applyNativeTaskUpdates(updates) })
         store.startNativeTaskRecovery()
-        try await engine.start()
+        if earlier == nil { try await engine.start() } else { store.resumeConversationTurns() }
         guard let threadID = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion conversation exists") }
         return Harness(store: store, repository: repository, engine: engine, transport: transport, threadID: threadID, gate: gate, veto: veto)
     }
@@ -290,13 +291,17 @@ enum CompanionTalkControlFixture {
         try await stopOne()
         try await unclear()
         try await notTyped()
+        try await retried()
+        try await relaunched()
+        try await finishedDuringCheck()
         try await notFirst()
         try await oldHandles()
         try await answers()
         try await staleQuestion()
         try await vetoFailure()
+        try await workerStopsBetweenRetries()
         try sweep()
-        print("  companion talk control OK (section, nothing listed, ordinary chat, stop one, unclear, not typed, replay, not first, old handles, answers, stale question, veto failure, hidden rows, copy)")
+        print("  companion talk control OK (section, nothing listed, ordinary chat, stop one, unclear, not typed, replay, retried, relaunched, finished during the check, not first, old handles, answers, stale question, veto failure, hidden rows, worker stop between retries, copy)")
     }
 
     static func section() async throws {
@@ -427,8 +432,29 @@ enum CompanionTalkControlFixture {
         let reply = try await send(harness, ask)
         let result = results(reply).first ?? ""
         try require(!(try stopRequested(harness, first)) && !(try stopRequested(harness, second)), "Nothing is stopped when the check says no")
-        try require(result.contains(CompanionTalkCopy.unclear) && result.contains("libraries") && result.contains("seed packets")
-                    && result.contains("\"changed\":false"), "The result carries both candidates: \(result)")
+        try require(result.contains(CompanionTalkCopy.unclear) && result.contains("\"changed\":false"), "The result is the plain sentence: \(result)")
+        guard let record = harness.transport.records.last(where: { $0.user == ask }) else { throw NativeTaskFixture.Failure.assertion("The request was sent") }
+        let otherHandle = handle(record.messages, "seed packets")
+        let ownHandle = handle(record.messages, "libraries")
+        let saved = try harness.repository.messages(conversationID: harness.threadID).first { $0.id == reply.id }
+        let savedText = (saved?.toolActivities ?? []).map { ($0.request) + ($0.result ?? "") }.joined()
+        try require(!savedText.contains(otherHandle) && !savedText.contains("seed packets") && !savedText.contains("libraries")
+                    && !savedText.contains(CompanionTalkPhase.going.words + "\""), "The saved row holds no other item, description or state: \(savedText)")
+        try require(savedText.contains(ownHandle), "Only the code the model passed is saved, as its own argument")
+        let next = "Stop the one you used before."
+        harness.veto.mode = .yes
+        harness.transport.reply = { user, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("That one isn't on my list.") }
+            if user == next { return CompanionAskedWorkTransport.hand([stop(ownHandle)]) }
+            return CompanionAskedWorkTransport.say("Fine.")
+        }
+        let later = try await send(harness, next)
+        guard let nextRecord = harness.transport.records.last(where: { $0.user == next }) else { throw NativeTaskFixture.Failure.assertion("The next request was sent") }
+        let replayed = nextRecord.messages.filter { $0.role != "system" }.map(\.content).joined()
+        try require(!replayed.contains(otherHandle) && !replayed.contains(CompanionTalkCopy.unclear + "\",\"candidates"),
+                    "The next request carries no other item's code")
+        try require((results(later).first ?? "").contains(CompanionTalkCopy.unknownItem) && !(try stopRequested(harness, first)),
+                    "A code from a saved earlier call resolves to nothing on a later turn")
     }
 
     static func notTyped() async throws {
@@ -454,18 +480,123 @@ enum CompanionTalkControlFixture {
         var event = turn
         event.companionEvent = NativeCompanionEvent(kind: .refinement, key: "check")
         try require(harness.store.companionTalkControl(for: event, supportsTools: true) == nil, "A companion event gets no list and no tools")
-        try require(!CompanionTalkTools.typed(replayed, harness.store.typedWords(for: replayed)) && !CompanionTalkTools.typed(event, harness.store.typedWords(for: event)),
-                    "A replayed turn and a companion event never count as typed")
+        try require(!CompanionTalkTools.typed(replayed, harness.store.typedWords(for: replayed), freshlyTyped: true)
+                    && !CompanionTalkTools.typed(event, harness.store.typedWords(for: event), freshlyTyped: true)
+                    && !CompanionTalkTools.typed(turn, harness.store.typedWords(for: turn), freshlyTyped: false),
+                    "A replayed turn, a companion event and a second perform never count as typed")
         guard let control = harness.store.companionTalkControl(for: replayed, supportsTools: true) else {
             throw NativeTaskFixture.Failure.assertion("The replayed turn still sees the list")
         }
-        let tools = harness.store.companionTalkTools(control, turn: replayed, typed: harness.store.typedWords(for: replayed),
+        let tools = harness.store.companionTalkTools(control, turn: replayed, typed: harness.store.typedWords(for: replayed), freshlyTyped: true,
                                                      answerer: { _, _ in true }, timeout: .seconds(1))
         let value = try await CompanionAskedWorkFixture.asLoop(0) {
             try await tools[0].execute(["item": .string(control.entries[0].handle)])
         }
         try require(((try? NativeToolLoop.serializedResult(value)) ?? "").contains(CompanionTalkCopy.notTyped) && !(try stopRequested(harness, work)),
                     "A replayed turn changes nothing")
+    }
+
+    static func retried() async throws {
+        let require = NativeTaskFixture.require
+        let ask = "Stop the library comparison now."
+        let tries = CompanionTalkBox(0)
+        let harness = try await harness { user, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("I couldn't.") }
+            guard user == ask else { return CompanionAskedWorkTransport.say("Fine.") }
+            tries.value += 1
+            if tries.value == 1 {
+                while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(20)) }
+                return CompanionAskedWorkTransport.say("")
+            }
+            return CompanionAskedWorkTransport.hand([stop(handle(messages, "libraries")), answer(handle(messages, "vent"), "Retry")])
+        }
+        defer { Task { await finish(harness) } }
+        let vent = try await start(harness, askRetry)
+        try await settle(harness, vent, .waiting)
+        let work = try await start(harness, libraries)
+        try await settle(harness, work, .going)
+        try require(harness.store.sendText(ask, conversationID: harness.threadID, fromComposer: true), "The message is accepted")
+        try await eventually("The first perform is held before any tool") { tries.value == 1 }
+        guard let turn = harness.store.conversationTurns.first(where: { $0.history.contains { $0.text == ask } && $0.state == .running }) else {
+            throw NativeTaskFixture.Failure.assertion("The held turn exists")
+        }
+        harness.store.stopAnswer(turn.assistantMessageID)
+        try await eventually("The reply stops") { harness.store.conversationTurns.first { $0.id == turn.id }?.state == .stopped }
+        harness.store.retryAnswer(turn.assistantMessageID)
+        try await eventually("The retried reply completes") {
+            let saved = (try? harness.repository.messages(conversationID: harness.threadID)) ?? []
+            return saved.first { $0.id == turn.assistantMessageID }?.state == .complete
+                && !harness.store.conversationTurns.contains { $0.id == turn.id && ($0.state == .pending || $0.state == .running) }
+        }
+        let reply = try harness.repository.messages(conversationID: harness.threadID).first { $0.id == turn.assistantMessageID }
+        let found = reply.map(results) ?? []
+        try require(tries.value == 2 && found.count == 2 && found.allSatisfy { $0.contains(CompanionTalkCopy.notTyped) },
+                    "A retried reply refuses stop and answer: \(found)")
+        try require(!(try stopRequested(harness, work)) && phase(harness, vent) == .waiting && harness.veto.calls.isEmpty,
+                    "The retried reply changes nothing")
+    }
+
+    static func relaunched() async throws {
+        let require = NativeTaskFixture.require
+        let ask = "Stop the libraries one, please."
+        let first = try await harness { _, _, _ in CompanionAskedWorkTransport.say("Fine.") }
+        let work = try await start(first, libraries)
+        try await settle(first, work, .going)
+        first.store.suspendsTurnScheduling = true
+        try require(first.store.sendText(ask, conversationID: first.threadID, fromComposer: true), "The message is accepted")
+        first.store.conversationTurnLoop?.cancel()
+        first.store.stopNativeTaskRecovery()
+        try require(first.store.conversationTurns.contains { $0.history.contains { $0.text == ask } && $0.state == .pending && $0.preferenceEligible == true },
+                    "The typed turn is saved and still waiting")
+        let again = try await harness(reusing: first) { user, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("I couldn't.") }
+            if user == ask { return CompanionAskedWorkTransport.hand([stop(handle(messages, "libraries"))]) }
+            return CompanionAskedWorkTransport.say("Fine.")
+        }
+        defer { Task { await finish(again) } }
+        try require(again.threadID == first.threadID, "The rebuilt store opens the same companion conversation")
+        var reply: Message?
+        try await eventually("The waiting turn runs after the relaunch") {
+            let saved = (try? again.repository.messages(conversationID: again.threadID)) ?? []
+            guard let index = saved.firstIndex(where: { $0.role == .user && $0.text == ask }), saved.indices.contains(index + 1),
+                  saved[index + 1].state == .complete else { return false }
+            reply = saved[index + 1]
+            return true
+        }
+        let found = reply.map(results) ?? []
+        try require(found.count == 1 && found[0].contains(CompanionTalkCopy.notTyped) && !(try stopRequested(again, work)),
+                    "A turn performed after a relaunch refuses and changes nothing: \(found)")
+    }
+
+    static func finishedDuringCheck() async throws {
+        let require = NativeTaskFixture.require
+        let ask = "Stop the libraries research."
+        let harness = try await harness { user, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("It had already finished.") }
+            if user == ask { return CompanionAskedWorkTransport.hand([stop(handle(messages, "libraries"))]) }
+            return CompanionAskedWorkTransport.say("Fine.")
+        }
+        defer { Task { await finish(harness) } }
+        let work = try await start(harness, libraries)
+        try await settle(harness, work, .going)
+        harness.veto.mode = .hang
+        try require(harness.store.sendText(ask, conversationID: harness.threadID, fromComposer: true), "The message is accepted")
+        try await eventually("The check is waiting") { harness.veto.calls.count == 1 }
+        await harness.gate.release()
+        try await settle(harness, work, .finished)
+        await harness.veto.gate.release()
+        var reply: Message?
+        try await eventually("The reply completes") {
+            let saved = (try? harness.repository.messages(conversationID: harness.threadID)) ?? []
+            guard let index = saved.firstIndex(where: { $0.role == .user && $0.text == ask }), saved.indices.contains(index + 1),
+                  saved[index + 1].state == .complete else { return false }
+            reply = saved[index + 1]
+            return true
+        }
+        let result = reply.map(results)?.first ?? ""
+        try require(result.contains(CompanionTalkCopy.alreadyFinished) && result.contains("\"changed\":false") && !(try stopRequested(harness, work)),
+                    "Work that finishes during the check is reported as already finished: \(result)")
+        try await eventually("Its result is delivered normally") { harness.store.deliveredMessageID(for: work.id) != nil }
     }
 
     static func notFirst() async throws {
@@ -628,6 +759,28 @@ enum CompanionTalkControlFixture {
                         && (results(answered).first ?? "").contains(CompanionTalkCopy.unclear) && phase(harness, vent) == .waiting,
                         "A check that says no or times out changes nothing: \(mode)")
         }
+    }
+
+    static func workerStopsBetweenRetries() async throws {
+        let require = NativeTaskFixture.require
+        let readThenReport: @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion = { messages in
+            NativeCompanionScriptedModel.toolResults(messages).isEmpty ? NativeCompanionScriptedModel.call("garden_status", "{}") : .text("Read the garden.")
+        }
+        var harness = try NativeCompanionHarness(rules: [:], script: readThenReport)
+        harness.service.readFailures = 5
+        let id = try harness.create()
+        let store = harness.store
+        harness.environment.pause = { _ in _ = try? store.cancel(id) }
+        var stopped = false
+        do { _ = try await harness.stepWithoutCommit() } catch is CancellationError { stopped = true }
+        try require(stopped && harness.service.count("garden_status") == 1 && (try store.get(id)).cancelRequested,
+                    "A stop during the pause between retries keeps the lookup from running again: \(harness.service.count("garden_status"))")
+        let calls = CompanionTalkBox(0)
+        var refused = false
+        do {
+            _ = try await NativeCompanionWorker.withDeadline(5, stopped: { true }) { calls.value += 1; return 1 }
+        } catch is NativeCompanionStopped { refused = true }
+        try require(refused && calls.value == 0, "An operation is never started once the work is stopped")
     }
 
     static func words(_ text: String) -> [String] {
