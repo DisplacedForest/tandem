@@ -2693,9 +2693,11 @@ final class ChatStore: ObservableObject {
                         + accessNotes,
                     assistantProfile: turnDotContext(turn)))
                 turnMessages = companionRequestMessages(turnMessages, turn: turn)
+                let talkSection: String = talk.map { "\n\n" + $0.section } ?? ""
+                let otherWorkRule: String = talk == nil ? "Other accepted turns may still be working; this message does not cancel or change them." : CompanionTalkCopy.otherWork
                 let history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + (talk.map { "\n\n" + $0.section } ?? "") + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + (preferenceNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
-                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. " + Self.researchReplyRule + " Do not add progress commentary about other turns to an unrelated answer. " + (talk == nil ? "Other accepted turns may still be working; this message does not cancel or change them." : CompanionTalkCopy.otherWork) + (turn.companionEvent.map { "\n\n" + $0.instruction } ?? ""),
+                    messages: turnMessages, systemPrompt: assembled.prompt + "\n\n" + companionProfileInstruction(for: turn) + talkSection + (grantNote.map { "\n\n" + $0 } ?? "") + (revisionNote.map { "\n\n" + $0 } ?? "") + (preferenceNote.map { "\n\n" + $0 } ?? "") + "\n\n" +
+                        "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. " + Self.researchReplyRule + " Do not add progress commentary about other turns to an unrelated answer. " + otherWorkRule + (turn.companionEvent.map { "\n\n" + $0.instruction } ?? ""),
                     imageLoader: imageLoader, capabilities: capabilityProfile,
                     contextCeiling: nativeConfig.options.contextCeiling)
                 turnMemorySelections[turn.attempt ?? turn.id] = admittedMemories

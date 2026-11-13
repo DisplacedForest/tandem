@@ -122,20 +122,23 @@ enum CompanionTalkTools {
     }
 
     static func effects(_ snapshots: [NativeTaskSnapshot]) -> (done: [String], unsure: [String]) {
-        var titles: [String] = []
-        var outcomes: [String: String] = [:]
-        var pending: [String] = []
+        var notes: [NativeCompanionEffectNote] = []
         for snapshot in snapshots {
-            for note in snapshot.checkpoint.effects {
-                if outcomes[note.title] == nil { titles.append(note.title) }
-                let known = outcomes[note.title]?.hasPrefix("done") == true
-                if !known { outcomes[note.title] = note.outcome }
-            }
+            for note in snapshot.checkpoint.effects where !notes.contains(note) { notes.append(note) }
         }
-        if let waiting = snapshots.last?.checkpoint.pending, waiting.kind == "reconcile", let title = waiting.title { pending.append(title) }
-        let done = titles.filter { outcomes[$0]?.hasPrefix("done") == true }
-        var unsure = titles.filter { outcomes[$0] == "failed" || outcomes[$0] == "unconfirmed" }
-        for title in pending where !done.contains(title) && !unsure.contains(title) { unsure.append(title) }
+        var done: [String] = []
+        var unsure: [String] = []
+        for note in notes {
+            let finished = note.outcome.hasPrefix("done")
+            let doubtful = note.outcome == "failed" || note.outcome == "unconfirmed"
+            if finished, !done.contains(note.title) { done.append(note.title) }
+            if doubtful, !unsure.contains(note.title) { unsure.append(note.title) }
+        }
+        for snapshot in snapshots {
+            guard let waiting = snapshot.checkpoint.pending, waiting.kind == "reconcile", let title = waiting.title else { continue }
+            let newest = snapshot == snapshots.last
+            if newest, !unsure.contains(title) { unsure.append(title) }
+        }
         return (done, unsure)
     }
 
@@ -228,6 +231,7 @@ enum CompanionTalkCopy {
     static let couldNotStop = "Nothing was changed. It couldn't be stopped just now. Tell the person and suggest trying again."
     static let notWaiting = "Nothing was changed. That one isn't waiting on a question."
     static let staleQuestion = "Nothing was changed. That question changed or was already answered, so this answer wasn't sent. Say so plainly."
+    static let stoppedBeforeAnswer = "Nothing was changed. That one was stopped before the answer went in, so the answer wasn't sent. Say so plainly."
     static let notOffered = "Nothing was changed. That isn't one of the answers on offer. The answers are listed with the item."
     static let needsButton = "Nothing was changed. Approving something or saving a rule only happens when the person presses the button on the question. Tell them that."
     static let answered = "The answer is saved, and it will carry on from there."
@@ -239,7 +243,7 @@ enum CompanionTalkCopy {
 
     static let modelSentences: [String] = [couldNotStart, lead, tail, guide, approvalNote, otherWork, stopDescription, answerDescription, stopTitle, answerTitle,
                                            notTyped, notFirst, notCurrent, unknownItem, invalid, notGoing, alreadyStopping, unclear, startedAfter, alreadyFinished, alreadyEnded, stopped,
-                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, notOffered, needsButton,
+                                           stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, stoppedBeforeAnswer, notOffered, needsButton,
                                            answered, couldNotAnswer] + reasons.values.sorted() + CompanionTalkPhase.allCases.map(\.words)
 
     static func line(_ entry: CompanionTalkEntry) -> String {

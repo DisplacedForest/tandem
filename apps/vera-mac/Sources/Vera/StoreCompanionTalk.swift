@@ -257,16 +257,15 @@ extension ChatStore {
 
     func companionTalkAnswer(_ id: UUID, choice: String, decisionID: String) async -> NativeJSONValue {
         guard let tracker = nativeTaskTracker else { return CompanionTalkTools.refusal(CompanionTalkCopy.couldNotAnswer) }
-        let saved = await tracker.decide(id, choice: choice, expecting: decisionID)
-        guard saved else {
+        let delivery = await tracker.answer(id, choice: choice, expecting: decisionID)
+        reloadNativeTaskReferences()
+        guard let delivery else {
             let current = companionTalkLive(id)
             return CompanionTalkTools.refusal(current?.decisionID == decisionID ? CompanionTalkCopy.couldNotAnswer : CompanionTalkCopy.staleQuestion)
         }
-        reloadNativeTaskReferences()
-        let projection = repository as? any NativeTaskProjectionRepository
-        let undelivered = ((try? projection?.pendingTaskRetries()) ?? nil)?.contains { $0.referenceID == id && $0.decisionID == decisionID } ?? false
-        if undelivered, let after = companionTalkLive(id), after.phase == .waiting, after.decisionID != decisionID {
-            return CompanionTalkTools.refusal(CompanionTalkCopy.staleQuestion)
+        if delivery == .dropped {
+            let stopped = ((try? nativeTaskRepository?.taskReference(id: id)) ?? nil)?.cancelRequested == true
+            return CompanionTalkTools.refusal(stopped ? CompanionTalkCopy.stoppedBeforeAnswer : CompanionTalkCopy.staleQuestion)
         }
         return .object(["result": .string(CompanionTalkCopy.answered), "changed": .bool(true)])
     }

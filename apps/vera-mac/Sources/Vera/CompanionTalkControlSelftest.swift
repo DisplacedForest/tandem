@@ -298,6 +298,7 @@ enum CompanionTalkControlFixture {
         try await replacedQuestion()
         try await startedAfterMessage()
         try await newerStopSnapshot()
+        try await sameTitleStaysUnsure()
         try await notFirst()
         try await oldHandles()
         try await answers()
@@ -743,6 +744,7 @@ enum CompanionTalkControlFixture {
         try await settle(harness, work, .going)
         try await eventually("The work is running") { (try? engineRecord(harness, work))??.state == .running }
         guard let remote = try harness.repository.taskReference(id: work.id)?.remoteTaskID else { throw NativeTaskFixture.Failure.assertion("The work has a remote") }
+        try await eventually("The saved view exists") { ((try? harness.repository.taskProjection(id: work.id)) ?? nil)?.snapshot != nil }
         let projectedBefore = try harness.repository.taskProjection(id: work.id)?.snapshot
         try require(projectedBefore?.checkpoint.effects.isEmpty == true, "The saved view shows an earlier step with no actions")
         let checkpoint = try NativeTaskStore.canonical(["phase": "work-2", "effects": [["title": action, "outcome": "done"]]])
@@ -754,6 +756,34 @@ enum CompanionTalkControlFixture {
         let result = results(reply).first ?? ""
         try require(result.contains(action) && result.contains("already_done") && result.contains("\"changed\":true"),
                     "The stop result lists an action only the newer cancellation response knew about: \(result)")
+    }
+
+    static func sameTitleStaysUnsure() async throws {
+        let ask = "Stop the library comparison right now."
+        let action = "Sent the reading list to the library"
+        let harness = try await harness { user, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("I've stopped.") }
+            if user == ask { return CompanionAskedWorkTransport.hand([stop(handle(messages, "libraries"))]) }
+            return CompanionAskedWorkTransport.say("Fine.")
+        }
+        defer { Task { await finish(harness) } }
+        let work = try await start(harness, libraries)
+        try await settle(harness, work, .going)
+        try await eventually("The work is running") { (try? engineRecord(harness, work))??.state == .running }
+        guard let remote = try harness.repository.taskReference(id: work.id)?.remoteTaskID else { throw NativeTaskFixture.Failure.assertion("The work has a remote") }
+        try await eventually("The saved view exists") { ((try? harness.repository.taskProjection(id: work.id)) ?? nil)?.snapshot != nil }
+        let projectedBefore = try harness.repository.taskProjection(id: work.id)?.snapshot
+        try require(projectedBefore?.checkpoint.effects.isEmpty == true, "The saved view shows an earlier step with no actions")
+        let checkpoint = try NativeTaskStore.canonical(["phase": "work-2", "effects": [["title": action, "outcome": "done"]], "pending": ["kind": "reconcile", "title": action]])
+        try await harness.repository.database.write { db in
+            try db.execute(sql: "UPDATE native_engine_tasks SET checkpoint = ?, updated_at = ? WHERE id = ?",
+                           arguments: [String(decoding: checkpoint, as: UTF8.self), Date().timeIntervalSince1970 + 1, remote])
+        }
+        let reply = try await send(harness, ask)
+        let result = results(reply).first ?? ""
+        let listsBoth = result.contains("already_done") && result.contains("may_have_happened")
+        try require(listsBoth && result.contains("\"changed\":true"),
+                    "A second action with the same title that may have happened is still reported: \(result)")
     }
 
     static func notFirst() async throws {
