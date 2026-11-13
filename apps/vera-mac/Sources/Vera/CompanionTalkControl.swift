@@ -67,6 +67,11 @@ struct CompanionTalkControl: Sendable {
     }
 }
 
+struct CompanionTalkCapture: Sendable, Equatable {
+    let known: Set<UUID>
+    let decisions: [UUID: String]
+}
+
 final class CompanionTalkLedger: @unchecked Sendable {
     private let lock = NSLock()
     private var done: [String: NativeJSONValue] = [:]
@@ -102,6 +107,38 @@ enum CompanionTalkTools {
         return value
     }
 
+    static func order(_ snapshot: NativeTaskSnapshot) -> (Int, Double) {
+        (snapshot.generation, snapshot.updatedAt)
+    }
+
+    static func newest(_ first: NativeTaskSnapshot?, _ second: NativeTaskSnapshot?) -> NativeTaskSnapshot? {
+        let seen = [first, second].compactMap { $0 }
+        if let terminal = seen.filter({ $0.state.isTerminal }).max(by: { order($0) < order($1) }) { return terminal }
+        return seen.max { order($0) < order($1) }
+    }
+
+    static func oldestFirst(_ first: NativeTaskSnapshot?, _ second: NativeTaskSnapshot?) -> [NativeTaskSnapshot] {
+        [first, second].compactMap { $0 }.sorted { order($0) < order($1) }
+    }
+
+    static func effects(_ snapshots: [NativeTaskSnapshot]) -> (done: [String], unsure: [String]) {
+        var titles: [String] = []
+        var outcomes: [String: String] = [:]
+        var pending: [String] = []
+        for snapshot in snapshots {
+            for note in snapshot.checkpoint.effects {
+                if outcomes[note.title] == nil { titles.append(note.title) }
+                let known = outcomes[note.title]?.hasPrefix("done") == true
+                if !known { outcomes[note.title] = note.outcome }
+            }
+        }
+        if let waiting = snapshots.last?.checkpoint.pending, waiting.kind == "reconcile", let title = waiting.title { pending.append(title) }
+        let done = titles.filter { outcomes[$0]?.hasPrefix("done") == true }
+        var unsure = titles.filter { outcomes[$0] == "failed" || outcomes[$0] == "unconfirmed" }
+        for title in pending where !done.contains(title) && !unsure.contains(title) { unsure.append(title) }
+        return (done, unsure)
+    }
+
     static func unstoppable(_ phase: CompanionTalkPhase?) -> String {
         switch phase {
         case .stopping?: return CompanionTalkCopy.alreadyStopping
@@ -117,8 +154,8 @@ enum CompanionTalkTools {
         return roundOne && nothingBefore
     }
 
-    static func typed(_ turn: NativeConversationTurn, _ words: NativeTypedWords, freshlyTyped: Bool) -> Bool {
-        let firstPerform = freshlyTyped
+    static func typed(_ turn: NativeConversationTurn, _ words: NativeTypedWords, captured: Bool) -> Bool {
+        let firstPerform = captured
         let fromBox = turn.preferenceEligible == true
         let ownEvent = turn.companionEvent == nil
         let saidSomething = !words.said.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -181,6 +218,7 @@ enum CompanionTalkCopy {
     static let notGoing = "Nothing was changed. That one isn't going right now, so there's nothing to stop. Say so plainly."
     static let alreadyStopping = "Nothing was changed. That one is already stopping. Say so plainly."
     static let unclear = "Nothing was changed. It isn't clear which one the person means. Ask which one, using the list you were given for this reply, and call nothing until they say."
+    static let startedAfter = "Nothing was changed. That one started after the person's message, so ask them to say it again if they mean it."
     static let alreadyFinished = "Nothing was changed. That one had already finished before the stop arrived. Say so plainly."
     static let alreadyEnded = "Nothing was changed. That one had already ended before the stop arrived. Say so plainly."
     static let stopped = "Stopped."
@@ -200,7 +238,7 @@ enum CompanionTalkCopy {
                           "request_conflict": "it couldn't be picked up again safely"]
 
     static let modelSentences: [String] = [couldNotStart, lead, tail, guide, approvalNote, otherWork, stopDescription, answerDescription, stopTitle, answerTitle,
-                                           notTyped, notFirst, notCurrent, unknownItem, invalid, notGoing, alreadyStopping, unclear, alreadyFinished, alreadyEnded, stopped,
+                                           notTyped, notFirst, notCurrent, unknownItem, invalid, notGoing, alreadyStopping, unclear, startedAfter, alreadyFinished, alreadyEnded, stopped,
                                            stopping, alreadyDone, maybeDone, couldNotStop, notWaiting, staleQuestion, notOffered, needsButton,
                                            answered, couldNotAnswer] + reasons.values.sorted() + CompanionTalkPhase.allCases.map(\.words)
 

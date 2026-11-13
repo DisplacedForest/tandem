@@ -28,7 +28,22 @@ extension ChatStore {
     private func companionTalkSnapshot(_ reference: NativeTaskReference) -> (snapshot: NativeTaskSnapshot?, note: String?) {
         let projection = repository as? any NativeTaskProjectionRepository
         let saved = (try? projection?.taskProjection(id: reference.id)) ?? nil
-        return (saved?.snapshot ?? reference.snapshot, saved?.connectionNote)
+        return (CompanionTalkTools.newest(saved?.snapshot, reference.snapshot), saved?.connectionNote)
+    }
+
+    func dropComposerCapture(_ messageID: UUID) {
+        for turn in conversationTurns where turn.assistantMessageID == messageID { composerSentTurns[turn.id] = nil }
+    }
+
+    func companionTalkCapture() -> CompanionTalkCapture {
+        var known: Set<UUID> = []
+        var decisions: [UUID: String] = [:]
+        for reference in companionTalkReferences() {
+            known.insert(reference.id)
+            guard let entry = companionTalkEntry(reference), entry.phase == .waiting, let decisionID = entry.decisionID else { continue }
+            decisions[reference.id] = decisionID
+        }
+        return CompanionTalkCapture(known: known, decisions: decisions)
     }
 
     func companionTalkEntries(now: Date) -> [CompanionTalkEntry] {
@@ -110,9 +125,11 @@ extension ChatStore {
         return text.isEmpty ? nil : text
     }
 
-    func companionTalkTools(_ control: CompanionTalkControl, turn: NativeConversationTurn, typed: NativeTypedWords, freshlyTyped: Bool,
+    func companionTalkTools(_ control: CompanionTalkControl, turn: NativeConversationTurn, typed: NativeTypedWords, capture: CompanionTalkCapture?,
                             answerer: @escaping NativeInstructionAnswerer, timeout: Duration) -> [NativeToolDefinition] {
-        let typedHere = CompanionTalkTools.typed(turn, typed, freshlyTyped: freshlyTyped)
+        let typedHere = CompanionTalkTools.typed(turn, typed, captured: capture != nil)
+        let known = capture?.known ?? []
+        let decisionsAtSend = capture?.decisions ?? [:]
         let said = typed.said
         let earlier = companionTalkEarlier(turn)
         let ledger = CompanionTalkLedger()
@@ -134,6 +151,7 @@ extension ChatStore {
                 guard typedHere else { return CompanionTalkTools.refusal(CompanionTalkCopy.notTyped) }
                 guard CompanionTalkTools.firstInReply() else { return CompanionTalkTools.refusal(CompanionTalkCopy.notFirst) }
                 guard let entry = control.entry(handle) else { return CompanionTalkTools.refusal(CompanionTalkCopy.unknownItem) }
+                guard known.contains(entry.referenceID) else { return CompanionTalkTools.refusal(CompanionTalkCopy.startedAfter) }
                 guard let self else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
                 let live = await MainActor.run { () -> (owned: Bool, entry: CompanionTalkEntry?) in
                     (self.turnOwned(turn), self.companionTalkLive(entry.referenceID))
@@ -180,6 +198,7 @@ extension ChatStore {
                 guard CompanionTalkTools.firstInReply() else { return CompanionTalkTools.refusal(CompanionTalkCopy.notFirst) }
                 guard let entry = control.entry(handle) else { return CompanionTalkTools.refusal(CompanionTalkCopy.unknownItem) }
                 guard let decisionID = entry.decisionID else { return CompanionTalkTools.refusal(CompanionTalkCopy.notWaiting) }
+                guard decisionsAtSend[entry.referenceID] == decisionID else { return CompanionTalkTools.refusal(CompanionTalkCopy.staleQuestion) }
                 let matches = { (offered: [String: String]) in offered.first { $0.key.lowercased() == title.lowercased() } }
                 if matches(entry.buttonOnly) != nil { return CompanionTalkTools.refusal(CompanionTalkCopy.needsButton) }
                 guard let picked = matches(entry.spoken) else { return CompanionTalkTools.refusal(CompanionTalkCopy.notOffered) }
@@ -214,17 +233,14 @@ extension ChatStore {
         }
         reloadNativeTaskReferences()
         let projected = ((try? projection.taskProjection(id: id)) ?? nil)?.snapshot
-        let seen = [projected, reference.snapshot].compactMap { $0 }
-        let snapshot = seen.first { $0.state.isTerminal } ?? projected ?? reference.snapshot
+        let snapshot = CompanionTalkTools.newest(projected, reference.snapshot)
         let settled = snapshot?.state == .canceled
         let endedFirst = snapshot.map { $0.state.isTerminal && $0.state != .canceled } ?? false
         if endedFirst {
             return CompanionTalkTools.refusal(snapshot?.state == .completed ? CompanionTalkCopy.alreadyFinished : CompanionTalkCopy.alreadyEnded)
         }
-        let effects = snapshot?.checkpoint.effects ?? []
-        let done = effects.filter { $0.outcome.hasPrefix("done") }.map { CompanionTalkTools.clipped($0.title, CompanionTalkTools.noteLimit) }
-        var unsure = effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title)
-        for title in snapshot?.checkpoint.unconfirmedEffects ?? [] where !unsure.contains(title) { unsure.append(title) }
+        let (doneTitles, unsure) = CompanionTalkTools.effects(CompanionTalkTools.oldestFirst(projected, reference.snapshot))
+        let done = doneTitles.map { CompanionTalkTools.clipped($0, CompanionTalkTools.noteLimit) }
         var sentence = settled ? CompanionTalkCopy.stopped : CompanionTalkCopy.stopping
         var fields: [String: NativeJSONValue] = ["changed": .bool(true)]
         if !done.isEmpty {
@@ -247,6 +263,11 @@ extension ChatStore {
             return CompanionTalkTools.refusal(current?.decisionID == decisionID ? CompanionTalkCopy.couldNotAnswer : CompanionTalkCopy.staleQuestion)
         }
         reloadNativeTaskReferences()
+        let projection = repository as? any NativeTaskProjectionRepository
+        let undelivered = ((try? projection?.pendingTaskRetries()) ?? nil)?.contains { $0.referenceID == id && $0.decisionID == decisionID } ?? false
+        if undelivered, let after = companionTalkLive(id), after.phase == .waiting, after.decisionID != decisionID {
+            return CompanionTalkTools.refusal(CompanionTalkCopy.staleQuestion)
+        }
         return .object(["result": .string(CompanionTalkCopy.answered), "changed": .bool(true)])
     }
 }

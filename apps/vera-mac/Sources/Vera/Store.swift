@@ -211,7 +211,7 @@ final class ChatStore: ObservableObject {
     @Published private(set) var composerSend = ComposerSend()
     var taskRevealGeneration = 0
     var revealedCompanionWorkDecisionIDs: Set<String> = []
-    var composerSentTurnIDs: Set<UUID> = []
+    var composerSentTurns: [UUID: CompanionTalkCapture] = [:]
     @Published var grantError: String?
     @Published var grantConsentTick = 0
     let nativeGrantSource = NativeFolderGrantSource()
@@ -2238,7 +2238,7 @@ final class ChatStore: ObservableObject {
         turn.dotContext = dotContext(for: id, requestText: fromComposer ? text : "")
         if fromComposer {
             turn.preferenceEligible = true
-            composerSentTurnIDs.insert(turn.id)
+            if isVeraThread(id) { composerSentTurns[turn.id] = companionTalkCapture() }
         }
         do {
             let answered = answering(pendingReply, conversationID: id)
@@ -2494,9 +2494,9 @@ final class ChatStore: ObservableObject {
         let answerer: NativeInstructionAnswerer = instructionCheck ?? { said, about in
             await NativeInstructionCheck.ask(transport: checkTransport, model: checkModel, said: said, about: about, timeout: checkTimeout)
         }
-        let freshlyTyped = composerSentTurnIDs.remove(turn.id) != nil
+        let capture = composerSentTurns.removeValue(forKey: turn.id)
         let talk = companionTalkControl(for: turn, supportsTools: ModelCapabilityCatalog.resolve(model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile.supportsTools)
-        if let talk { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + companionTalkTools(talk, turn: turn, typed: typed, freshlyTyped: freshlyTyped, answerer: answerer, timeout: checkTimeout)) }
+        if let talk { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + companionTalkTools(talk, turn: turn, typed: typed, capture: capture, answerer: answerer, timeout: checkTimeout)) }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
