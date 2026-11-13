@@ -130,8 +130,10 @@ actor NativeTaskGenerationBroker {
                 try await client.returnGeneration(current, job: job, response: nil, failure: error.code)
                 return
             }
-            let live = try await client.fetch(current)
-            guard !live.held, !live.cancelRequested, live.state == .running else { return }
+            if let live = try? await client.fetch(current) {
+                guard !live.held, !live.cancelRequested, live.state == .running else { return }
+            }
+            guard try repository.taskReference(id: reference.id)?.snapshot?.held != true else { return }
             let reservation = try repository.reserveTaskGeneration(referenceID: reference.id, job: job)
             let completion: NativeTaskGenerationCompletion?
             let failure: String?
