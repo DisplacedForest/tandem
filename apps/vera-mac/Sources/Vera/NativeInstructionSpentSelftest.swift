@@ -54,7 +54,9 @@ enum NativeInstructionSpentFixture {
         try await oldWork()
         try await stoppedReply()
         try await concurrentAdmissions()
-        print("  instruction spent once OK (store, removal, fails closed, reply then work, work then reply, two works, resumed work, written assignment, old work, stopped and admitted replies, concurrent admissions)")
+        try await unresolvedOrigin()
+        try await lapsedDuringCheck()
+        print("  instruction spent once OK (store, removal, fails closed, reply then work, work then reply, two works, resumed work, written assignment, old work, stopped and admitted replies, concurrent admissions, unknown origin asks, lapsed during check asks)")
     }
 
     nonisolated static func device(_ box: NativeInstructionSpentDevice) -> NativeToolDefinition {
@@ -70,7 +72,7 @@ enum NativeInstructionSpentFixture {
         return made
     }
 
-    static func chat(_ text: String = typed) throws -> Chat {
+    static func chat(_ text: String = typed, rules choices: [NativeActionClass: NativeRuleChoice] = [.otherChanges: .ask]) throws -> Chat {
         let repository = try LocalChatRepository(inMemory: true)
         let store = ChatStore(nativeConfig: SelfTest.chatLedgerConfig, nativeTransport: ScriptedNativeToolTransport(rounds: []), repository: repository,
                               nativeEnabledToolIDs: [], nativeToolRegistry: NativeToolRegistry(definitions: []), artifactPersistenceEnabled: false)
@@ -80,7 +82,7 @@ enum NativeInstructionSpentFixture {
         guard let pending = try repository.conversationTurns().last, let turn = try repository.claimTurn(pending.id, attempt: UUID()) else {
             throw NativeTaskFixture.Failure.assertion("A reply can be claimed")
         }
-        return Chat(repository: repository, store: store, turn: turn, rules: SelfTest.chatLedgerRules([.otherChanges: .ask]),
+        return Chat(repository: repository, store: store, turn: turn, rules: SelfTest.chatLedgerRules(choices),
                     grants: NativeFolderGrantSource(), device: NativeInstructionSpentDevice())
     }
 
@@ -395,5 +397,67 @@ enum NativeInstructionSpentFixture {
                                                 decisionID: nil, reply: nil, instruction: spend(winner)) else {
             throw NativeTaskFixture.Failure.assertion("The holder that spent it admits again")
         }
+    }
+
+    static func unresolvedOrigin() async throws {
+        let require = NativeTaskFixture.require
+        let chat = try chat()
+        let environment = environment(chat, tools: [device(chat.device)])
+        let dot = try NativeCompanionTaskPayload(assignment: typed, mode: "manual", said: typed)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let payload = try NativeTaskStore.canonical(try encoder.encode(NativeResearchTaskPayload(request: try NativeResearchTaskRequest(dot: dot))))
+        let id = try environment.tasks.create(workerType: "companion", payload: payload, idempotencyKey: UUID().uuidString).id
+        let done = try await settle(environment, model())
+        try require(done.state == .needsDecision && chat.device.count == 0 && (try rows(chat)).isEmpty
+                        && (try environment.ledger.records(taskID: id)).allSatisfy { $0.state != .completed },
+                    "Work whose message can't be found asks with a card and saves nothing: \(done.state)")
+    }
+
+    static func lapsedDuringCheck() async throws {
+        let require = NativeTaskFixture.require
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("spent-beside-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let grant = try FolderGrant.make(url: directory)
+        let draft = grant.path + "/draft.md"
+        let readme = grant.path + "/README.md"
+        let message = "Update README to match draft.md"
+        try Data("old".utf8).write(to: URL(fileURLWithPath: draft))
+        let chat = try chat(message, rules: [.fileEdits: .ask])
+        let rules = chat.rules
+        let thread = chat.turn.conversationID
+        let tools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { action in
+            rules.resolver(for: thread, requestText: "").decision(for: action)
+        })
+        let environment = environment(chat, tools: tools)
+        func writer() -> NativeCompanionScriptedModel {
+            NativeCompanionScriptedModel { messages in
+                if NativeCompanionScriptedModel.toolResults(messages).isEmpty {
+                    return NativeCompanionScriptedModel.call(NativeFolderTools.writeName, "{\"path\":\"\(draft)\",\"content\":\"new\"}")
+                }
+                return NativeCompanionScriptedModel.text("Updated it.")
+            }
+        }
+        let checked = NativeChatRulesCounter()
+        let first = writer()
+        first.checks {
+            checked.hit()
+            try Data().write(to: URL(fileURLWithPath: readme))
+            return .text("{\"run\": true}")
+        }
+        _ = try work(chat, index: 1, assignment: message, said: message)
+        let asked = try await settle(environment, first)
+        let unchanged = String(decoding: try Data(contentsOf: URL(fileURLWithPath: draft)), as: UTF8.self)
+        try require(checked.count == 1 && asked.state == .needsDecision && unchanged == "old" && (try rows(chat)).isEmpty,
+                    "An instruction that stops qualifying during the check asks, changes nothing and is not spent: \(asked.state)")
+        try FileManager.default.removeItem(atPath: readme)
+        let second = writer()
+        second.checks { .text("{\"run\": true}") }
+        _ = try work(chat, index: 2, assignment: message, said: message)
+        let ran = try await settle(environment, second)
+        let changed = String(decoding: try Data(contentsOf: URL(fileURLWithPath: draft)), as: UTF8.self)
+        try require(ran.state == .completed && changed == "new" && (try rows(chat)).count == 1,
+                    "The unspent instruction still runs once for the next piece of work: \(ran.state)")
     }
 }

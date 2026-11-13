@@ -1058,9 +1058,13 @@ private struct NativeCompanionRun {
         var spend: NativeInstructionSpend?
         if decision == .act(.instruction) {
             let confirmed = try await confirmsInstruction(definition, arguments, action: action, key: key, checkpoint)
-            if confirmed, let origin = typedOrigin,
-               let signature = NativeCompanionWorker.instructedSignature(definition, arguments, resolver: authority.resolver, honoringLimitedUse: true) {
-                spend = NativeInstructionSpend(messageID: origin.userMessageID, conversationID: origin.conversationID, signature: signature, holder: key)
+            if confirmed, environment.instructionUses != nil {
+                if let origin = typedOrigin,
+                   let signature = NativeCompanionWorker.instructedSignature(definition, arguments, resolver: authority.resolver, honoringLimitedUse: true) {
+                    spend = NativeInstructionSpend(messageID: origin.userMessageID, conversationID: origin.conversationID, signature: signature, holder: key)
+                } else {
+                    decision = .ask
+                }
             }
             if !confirmed {
                 if let signature = NativeCompanionWorker.instructionSignature(definition, arguments, action: action),
