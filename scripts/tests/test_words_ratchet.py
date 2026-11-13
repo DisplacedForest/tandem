@@ -54,8 +54,24 @@ class WordsRatchetTests(unittest.TestCase):
 
     def test_each_word_and_plural_counts_in_any_case(self):
         lines = ['let a%d = "%s"' % (i, word) for i, word in enumerate(
-            ["A task", "Tasks", "BACKGROUND", "a worker", "Workers", "Agent", "agents", "engine", "Engines"])]
-        self.assertEqual(self.counts(lines), 9)
+            ["A task", "Tasks", "BACKGROUND", "Choose backgrounds", "a worker", "Workers", "Agent", "agents", "engine", "Engines"])]
+        self.assertEqual(self.counts(lines), 10)
+
+    def test_bundled_json_values_count_and_keys_do_not(self):
+        os.makedirs(os.path.join(self.root, SOURCES, "Resources"))
+        self.write("catalog.json", ['{"servers": [', '  {"task": "x", "description": "Read pages"}', "]}"], folder=os.path.join(SOURCES, "Resources"))
+        self.assertEqual(self.run_script("--update").returncode, 0)
+        self.assertEqual(self.baseline_text().strip(), "")
+        self.write("catalog.json", ['{"servers": [', '  {"task": "x", "description": "Manage background tasks and agents"}', "]}"],
+                   folder=os.path.join(SOURCES, "Resources"))
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Resources/catalog.json:2", result.stdout)
+
+    def test_unreadable_json_counts_as_one_text(self):
+        os.makedirs(os.path.join(self.root, SOURCES, "Resources"))
+        self.write("broken.json", ['{"description": "A worker"'], folder=os.path.join(SOURCES, "Resources"))
+        self.assertNotEqual(self.run_script().returncode, 0)
 
     def test_identifiers_and_wire_values_do_not_count(self):
         lines = [

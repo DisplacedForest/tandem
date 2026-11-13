@@ -43,12 +43,24 @@ struct CardAnswers: Equatable {
                     declineMenu: [CardMenuItem(id: RuleOfferAnswer.neverOffer.rawValue, title: RuleOfferCopy.neverOffer)])
     }
 
-    static let earlierEndings = [" this in this task", " it for this work", " in this task", " for this work"]
+    static let wholeNever = "Never allow it for this"
+    static let commandsNever = "Never run commands for this"
+    static let sendStart = "Never send to "
+    static let scopeEnd = " for this"
+    static let earlierEnds = [" in this task", " for this work"]
 
     static func current(_ title: String) -> String {
-        guard let ending = earlierEndings.first(where: title.hasSuffix) else { return title }
-        let whole = ending.hasPrefix(" this ") || ending.hasPrefix(" it ")
-        return String(title.dropLast(ending.count)) + (whole ? " it for this" : " for this")
+        switch title {
+        case "Never allow this in this task", "Never allow it for this work": return wholeNever
+        case "Never run commands in this task", "Never run commands for this work": return commandsNever
+        default:
+            guard title.hasPrefix(sendStart), let end = earlierEnds.first(where: title.hasSuffix) else { return title }
+            return String(title.dropLast(end.count)) + scopeEnd
+        }
+    }
+
+    static func scoped(_ title: String) -> Bool {
+        title == wholeNever || title == commandsNever || (title.hasPrefix(sendStart) && title.hasSuffix(scopeEnd))
     }
 
     static func task(choices: [String], covers: String?, neverTitle: String?, run: Bool = false) -> CardAnswers {
@@ -65,7 +77,7 @@ struct CardAnswers: Equatable {
         let commands = wire == NativeCardChoices.commandNever
         guard commands || shown(neverTitle) != nil, var title = commands ? NativeCardChoices.wireTitle(wire) : neverTitle else { return answers }
         title = current(title)
-        if run, title.hasSuffix(" for this") { title += " run" }
+        if run, scoped(title) { title += " run" }
         answers.declineMenu = [CardMenuItem(id: wire, title: title, note: commands ? NativeCardChoices.neverHelp : nil)]
         return answers
     }

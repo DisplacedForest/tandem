@@ -36,7 +36,7 @@ actor NativeScheduler {
     static let retiredMissedNote = missedNote + " It will run next time as planned."
 
     static func shownNote(_ saved: String) -> String {
-        saved == retiredMissedNote ? missedNote : saved
+        saved == retiredMissedNote ? missedNote : SavedWording.current(saved)
     }
     static let waitingNote = "Waiting for your answer."
     static let blockedNote = "Open Tandem with the saved model profile so this run can continue."

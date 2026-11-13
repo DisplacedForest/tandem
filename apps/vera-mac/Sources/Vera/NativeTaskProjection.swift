@@ -22,7 +22,7 @@ enum NativeTaskProjection {
         guard let snapshot else {
             if reference.deliveryState == .rejected {
                 card.status = .failed
-                card.milestone = reference.lastDeliveryError ?? "\(work) couldn't start."
+                card.milestone = reference.lastDeliveryError.map(SavedWording.current) ?? "\(work) couldn't start."
                 card.canCancel = false
             } else if reference.cancelRequested {
                 card.status = .stopping

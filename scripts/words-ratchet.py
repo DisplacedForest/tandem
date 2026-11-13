@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import importlib.util
+import json
 import os
 import re
 import sys
@@ -13,7 +14,7 @@ SPEC.loader.exec_module(name_ratchet)
 
 ROOTS = name_ratchet.ROOTS
 INTERPOLATION = name_ratchet.INTERPOLATION
-WORDS = ("task", "tasks", "background", "worker", "workers", "agent", "agents", "engine", "engines")
+WORDS = ("task", "tasks", "background", "backgrounds", "worker", "workers", "agent", "agents", "engine", "engines")
 WORD = re.compile(r"(?<![A-Za-z0-9_])(?:" + "|".join(WORDS) + r")(?![A-Za-z0-9_])", re.IGNORECASE)
 WINDOW = 160
 
@@ -33,22 +34,53 @@ def excerpt(body):
     return ("..." if start > 0 else "") + text[start:end] + ("..." if end < len(text) else "")
 
 
+def json_values(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from json_values(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from json_values(item)
+
+
+def json_hits(text):
+    try:
+        document = json.loads(text)
+    except ValueError:
+        return [(0, text)] if WORD.search(text) else []
+    lines = text.splitlines()
+    hits = []
+    for value in json_values(document):
+        if not WORD.search(value):
+            continue
+        needle = json.dumps(value, ensure_ascii=False)[1:-1]
+        plain = json.dumps(value)[1:-1]
+        number = next((index + 1 for index, line in enumerate(lines) if needle in line or plain in line), 0)
+        hits.append((number, value))
+    return sorted(hits)
+
+
 def scan(root):
     found = {}
     for source_root in ROOTS:
         base = os.path.join(root, source_root)
         for folder, _, names in os.walk(base):
             for name in sorted(names):
-                if not name.endswith(".swift"):
+                if not name.endswith((".swift", ".json")):
                     continue
                 path = os.path.join(folder, name)
                 relative = os.path.relpath(path, root).replace(os.sep, "/")
                 with open(path, encoding="utf-8", errors="replace") as handle:
                     text = handle.read()
                 hits = []
-                for number, body in sorted(name_ratchet.string_literals(text)):
-                    if WORD.search(body.replace(INTERPOLATION, " ")):
-                        hits.append((number, body))
+                if name.endswith(".json"):
+                    hits = json_hits(text)
+                else:
+                    for number, body in sorted(name_ratchet.string_literals(text)):
+                        if WORD.search(body.replace(INTERPOLATION, " ")):
+                            hits.append((number, body))
                 if hits:
                     found[relative] = hits
     return found

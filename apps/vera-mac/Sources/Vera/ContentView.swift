@@ -780,7 +780,7 @@ struct MessageRow: View {
                         Text(status).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                     }
                     if nativeActions && message.state == .interrupted {
-                        Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
+                        Label(message.failure.map(SavedWording.current) ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
                             .font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
                         Button("Retry answer") { store.retryAnswer(message.id) }
                             .buttonStyle(.borderless).font(.system(size: 11))
@@ -945,7 +945,7 @@ struct NativeToolActivityChip: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 inspected("Request", activity.request)
-                if activity.why == nil, let result = activity.result { inspected("Result", result) }
+                if activity.why == nil, let result = activity.result { inspected("Result", SavedWording.current(result)) }
             }
             .padding(.top, 8)
         } label: {

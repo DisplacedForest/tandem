@@ -1,6 +1,6 @@
 4 apps/vera-mac/Sources/Vera/ArtifactProducerSelftest.swift
 2 apps/vera-mac/Sources/Vera/CanvasPanel.swift
-2 apps/vera-mac/Sources/Vera/CardAnswerButtons.swift
+3 apps/vera-mac/Sources/Vera/CardAnswerButtons.swift
 10 apps/vera-mac/Sources/Vera/CardSentenceLiteralSelftest.swift
 10 apps/vera-mac/Sources/Vera/CardShots.swift
 9 apps/vera-mac/Sources/Vera/CompanionAskedWorkSelftest.swift
@@ -87,7 +87,7 @@
 6 apps/vera-mac/Sources/Vera/NativeTaskDeliverySelftest.swift
 7 apps/vera-mac/Sources/Vera/NativeTaskDispatcher.swift
 2 apps/vera-mac/Sources/Vera/NativeTaskDisplay.swift
-20 apps/vera-mac/Sources/Vera/NativeTaskDisplayFixture.swift
+31 apps/vera-mac/Sources/Vera/NativeTaskDisplayFixture.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskDisplaySelfTest.swift
 79 apps/vera-mac/Sources/Vera/NativeTaskEngineSelftest.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskEvents.swift
@@ -109,8 +109,10 @@
 1 apps/vera-mac/Sources/Vera/OngoingWorkPanel.swift
 3 apps/vera-mac/Sources/Vera/OngoingWorkSelftest.swift
 4 apps/vera-mac/Sources/Vera/RefusalSelftest.swift
+1 apps/vera-mac/Sources/Vera/Resources/mcp-starter-catalog.json
 8 apps/vera-mac/Sources/Vera/RuleRowsSelftest.swift
 4 apps/vera-mac/Sources/Vera/RulesAdvancedSelftest.swift
+21 apps/vera-mac/Sources/Vera/SavedWording.swift
 23 apps/vera-mac/Sources/Vera/SelfTest.swift
 5 apps/vera-mac/Sources/Vera/SettingsView.swift
 5 apps/vera-mac/Sources/Vera/Shot.swift

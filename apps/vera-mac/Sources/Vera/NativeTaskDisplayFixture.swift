@@ -452,6 +452,27 @@ extension NativeTaskDisplayFixture {
             try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: saved).declineMenu.map(\.title) == [shown],
                         "A never title saved with earlier words reads with the current ones: \(saved)")
         }
+        for kept in ["Never edit in Plans for this work", "Never edit in Plans in this task", "Never edit in Plans for this",
+                     "Never move things in Notes for this work to the Trash"] {
+            for run in [false, true] {
+                try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: kept, run: run).declineMenu.map(\.title) == [kept],
+                            "A folder's own name is never reworded: \(kept)")
+            }
+        }
+        try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: "Never send to Plans for this work for this", run: true)
+                        .declineMenu.map(\.title) == ["Never send to Plans for this work for this run"], "A recipient's own name is kept on a scheduled run")
+        let listed: Set<String> = ["task", "tasks", "background", "backgrounds", "worker", "workers", "agent", "agents", "engine", "engines"]
+        for (old, new) in SavedWording.earlier {
+            let words = Set(new.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+            try require(words.isDisjoint(with: listed) && SavedWording.current(old) == new && SavedWording.current("Failed: " + old) == "Failed: " + new,
+                        "A message saved with earlier words reads with the current ones: \(old)")
+            try require(NativeScheduler.shownNote(old) == new, "A saved run note reads with the current words: \(old)")
+            var refused = try OngoingWorkFixture.reference(conversationID: "words-saved", title: "Lumber prices this month", state: nil)
+            refused.deliveryState = .rejected
+            refused.lastDeliveryError = old
+            try require(NativeTaskProjection.display(reference: refused, snapshot: nil).card.milestone == new, "A refused card saved earlier reads with the current words: \(old)")
+        }
+        try require(SavedWording.current("Tandem wasn't running at the scheduled time.") == "Tandem wasn't running at the scheduled time.", "Other saved text is left as saved")
         let unlabelled = CardAnswers.task(choices: ["decline", "never", "allow_always", "allow_here", "approve"], covers: nil, neverTitle: nil, run: true)
         try require(hidden.allowMenu.isEmpty && hidden.declineMenu.isEmpty && unlabelled.allowMenu.isEmpty && unlabelled.declineMenu.isEmpty
                     && CardAnswers.shown("Edits in a\nb") == nil && CardAnswers.shown("Edits in Greenhouse") == "Edits in Greenhouse",

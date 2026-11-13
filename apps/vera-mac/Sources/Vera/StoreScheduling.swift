@@ -362,7 +362,7 @@ extension ChatStore {
             let reference = try await service.submit(origin: origin, request: request, profile: profile)
             reloadNativeTaskReferences()
             if reference.deliveryState == NativeTaskDeliveryState.rejected {
-                return .failed(reference.lastDeliveryError ?? NativeScheduler.refusedNote)
+                return .failed(reference.lastDeliveryError.map(SavedWording.current) ?? NativeScheduler.refusedNote)
             }
             return .started(taskReferenceID: reference.id.uuidString)
         } catch {
