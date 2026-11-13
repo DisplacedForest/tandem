@@ -99,6 +99,7 @@ actor NativeTaskGenerationBroker {
             while !Task.isCancelled {
                 guard let current = try? repository.taskReference(id: reference.id),
                       !current.cancelRequested, current.snapshot?.state.isTerminal != true, current.snapshot?.held != true,
+                      !repository.taskGenerationStale(referenceID: reference.id, job: job),
                       let base = configuredBase(), (try? NativeTaskEngineIdentity(base)) == current.engine else {
                     operation.cancel()
                     return

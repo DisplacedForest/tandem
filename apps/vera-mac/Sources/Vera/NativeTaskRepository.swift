@@ -137,6 +137,15 @@ extension LocalChatRepository: NativeTaskRepository {
         }
     }
 
+    func withdrawTaskChange(id: UUID) throws -> Bool {
+        var withdrawn = false
+        _ = try mutateTaskReference(id) { reference in
+            withdrawn = reference.pendingChange != nil && reference.replacedBy == nil
+            if withdrawn { reference.pendingChange = nil }
+        }
+        return withdrawn
+    }
+
     func saveTaskChange(id: UUID, change: NativeTaskPendingChange) throws -> NativeTaskReference {
         try mutateTaskReference(id) { reference in
             guard reference.cancelRequested, reference.replacedBy == nil, reference.pendingChange == nil || reference.pendingChange == change else {

@@ -106,11 +106,12 @@ enum CompanionHoldCopy {
     static let changed = "Changed. What you were doing before has stopped, and you are now doing the job as it stands, with what you had already found."
     static let stoppedOnly = "What you were doing before has stopped, but the changed job couldn't be started. Tell the person plainly and suggest asking for it again."
     static let changeSaved = "The change is saved. What you were doing before is finishing stopping, and the changed job starts by itself as soon as it has. Tell the person that in one line. They don't need to say it again."
-    static let changeWaiting = "The person changed this one. It is finishing stopping, and the changed job starts by itself as soon as it has."
+    static let changeWithdrawn = "Stopped. The changed job was waiting to start and now won't. Say so plainly."
+    static let changeWaiting = "The person changed this one. It is finishing stopping, and the changed job starts by itself as soon as it has. Stopping this one now also drops the changed job."
 
     static let modelSentences: [String] = [guide, setAsideDescription, pickUpDescription, changeDescription, setAsideTitle, pickUpTitle, changeTitle,
                                            invalid, invalidChange, notGoing, alreadyAside, newer, setAside, settingAside, couldNotSetAside, notAside,
-                                           pickedUp, couldNotPickUp, cannotChange, couldNotChange, resting, changed, stoppedOnly, changeSaved, changeWaiting,
+                                           pickedUp, couldNotPickUp, cannotChange, couldNotChange, resting, changed, stoppedOnly, changeSaved, changeWaiting, changeWithdrawn,
                                            NativeCompanionWorker.carriedLead]
 }
 
@@ -280,8 +281,13 @@ extension ChatStore {
             try? await Task.sleep(for: .milliseconds(100))
         }
         reloadNativeTaskReferences()
-        let started = ((try? projection.taskReference(id: id)) ?? nil)?.replacedBy != nil
-        outcome["result"] = .string((started ? CompanionHoldCopy.changed : CompanionHoldCopy.changeSaved) + tail)
+        guard let replacement = ((try? projection.taskReference(id: id)) ?? nil)?.replacedBy else {
+            outcome["result"] = .string(CompanionHoldCopy.changeSaved + tail)
+            return .object(outcome)
+        }
+        let started = (try? projection.taskReference(id: replacement)) ?? nil
+        let accepted = started.map { $0.deliveryState != .rejected && !$0.cancelRequested } ?? false
+        outcome["result"] = .string((accepted ? CompanionHoldCopy.changed : CompanionHoldCopy.stoppedOnly) + tail)
         return .object(outcome)
     }
 
@@ -304,7 +310,7 @@ extension ChatStore {
             let (done, unsure) = CompanionTalkTools.effects(snapshots)
             let carried = CompanionHoldTools.carried(reference: old, firstAsked: companionFirstAsked(old), snapshots: snapshots, done: done, unsure: unsure)
             let (profile, usable) = askedWorkProfile()
-            guard usable, let request = try? ChatStore.companionRequest(change.work, connectedToolIDs: dotProfile.connectedToolIDs?.sorted(),
+            guard usable, !dotProfile.isPaused, let request = try? ChatStore.companionRequest(change.work, connectedToolIDs: dotProfile.connectedToolIDs?.sorted(),
                                                                         said: change.said, carried: carried) else { continue }
             changesStarting.insert(old.id)
             let started = try? await service.submit(origin: change.origin, request: request, profile: profile)

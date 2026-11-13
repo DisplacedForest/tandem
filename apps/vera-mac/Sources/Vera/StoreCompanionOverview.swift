@@ -17,7 +17,9 @@ extension ChatStore {
             let date = snapshot.map { Date(timeIntervalSince1970: $0.updatedAt) }
                 ?? conversations.first { $0.id == threadID }?.messages.first { $0.id == reference.origin.assistantMessageID }?.createdAt
                 ?? .distantPast
-            tasks.append(CompanionOverviewModel.taskItem(card: display.card, reference: reference, decision: snapshot?.decision,
+            var card = display.card
+            if reference.pendingChange != nil { card.canCancel = true }
+            tasks.append(CompanionOverviewModel.taskItem(card: card, reference: reference, decision: snapshot?.decision,
                                                          hasArtifact: display.artifact != nil && settledBeforeDelivery(reference.id), date: date))
         }
         let runs = scheduleRuns.values.flatMap { $0 }
@@ -39,7 +41,8 @@ extension ChatStore {
 
     func stopCompanionWork(_ item: CompanionActivityItem) {
         switch item.source {
-        case .task(let id): cancelNativeTask(id.uuidString)
+        case .task(let id):
+            if (try? nativeTaskRepository?.withdrawTaskChange(id: id)) == true { reloadNativeTaskReferences() } else { cancelNativeTask(id.uuidString) }
         case .run(let runID):
             if let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == runID }) { stopScheduleRun(run) }
         }

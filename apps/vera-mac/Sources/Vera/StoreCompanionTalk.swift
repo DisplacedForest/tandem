@@ -93,7 +93,7 @@ extension ChatStore {
         return CompanionTalkEntry(referenceID: reference.id, what: what, phase: phase,
                                   why: phase == .couldNotFinish ? companionTalkWhy(reference, snapshot: snapshot) : nil,
                                   note: noteText.flatMap { $0.isEmpty ? nil : $0 }, question: question, decisionID: decisionID,
-                                  spoken: spoken, buttonOnly: buttonOnly, canStop: card.canCancel && phase.ongoing, date: date,
+                                  spoken: spoken, buttonOnly: buttonOnly, canStop: (card.canCancel || reference.pendingChange != nil) && phase.ongoing, date: date,
                                   canSetAside: card.canSetAside == true && phase.ongoing, canPickUp: card.canPickUp == true)
     }
 
@@ -231,6 +231,10 @@ extension ChatStore {
     func companionTalkStop(_ id: UUID) async -> NativeJSONValue {
         guard let tracker = nativeTaskTracker, let projection = repository as? any NativeTaskProjectionRepository else {
             return CompanionTalkTools.refusal(CompanionTalkCopy.couldNotStop)
+        }
+        if (try? projection.withdrawTaskChange(id: id)) == true {
+            reloadNativeTaskReferences()
+            return .object(["result": .string(CompanionHoldCopy.changeWithdrawn), "changed": .bool(true)])
         }
         if ((try? projection.taskProjection(id: id)) ?? nil) == nil { _ = try? projection.projectTask(id: id, snapshot: nil, cursor: 0, connectionNote: nil, lease: nil, generation: nil) }
         await tracker.cancel(id)

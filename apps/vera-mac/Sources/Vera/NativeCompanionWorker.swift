@@ -238,6 +238,7 @@ enum NativeCompanionWorker {
         do {
             return try await run.advance(&checkpoint)
         } catch is CancellationError where run.heldProbe() {
+            checkpoint.attempt = NativeCompanionCheckpoint.freshAttempt()
             var step = try run.progress(checkpoint)
             step.keepsReply = checkpoint.pending != nil
             return step

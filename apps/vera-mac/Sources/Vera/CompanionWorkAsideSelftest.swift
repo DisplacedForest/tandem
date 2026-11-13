@@ -32,6 +32,9 @@ enum CompanionWorkAsideFixture {
         try stopAside()
         try pickUpBeforeCommit()
         try await brokerSkipsHeldWork()
+        try await reservationRespectsHold()
+        try await brokerHoldBetweenFetchAndReserve()
+        try await interruptedRequestResumes()
         try await approvalKeptAcrossHold()
         try await readRetryHeld()
         try await asideByTalking()
@@ -39,6 +42,9 @@ enum CompanionWorkAsideFixture {
         try await changeByTalking()
         try await changeWaitsForStop()
         try await changeAfterRelaunch()
+        try await changeWhileCompanionPaused()
+        try await changeWithdrawnByStopping()
+        try await changeRejected()
         try await changeLongRequest()
         try await changeCannotBeBuilt()
         try await changeAfterFinish()
@@ -47,7 +53,7 @@ enum CompanionWorkAsideFixture {
         try await ordinaryChat()
         try await carriedOver()
         try sweep()
-        print("  companion work aside OK (put aside before it starts, put aside during a model request, put aside during an outside call, a run that ignores the hold, relaunch while put aside, pick back up, put aside while a question is waiting, pick up under a tightened rule, unknown saved state, stopping something put aside, pick up before the step ends, model requests skipped for held work, approval kept across a hold, read retry held, put aside by talking, two possible matches, pick back up by talking, pick up before the hold lands, change, change waits for the stop, change after a relaunch, change to a long request, change that can't be built, change after it finished, changed work starts clean, not typed, not first, replayed turn, started after, injected text, ordinary chat, carried over, copy)")
+        print("  companion work aside OK (put aside before it starts, put aside during a model request, put aside during an outside call, a run that ignores the hold, relaunch while put aside, pick back up, put aside while a question is waiting, pick up under a tightened rule, unknown saved state, stopping something put aside, pick up before the step ends, model requests skipped for held work, reservation refused while held, hold between the broker's look and reservation, interrupted request resumes, approval kept across a hold, read retry held, put aside by talking, two possible matches, pick back up by talking, pick up before the hold lands, change, change waits for the stop, change after a relaunch, change waits while the companion is paused, saved change withdrawn by stopping, refused replacement, change to a long request, change that can't be built, change after it finished, changed work starts clean, not typed, not first, replayed turn, started after, injected text, ordinary chat, carried over, copy)")
     }
 
     nonisolated static func researchPayload(_ query: String = "Find the oldest oak in the park") throws -> Data {
@@ -540,6 +546,192 @@ enum CompanionWorkAsideFixture {
                     "Picked back up, the read runs and is answered")
     }
 
+    static func reservationRespectsHold() async throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let store = NativeTaskStore(database: repository.database)
+        let engine = try NativeTaskEngineIdentity(URL(string: "https://engine.test/api")!)
+        let request = try NativeResearchTaskRequest(objective: "Find the oldest oak in the park", deliverables: ["A cited answer"])
+        let profile = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "fixture-profile",
+            provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
+            savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits())
+        func accepted(_ remote: String) throws -> NativeTaskReference {
+            let reference = try repository.prepareTaskReference(origin: try NativeTaskFixture.origin(repository), engine: engine, request: request, profile: profile)
+            return try repository.acknowledgeTaskReference(id: reference.id,
+                snapshot: try JSONDecoder().decode(NativeTaskSnapshot.self, from: try NativeTaskFixture.snapshot(reference, id: remote, state: "running")))
+        }
+        func job(_ reference: NativeTaskReference, _ attempt: String) throws -> NativeTaskGenerationJob {
+            guard let binding = reference.createRequest.payload.nativeBinding, let remote = reference.remoteTaskID else {
+                throw NativeTaskFixture.Failure.assertion("The reference is bound and delivered")
+            }
+            let messages = [NativeTaskGenerationMessage(role: "user", content: "Find the oak")]
+            return NativeTaskGenerationJob(id: UUID().uuidString, taskID: remote, bindingID: binding.id,
+                enrollmentDigest: binding.enrollmentDigest, admissionBase: binding.admissionBase, phase: "plan", attempt: attempt,
+                messages: messages, messagesDigest: NativeTaskGenerationJob.digest(messages), deadlineSeconds: 10, generation: 1)
+        }
+        func rows() async throws -> Int {
+            try await repository.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_task_generations") ?? 0 }
+        }
+        let remote = UUID().uuidString
+        try await repository.database.write { db in
+            try db.execute(sql: """
+                INSERT INTO native_engine_tasks(id, worker_type, payload, creation_key, state, generation, created_at, updated_at)
+                VALUES(?, 'research', '{}', ?, 'running', 1, 0, 0)
+                """, arguments: [remote, "seed-" + remote])
+        }
+        let local = try accepted(remote)
+        try require(try repository.reserveTaskGeneration(referenceID: local.id, job: try job(local, "first-0")) == .execute,
+                    "Running work reserves its request")
+        let held = try store.pause(remote)
+        try require(held.state == .running && held.pauseRequested, "The hold is requested")
+        let before = try await rows()
+        try require(try repository.reserveTaskGeneration(referenceID: local.id, job: try job(local, "second-0")) == .pending,
+                    "Held work can't reserve a request")
+        try require(try await rows() == before, "No request is saved for held work")
+        let elsewhere = try accepted(UUID().uuidString)
+        try require(try repository.reserveTaskGeneration(referenceID: elsewhere.id, job: try job(elsewhere, "first-0")) == .execute,
+                    "Work with no row in this engine still reserves")
+    }
+
+    static func brokerHoldBetweenFetchAndReserve() async throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let arbiter = NativeInferenceArbiter(cooldown: 0)
+        let engine = NativeTaskLocalEngine(database: repository.database, admission: { .local(arbiter) }, pollSeconds: 0.05, workers: { exchange in
+            ["companion": NativeTaskWorker(timeoutSeconds: 60) { task in
+                let payload = try JSONDecoder().decode(NativeResearchTaskPayload.self, from: task.payload)
+                guard let binding = payload.nativeBinding else { return .failed(checkpoint: task.checkpoint, reason: "binding_missing") }
+                _ = try await exchange.ready(taskID: task.id, binding: binding)
+                _ = try await exchange.completeTurn(task: task, binding: binding, phase: "work-1", attempt: "a", ordinal: 0,
+                                                    messages: [NativeTaskGenerationMessage(role: "user", content: "Find the oak")])
+                return .failed(checkpoint: task.checkpoint, reason: "reached")
+            }]
+        })
+        let base: @Sendable () -> URL? = { NativeTaskLocalEngine.identity.base }
+        let service = NativeTaskHandoffService(repository: repository, client: engine.client, configuredBase: base)
+        let profile = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "fixture-profile",
+            provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
+            savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits())
+        let armed = CompanionTalkBox<String?>(nil)
+        let landed = CompanionTalkBox(false)
+        let generated = CompanionTalkBox(0)
+        let inner = engine.client
+        let store = engine.store
+        let watching = NativeTaskClient { method, url, body, timeout in
+            let answer = try await inner.request(method, url, body, timeout)
+            if method == "GET", let remote = armed.value, url.path.hasSuffix("/tasks/" + remote) {
+                armed.value = nil
+                _ = try? store.pause(remote)
+                landed.value = true
+            }
+            return answer
+        }
+        let broker = NativeTaskGenerationBroker(repository: repository, client: watching, configuredBase: base,
+            isProfileAvailable: { _ in true }, complete: { _, _ in
+                generated.value += 1
+                return .text("The oak is two hundred years old.")
+            })
+        try await engine.start()
+        let reference = try await service.submit(origin: try NativeTaskFixture.origin(repository),
+            request: try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: "Find the oldest oak in the park", mode: "manual")),
+            profile: profile)
+        var job: NativeTaskGenerationJob?
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while job == nil && ContinuousClock.now < deadline {
+            if let current = try repository.taskReference(id: reference.id), current.remoteTaskID != nil {
+                job = try? await inner.nextGeneration(current)
+            }
+            if job == nil { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        guard job != nil, let remote = try repository.taskReference(id: reference.id)?.remoteTaskID else {
+            await engine.stop()
+            throw NativeTaskFixture.Failure.assertion("The run waits on a model request")
+        }
+        armed.value = remote
+        await broker.poll()
+        let saved = try await repository.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_task_generations") ?? 0 }
+        try require(landed.value, "The hold landed after the broker's look and before it saved the request")
+        try require(generated.value == 0 && saved == 0, "Held at reservation time, the provider is never called and nothing is saved: \(generated.value) \(saved)")
+        try await poll("The run ends put aside") { try engine.store.get(remote).state == .paused }
+        await engine.stop()
+    }
+
+    static func interruptedRequestResumes() async throws {
+        for tighten in [true, false] {
+            let repository = try LocalChatRepository(inMemory: true)
+            let tasks = NativeTaskStore(database: repository.database)
+            let ledger = NativeEffectLedgerStore(database: repository.database)
+            let rules = NativeRuleSource()
+            rules.setGlobal(NativeRules(choices: [.networkSends: .act]))
+            let grants = NativeFolderGrantSource()
+            let tools = NativeCompanionHarness.tools(NativeCompanionFakeService(), reconcile: false)
+            let environment = NativeCompanionWorkerEnvironment(
+                context: { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: "companion-thread-1", tools: tools) },
+                authority: { conversation, request in
+                    NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request), grantsRevision: grants.revision)
+                },
+                ledger: ledger, tasks: tasks, defaultToolSeconds: 2)
+            let recorder = NativeTaskJobRecorder()
+            let entered = CompanionTalkBox(false)
+            let stopped = CompanionTalkBox(false)
+            let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter(),
+                workers: { exchange in ["companion": NativeCompanionWorker.make(exchange: exchange, environment: environment)] }) { job in
+                    if job.messages.first?.content == NativeCompanionShape.classifierPrompt { return .text("{\"keep\": false}") }
+                    if job.messages.first?.content == NativeInstructionCheck.systemPrompt { return .text("{\"run\": false}") }
+                    await recorder.record(job)
+                    if !entered.value {
+                        entered.value = true
+                        do { while true { try await Task.sleep(for: .milliseconds(20)) } } catch { stopped.value = true; throw error }
+                    }
+                    return .text("The garden has three beds.")
+                }
+            try await harness.start()
+            let reference = try await harness.submitDot("Check the garden")
+            try await Talk.eventually("The first request is in flight") { entered.value }
+            guard let remote = try repository.taskReference(id: reference.id)?.remoteTaskID else {
+                await harness.stop()
+                throw NativeTaskFixture.Failure.assertion("The work reached the engine")
+            }
+            _ = await harness.tracker.hold(reference.id, resume: false)
+            try await poll("The work is put aside", seconds: 15) { try tasks.get(remote).state == .paused }
+            try await poll("The saved view shows it put aside", seconds: 10) { try repository.taskReference(id: reference.id)?.snapshot?.held == true }
+            try await poll("The interrupted request is let go and its reservation removed", seconds: 10) {
+                let rows = try repository.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_task_generations") ?? 0 }
+                return stopped.value && rows == 0
+            }
+            if tighten { rules.setGlobal(NativeRules(choices: [.networkSends: .ask])) }
+            let picked = await harness.tracker.hold(reference.id, resume: true)
+            try require(picked != nil && picked?.held == false, "It is picked back up")
+            do {
+                try await poll("The work carries on to the end", seconds: 30) {
+                    let state = try tasks.get(remote).state
+                    return state == .completed || state == .failed || state == .needsDecision
+                }
+            } catch {
+                let now = try tasks.get(remote)
+                let events = try tasks.events(taskID: remote).map(\.kind)
+                let seen = await recorder.all().map { $0.phase + " " + $0.attempt }
+                let shown = try repository.taskReference(id: reference.id)?.snapshot?.state
+                var pendingJob: NativeTaskGenerationJob?
+                if let current = try repository.taskReference(id: reference.id) { pendingJob = try? await harness.engine.client.nextGeneration(current) }
+                let generations = try await repository.database.read { db in try String.fetchAll(db, sql: "SELECT generation_key || ':' || state || ':' || IFNULL(failure, '') FROM native_task_generations") }
+                await harness.stop()
+                throw NativeTaskFixture.Failure.assertion("The work carries on to the end: \(now.state) \(now.pauseRequested) \(String(describing: shown)) \(events) \(seen) request stopped \(stopped.value) pending \(String(describing: pendingJob?.attempt)) rows \(generations)")
+            }
+            let final = try tasks.get(remote)
+            let asked = try await repository.database.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_events WHERE task_id = ? AND state IN ('needs_decision', 'failed')",
+                                 arguments: [remote]) ?? 0
+            }
+            let jobs = await recorder.all()
+            try require(final.state == .completed && asked == 0,
+                        "Picked back up \(tighten ? "under a tightened rule" : "as it was"), the work neither fails nor asks to retry: \(final.state) \(asked)")
+            try require(jobs.count >= 2 && jobs[1].attempt != jobs[0].attempt, "It makes a new request: \(jobs.map(\.attempt))")
+            if tighten {
+                try require(jobs[1].messages.first?.content != jobs[0].messages.first?.content, "The tightened rule changed what the request says")
+            }
+            await harness.stop()
+        }
+    }
+
     nonisolated static func aside(_ item: String) -> NativeChatToolCall {
         CompanionAskedWorkTransport.call(CompanionHoldTools.setAsideName, ["item": .string(item)])
     }
@@ -657,6 +849,7 @@ enum CompanionWorkAsideFixture {
     }
 
     static func asideHarness(reusing earlier: Talk.Harness? = nil, released: CompanionTalkBox<Bool>,
+                             client wrap: (NativeTaskClient) -> NativeTaskClient = { $0 },
                              reply: @escaping CompanionTalkTransport.Reply) async throws -> Talk.Harness {
         let repository = try earlier?.repository ?? LocalChatRepository(inMemory: true)
         let gate = earlier?.gate ?? NativeSessionGate()
@@ -672,7 +865,7 @@ enum CompanionWorkAsideFixture {
             nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: repository,
             nativeAssistantName: "Ada", nativeEnabledToolIDs: [CompanionAskedWorkFixture.notesToolID],
             nativeToolRegistry: NativeToolRegistry(definitions: [notes]),
-            nativeTaskClient: engine.client, nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
+            nativeTaskClient: wrap(engine.client), nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         let veto = earlier?.veto ?? CompanionTalkVeto()
         store.instructionCheck = { said, about in await veto.answer(said, about) }
         if earlier != nil { store.conversations = try repository.listConversations() }
@@ -686,6 +879,7 @@ enum CompanionWorkAsideFixture {
         store.nativeTaskTracker = NativeTaskTracker(repository: projection, client: engine.client, service: service, transport: engine.transport,
             configuredBase: { NativeTaskLocalEngine.identity.base }, onUpdate: { [weak store] updates in store?.applyNativeTaskUpdates(updates) })
         store.startNativeTaskRecovery()
+        try require(store.nativeTaskRecoveryLoop != nil, "The recovery loop runs")
         if earlier == nil { try await engine.start() } else { store.resumeConversationTurns() }
         guard let threadID = store.veraThreadID else { throw NativeTaskFixture.Failure.assertion("The companion conversation exists") }
         return Talk.Harness(store: store, repository: repository, engine: engine, transport: transport, threadID: threadID, gate: gate, veto: veto)
@@ -694,16 +888,6 @@ enum CompanionWorkAsideFixture {
     static func finishAside(_ harness: Talk.Harness, _ released: CompanionTalkBox<Bool>) async {
         released.value = true
         await Talk.finish(harness)
-    }
-
-    static func until(_ message: String, seconds: Double = 15, _ condition: @MainActor () async throws -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(seconds))
-        while ContinuousClock.now < deadline {
-            if try await condition() { return }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        if try await condition() { return }
-        throw NativeTaskFixture.Failure.assertion(message)
     }
 
     static func replacements(_ harness: Talk.Harness) throws -> [NativeTaskReference] {
@@ -801,11 +985,11 @@ enum CompanionWorkAsideFixture {
                     "The old run delivers nothing to the conversation")
     }
 
-    static func changeWaitsForStop() async throws {
-        let ask = "Actually make it five libraries."
-        let released = CompanionTalkBox(false)
-        let harness = try await asideHarness(released: released, reply: changeReply(ask, "libraries"))
-        defer { Task { await finishAside(harness, released) } }
+    static func quietFor(_ seconds: Double) async throws {
+        try await Task.sleep(for: .seconds(seconds))
+    }
+
+    static func savedChange(_ harness: Talk.Harness, _ ask: String) async throws -> NativeTaskReference {
         let old = try await Talk.start(harness, stubborn)
         try await Talk.settle(harness, old, .going)
         try await Talk.eventually("The work is running") { (try? Talk.engineRecord(harness, old))??.state == .running }
@@ -813,56 +997,138 @@ enum CompanionWorkAsideFixture {
         let result = Talk.results(reply).first ?? ""
         try require(result.contains(CompanionHoldCopy.changeSaved) && result.contains("\"changed\":true"),
                     "A change whose old run hasn't stopped is saved: \(result)")
+        return old
+    }
+
+    static func changeWaitsForStop() async throws {
+        let ask = "Actually make it five libraries."
+        let released = CompanionTalkBox(false)
+        let harness = try await asideHarness(released: released, reply: changeReply(ask, "libraries"))
+        defer { Task { await finishAside(harness, released) } }
+        let old = try await savedChange(harness, ask)
         let waiting = try harness.repository.taskReference(id: old.id)
         try require(waiting?.pendingChange?.said == ask && waiting?.pendingChange?.work == changedWork
                     && waiting?.pendingChange?.origin.index == CompanionHoldTools.changeIndex && waiting?.replacedBy == nil,
                     "The change is saved on the old one and nothing replaces it yet")
-        try require(try replacements(harness).isEmpty, "No new work starts while the old run is still going")
-        await harness.store.startSettledChanges()
-        try require(try replacements(harness).isEmpty && (try harness.repository.taskReference(id: old.id))?.replacedBy == nil,
-                    "Trying again before it stops changes nothing")
         let note = harness.store.companionTalkEntries(now: Date()).first { $0.referenceID == old.id }?.note
         try require(note == CompanionHoldCopy.changeWaiting, "The old entry says the change is waiting: \(String(describing: note))")
+        try await quietFor(2.5)
+        try require(try replacements(harness).isEmpty && (try harness.repository.taskReference(id: old.id))?.replacedBy == nil,
+                    "While the old run is still going nothing starts")
         await harness.gate.release()
         try await Talk.eventually("The old run ends as stopped") { (try? Talk.engineRecord(harness, old))??.state == .canceled }
-        try await until("The replacement starts once the old run has stopped") {
-            await harness.store.startSettledChanges()
-            return ((try? harness.repository.taskReference(id: old.id)) ?? nil)?.replacedBy != nil
-        }
+        try await poll("The replacement starts by itself once the old run has stopped", seconds: 20) { try !replacements(harness).isEmpty }
+        try await poll("The old one is marked replaced", seconds: 5) { try harness.repository.taskReference(id: old.id)?.replacedBy != nil }
         let fresh = try replacements(harness)
         try require(fresh.count == 1, "Exactly one replacement starts: \(fresh.count)")
         let oldNow = try harness.repository.taskReference(id: old.id)
         try require(oldNow?.replacedBy == fresh[0].id && oldNow?.pendingChange == nil, "The old one is marked replaced and the saved change is cleared")
         try require(fresh[0].request.dot?.carried?.done.contains(finalTitle) == true && fresh[0].request.dot?.said == ask,
                     "What the old run did in its last step is carried: \(String(describing: fresh[0].request.dot?.carried?.done))")
-        await harness.store.startSettledChanges()
-        try require(try replacements(harness).count == 1, "A further try starts no second replacement")
+        try await quietFor(2.5)
+        try require(try replacements(harness).count == 1, "Later passes start no second replacement")
     }
 
     static func changeAfterRelaunch() async throws {
         let ask = "Make it five libraries instead."
         let released = CompanionTalkBox(false)
         let first = try await asideHarness(released: released, reply: changeReply(ask, "libraries"))
-        let old = try await Talk.start(first, stubborn)
-        try await Talk.settle(first, old, .going)
-        try await Talk.eventually("The work is running") { (try? Talk.engineRecord(first, old))??.state == .running }
-        let reply = try await Talk.send(first, ask)
-        try require((Talk.results(reply).first ?? "").contains(CompanionHoldCopy.changeSaved), "The change is saved")
+        let old = try await savedChange(first, ask)
         first.store.conversationTurnLoop?.cancel()
         first.store.stopNativeTaskRecovery()
         await first.gate.release()
         try await Talk.eventually("The old run ends as stopped") { (try? Talk.engineRecord(first, old))??.state == .canceled }
+        try await quietFor(2.5)
         try require(try replacements(first).isEmpty && (try first.repository.taskReference(id: old.id))?.pendingChange != nil,
                     "Before the relaunch nothing replaced it")
         let again = try await asideHarness(reusing: first, released: released) { _, _, _ in CompanionAskedWorkTransport.say("Fine.") }
         defer { Task { await finishAside(again, released) } }
-        try await until("The relaunched store starts the saved change") {
-            await again.store.startSettledChanges()
-            return ((try? again.repository.taskReference(id: old.id)) ?? nil)?.replacedBy != nil
-        }
+        try await poll("The relaunched store starts the saved change by itself", seconds: 20) { try !replacements(again).isEmpty }
         let fresh = try replacements(again)
         try require(fresh.count == 1 && fresh[0].request.dot?.said == ask && fresh[0].request.dot?.assignment == changedWork,
                     "After a relaunch the replacement starts with the saved typed words")
+    }
+
+    static func changeWhileCompanionPaused() async throws {
+        let ask = "Actually make it five libraries."
+        let released = CompanionTalkBox(false)
+        let harness = try await asideHarness(released: released, reply: changeReply(ask, "libraries"))
+        defer { Task { await finishAside(harness, released) } }
+        let old = try await savedChange(harness, ask)
+        harness.store.setDotState(.paused)
+        await harness.gate.release()
+        try await Talk.eventually("The old run ends as stopped") { (try? Talk.engineRecord(harness, old))??.state == .canceled }
+        try await poll("The old run's stop is seen", seconds: 10) {
+            try harness.repository.taskProjection(id: old.id)?.snapshot?.state == .canceled
+        }
+        try await quietFor(2.5)
+        try require(try replacements(harness).isEmpty && (try harness.repository.taskReference(id: old.id))?.pendingChange != nil,
+                    "While the companion is paused the saved change waits")
+        harness.store.setDotState(.active)
+        try await poll("After resuming the saved change starts", seconds: 20) { try !replacements(harness).isEmpty }
+        try require(try replacements(harness).count == 1, "One replacement starts")
+    }
+
+    static func changeWithdrawnByStopping() async throws {
+        let ask = "Actually make it five libraries."
+        let stop = "Never mind, stop the library research."
+        for byPanel in [false, true] {
+            let released = CompanionTalkBox(false)
+            let harness = try await asideHarness(released: released) { user, messages, _ in
+                if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("Done.") }
+                if user == ask { return CompanionAskedWorkTransport.hand([change(Talk.handle(messages, "libraries"))]) }
+                if user == stop { return CompanionAskedWorkTransport.hand([Talk.stop(Talk.handle(messages, "libraries"))]) }
+                return CompanionAskedWorkTransport.say("Fine.")
+            }
+            let old = try await savedChange(harness, ask)
+            let entry = harness.store.companionTalkEntries(now: Date()).first { $0.referenceID == old.id }
+            try require(entry?.canStop == true, "Something with a saved change can be stopped")
+            if byPanel {
+                guard let item = harness.store.companionOverviewModel().activity.first(where: { $0.id == old.id.uuidString }) else {
+                    throw NativeTaskFixture.Failure.assertion("The panel lists it")
+                }
+                try require(item.canStop, "The panel offers stop for it")
+                harness.store.stopCompanionWork(item)
+            } else {
+                let reply = try await Talk.send(harness, stop)
+                let result = Talk.results(reply).first ?? ""
+                try require(result.contains(CompanionHoldCopy.changeWithdrawn) && result.contains("\"changed\":true"),
+                            "Stopping withdraws the saved change: \(result)")
+            }
+            try require(try harness.repository.taskReference(id: old.id)?.pendingChange == nil, "The saved change is cleared")
+            await harness.gate.release()
+            try await Talk.eventually("The old run ends as stopped") { (try? Talk.engineRecord(harness, old))??.state == .canceled }
+            try await quietFor(2.5)
+            try require(try replacements(harness).isEmpty && (try harness.repository.taskReference(id: old.id))?.replacedBy == nil,
+                        "A withdrawn change never starts")
+            await finishAside(harness, released)
+        }
+    }
+
+    static func changeRejected() async throws {
+        let ask = "Actually make it five libraries."
+        let released = CompanionTalkBox(false)
+        let harness = try await asideHarness(released: released, client: { inner in
+            NativeTaskClient { method, url, body, timeout in
+                if method == "POST", url.path.hasSuffix("/tasks"), let body, String(decoding: body, as: UTF8.self).contains(changedWork) {
+                    return (try NativeTaskStore.canonical(["detail": "This request can't be accepted"]), 422)
+                }
+                return try await inner.request(method, url, body, timeout)
+            }
+        }, reply: changeReply(ask, "libraries"))
+        defer { Task { await finishAside(harness, released) } }
+        let old = try await Talk.start(harness, Talk.libraries)
+        try await Talk.settle(harness, old, .going)
+        try await Talk.eventually("The work is running") { (try? Talk.engineRecord(harness, old))??.state == .running }
+        let reply = try await Talk.send(harness, ask)
+        let result = Talk.results(reply).first ?? ""
+        try require(result.contains(CompanionHoldCopy.stoppedOnly) && !result.contains(CompanionHoldCopy.changed),
+                    "A replacement the engine refuses is not reported as changed: \(result)")
+        let fresh = try replacements(harness)
+        try require(fresh.count == 1 && fresh[0].deliveryState == .rejected, "The refused replacement is recorded")
+        try require(try harness.repository.taskReference(id: old.id)?.replacedBy == fresh[0].id, "The old one is still marked replaced")
+        let phase = harness.store.companionTalkEntries(now: Date()).first { $0.referenceID == fresh[0].id }?.phase
+        try require(phase == .couldNotFinish, "The refused replacement reads as couldn't finish: \(String(describing: phase))")
     }
 
     static func changeLongRequest() async throws {
@@ -882,12 +1148,10 @@ enum CompanionWorkAsideFixture {
         let result = Talk.results(reply).first ?? ""
         try require(result.contains("\"changed\":true") && (result.contains(CompanionHoldCopy.changed) || result.contains(CompanionHoldCopy.changeSaved)),
                     "A change to a long request goes through: \(result)")
-        try await until("The replacement starts") {
-            await harness.store.startSettledChanges()
-            return ((try? harness.repository.taskReference(id: old.id)) ?? nil)?.replacedBy != nil
-        }
+        try await poll("The replacement starts", seconds: 20) { try !replacements(harness).isEmpty }
         let fresh = try replacements(harness)
-        try require(fresh.count == 1 && fresh[0].request.dot?.carried?.request == firstMessage.text,
+        try require(fresh.count == 1 && fresh[0].request.dot?.carried?.request == firstMessage.text
+                    && (try harness.repository.taskReference(id: old.id))?.replacedBy == fresh[0].id,
                     "The long first request is carried whole")
     }
 
