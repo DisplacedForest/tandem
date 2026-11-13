@@ -109,10 +109,13 @@ struct SidebarRow: View {
     var onRename: (String) -> Void = { _ in }
     var onMemoryExclusion: () -> Void = {}
     var onDelete: () -> Void = {}
+    var revealsOptions = false
     @State private var hovering = false
     @State private var renaming = false
     @State private var renameText = ""
     @State private var editingInstructions = false
+
+    static func optionsLabel(_ title: String) -> String { "Options for \(title)" }
 
     private func beginRename() {
         renameText = convo.title
@@ -126,15 +129,8 @@ struct SidebarRow: View {
         if !store.projects.isEmpty {
             Menu("Move to project") {
                 ForEach(store.projects) { project in
-                    Button {
-                        store.moveConversation(convo.id, toProject: project.id)
-                    } label: {
-                        if convo.projectID == project.id {
-                            Label(project.name, systemImage: "checkmark")
-                        } else {
-                            Text(project.name)
-                        }
-                    }
+                    Toggle(project.name, isOn: Binding(get: { convo.projectID == project.id },
+                                                       set: { _ in store.moveConversation(convo.id, toProject: project.id) }))
                 }
             }
         }
@@ -149,14 +145,15 @@ struct SidebarRow: View {
 
     var body: some View {
         SidebarChatRowLabel(title: convo.title) {
-            if hovering {
+            if hovering || revealsOptions {
                 Menu { menuItems } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold))
+                    InterfaceIconView(icon: .more, size: InterfaceIconSize.small)
                         .foregroundStyle(Theme.textSecondary).frame(width: 22, height: 18).contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("Chat options").accessibilityLabel(Self.optionsLabel(convo.title))
             } else if convo.pinned {
-                Image(systemName: "pin").font(.system(size: 10, weight: .medium))
+                InterfaceIconView(icon: .pin, size: InterfaceIconSize.mark)
                     .foregroundStyle(Theme.textSecondary)
             }
         }
