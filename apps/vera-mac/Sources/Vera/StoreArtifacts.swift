@@ -165,12 +165,22 @@ extension ChatStore {
                   !artifact.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             let sourceKey = "task:\(artifact.id)"
             guard !recordedArtifactSourceKeys.contains(sourceKey) else { continue }
+            let made = companionMadeArtifact(artifact.id, conversationID: conversationID) ? CompanionSavedText.marker : origin
             let draft = ArtifactDraft(
-                kind: .document, title: artifact.title, conversationID: conversationID, originTitle: origin,
+                kind: .document, title: artifact.title, conversationID: conversationID, originTitle: made,
                 messageID: messageID, sourceKey: sourceKey, data: Data(artifact.report.utf8),
                 mime: "text/markdown", fileExtension: "md", details: ArtifactDetails(sources: artifact.sources))
             if recordArtifact(draft, revising: target) != nil { recordedArtifactSourceKeys.insert(sourceKey) }
         }
+    }
+
+    func companionMadeArtifact(_ artifactID: String, conversationID: String) -> Bool {
+        func made(_ reference: NativeTaskReference) -> Bool {
+            reference.remoteTaskID == artifactID || reference.id.uuidString == artifactID
+        }
+        let stored = ((try? nativeTaskRepository?.taskReferences(conversationID: conversationID)) ?? nil) ?? []
+        guard let reference = nativeTaskReferences.first(where: made) ?? stored.first(where: made) else { return false }
+        return reference.createRequest.workerType == NativeSchedule.companionWorkerType
     }
 
     func reconcileTaskArtifacts(conversationID: String) {

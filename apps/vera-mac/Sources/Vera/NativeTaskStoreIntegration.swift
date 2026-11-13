@@ -55,9 +55,11 @@ extension ChatStore {
     func applyNativeTaskUpdates(_ updates: [NativeTaskMessageUpdate]) {
         var changed = deliverNativeTaskMessages(updates)
         for update in updates {
-            guard let conversation = conversations.firstIndex(where: { $0.id == update.conversationID }) else { continue }
             for mirror in update.mirrors {
-                guard let index = conversations[conversation].messages.firstIndex(where: { $0.id == mirror }) else { continue }
+                let holder = conversations.firstIndex { $0.id == update.conversationID && $0.messages.contains { $0.id == mirror } }
+                    ?? conversations.firstIndex { $0.messages.contains { $0.id == mirror } }
+                guard let conversation = holder,
+                      let index = conversations[conversation].messages.firstIndex(where: { $0.id == mirror }) else { continue }
                 let cards = update.blocks.filter { if case .taskCard = $0 { return true }; if case .artifact = $0 { return true }; return false }
                 var blocks = conversations[conversation].messages[index].displayBlocks
                 if let reference = update.referenceID, !cards.contains(where: { $0.id == "task:" + reference.uuidString }) {
@@ -71,7 +73,8 @@ extension ChatStore {
                     changed = true
                 }
             }
-            guard let message = conversations[conversation].messages.firstIndex(where: { $0.id == update.messageID }) else { continue }
+            guard let conversation = conversations.firstIndex(where: { $0.id == update.conversationID }),
+                  let message = conversations[conversation].messages.firstIndex(where: { $0.id == update.messageID }) else { continue }
             let kept = conversations[conversation].messages[message].displayBlocks.filter { block in
                 switch block {
                 case .fileChange, .commandRun: return !update.blocks.contains(where: { $0.id == block.id })

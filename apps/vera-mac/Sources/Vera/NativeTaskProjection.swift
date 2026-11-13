@@ -14,11 +14,14 @@ enum NativeTaskProjection {
         let id = reference.id.uuidString
         let dot = reference.createRequest.workerType == "companion"
         let document = reference.createRequest.workerType == "document" || dot
-        let work = dot ? "Work" : document ? "Writing" : "Research"
+        let scheduled = reference.request.scheduleID != nil
+        let neutral = dot || scheduled
+        let work = neutral ? "Work" : document ? "Writing" : "Research"
         var card = NativeTaskCardPresentation(
             id: id, title: reference.request.displayTitle, status: .preparing,
             milestone: "The request is saved here.", connectionNote: connectionNote.map(SavedWording.current),
             canCancel: true, workerType: reference.createRequest.workerType)
+        if scheduled { card.scheduled = true }
         guard let snapshot else {
             if reference.deliveryState == .rejected {
                 card.status = .failed
@@ -53,7 +56,7 @@ enum NativeTaskProjection {
             if document {
                 card.milestone = saved.map { "Stopping. \($0)" } ?? "Stopping the current step."
             } else {
-                card.milestone = count > 0 ? "Stopping research. Saved \(sourcePhrase)." : "Stopping the current step."
+                card.milestone = count > 0 ? "\(neutral ? "Stopping the work" : "Stopping research"). Saved \(sourcePhrase)." : "Stopping the current step."
             }
             return (card, nil)
         }
@@ -71,7 +74,7 @@ enum NativeTaskProjection {
             if dot {
                 card.milestone = "Working on it."
             } else if document {
-                card.milestone = documentMilestone(snapshot.checkpoint)
+                card.milestone = documentMilestone(snapshot.checkpoint, scheduled: scheduled)
             } else {
                 switch snapshot.checkpoint.phase {
                 case "gather":
@@ -79,7 +82,7 @@ enum NativeTaskProjection {
                 case "rag": card.milestone = "Checking saved knowledge alongside the gathered sources."
                 case "synthesize":
                     card.milestone = count > 0 ? "Preparing the report from \(sourcePhrase)." : "Checking whether enough evidence is available."
-                default: card.milestone = "Planning the research."
+                default: card.milestone = neutral ? "Planning the work." : "Planning the research."
                 }
             }
         case .blocked:
@@ -110,18 +113,21 @@ enum NativeTaskProjection {
             if dot, !retryPending { card.neverTitle = CardAnswers.shown(decision.never) }
         case .failed:
             card.status = .failed
-            let again = dot ? "Start the work again" : document ? "Start a new document" : "Start a new research request"
+            let again = neutral ? "Start the work again" : document ? "Start a new document" : "Start a new research request"
             switch snapshot.checkpoint.failureReason {
             case "input_limit" where dot: card.milestone = "The assignment and its notes are too large. Start the work again with less."
+            case "input_limit" where scheduled: card.milestone = "What the schedule asks for is too large. Edit the schedule to ask for less."
             case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large. Start a new document with a shorter brief." : "The research input is too large. Start a smaller research request."
             case "request_conflict": card.milestone = "The saved request could not be resumed safely. \(again)."
             default:
                 if dot {
                     card.milestone = "I couldn't finish this."
                 } else if document {
-                    card.milestone = saved.map { "Writing couldn't finish. \($0)" } ?? "Writing couldn't finish."
+                    let lead = neutral ? "The work couldn't finish." : "Writing couldn't finish."
+                    card.milestone = saved.map { "\(lead) \($0)" } ?? lead
                 } else {
-                    card.milestone = count > 0 ? "Research couldn't finish. The gathered sources are saved." : "Research couldn't finish."
+                    let lead = neutral ? "The work couldn't finish." : "Research couldn't finish."
+                    card.milestone = count > 0 ? "\(lead) The gathered sources are saved." : lead
                 }
             }
         case .canceled:
@@ -130,7 +136,7 @@ enum NativeTaskProjection {
                 let unsure = snapshot.checkpoint.unconfirmedEffects
                 card.milestone = unsure.isEmpty ? "Stopped." : "Stopped. Check whether this finished: " + unsure.joined(separator: "; ") + "."
             } else if document {
-                card.milestone = saved.map { "Stopped. \($0)" } ?? "Stopped before any sections were written."
+                card.milestone = saved.map { "Stopped. \($0)" } ?? (scheduled ? "Stopped before anything was saved." : "Stopped before any sections were written.")
             } else {
                 card.milestone = count > 0 ? "Stopped with \(sourcePhrase) saved." : "Stopped before any sources were saved."
             }
@@ -176,10 +182,10 @@ enum NativeTaskProjection {
                     throw NativeTaskHTTPError.invalidResponse
                 }
                 card.status = .completed
-                card.milestone = "The document is ready."
+                card.milestone = scheduled ? "It's ready to open." : "The document is ready."
                 return (card, NativeResearchArtifact(
                     id: snapshot.id, title: reference.request.displayTitle,
-                    report: result.report, sources: [], kind: "document"))
+                    report: result.report, sources: [], kind: "document", scheduled: scheduled ? true : nil))
             }
             guard result.kind == "research_report", result.report.unicodeScalars.count <= 16000 else {
                 throw NativeTaskHTTPError.invalidResponse
@@ -187,11 +193,11 @@ enum NativeTaskProjection {
             let resultSources = try displaySources(result.sources)
             try validateCitations(result.report, sources: resultSources)
             card.status = .completed
-            card.milestone = "The report is ready."
+            card.milestone = scheduled ? "It's ready to open." : "The report is ready."
             card.sources = resultSources
             return (card, NativeResearchArtifact(
                 id: snapshot.id, title: reference.request.objective,
-                report: result.report, sources: resultSources))
+                report: result.report, sources: resultSources, scheduled: scheduled ? true : nil))
         }
         return (card, nil)
     }
@@ -210,7 +216,7 @@ enum NativeTaskProjection {
         return written > 0 ? "Saved \(written) \(sectionWord) of \(planned)." : "The outline is saved."
     }
 
-    static func documentMilestone(_ checkpoint: NativeTaskCheckpoint) -> String {
+    static func documentMilestone(_ checkpoint: NativeTaskCheckpoint, scheduled: Bool = false) -> String {
         let planned = checkpoint.outline.count
         switch checkpoint.phase {
         case "draft":
@@ -219,7 +225,7 @@ enum NativeTaskProjection {
         case "revise":
             guard planned > 0 else { return "Planning the outline." }
             return "Revising section \(min(checkpoint.revisions.count + 1, planned)) of \(planned)."
-        case "assemble": return "Putting the document together."
+        case "assemble": return scheduled ? "Putting it together." : "Putting the document together."
         default: return "Planning the outline."
         }
     }
