@@ -11,7 +11,8 @@ extension SelfTest {
         try await scheduleAnythingElseLoop(require)
         try scheduleAnythingElseCard(require)
         try scheduleAnythingElseWords(require)
-        print("  schedule anything else OK (store create, reload, edit, run without search, paused, tool unchanged in ordinary chats, companion kind, advertised per conversation, ordinary chat refuses the extra kind without a card, ordinary research still asks, companion asks and Allow saves, Decline saves nothing, unreadable request refused without a card in both, card, check-in, detail line, empty state, words)")
+        try scheduleAnythingElsePanels(require)
+        print("  schedule anything else OK (store create, reload, edit, run without search, paused, tool unchanged in ordinary chats, companion kind, advertised per conversation, ordinary chat refuses the extra kind without a card, ordinary research still asks, companion asks and Allow saves, Decline saves nothing, unreadable request refused without a card in both, card, check-in, detail line, empty state, words, profile and work panels)")
     }
 
     private static func scheduleAnythingElseStore(_ require: (Bool, String) throws -> Void) async throws {
@@ -180,6 +181,39 @@ extension SelfTest {
         try require(CompanionLine.named(ScheduleEditor.companionResults).plain(name: nil) == "Results go to your companion."
                     && CompanionLine.named(ScheduleEditor.companionResults).plain(name: "Ada") == "Results go to Ada.",
                     "The editor says results go to the companion")
+    }
+
+    private static func scheduleAnythingElsePanels(_ require: (Bool, String) throws -> Void) throws {
+        let reference = OngoingWorkFixture.store().nativeTaskReferences.last!
+        let statuses: [NativeTaskCardPresentation.Status] = [.preparing, .queued, .working, .stopping, .stopped, .completed, .needsInput,
+                                                             .failed, .setAside, .newer]
+        for status in statuses {
+            let card = NativeTaskCardPresentation(id: reference.id.uuidString, title: "Morning summary", status: status, milestone: "",
+                                                  workerType: NativeSchedule.companionWorkerType)
+            let profile = CompanionOverviewModel.taskItem(card: card, reference: reference, decision: nil, hasArtifact: false, date: Date()).state
+            let panel = OngoingWork.presentation(status: status, document: false, hasArtifact: false, title: card.statusTitle).state
+            for shown in [profile, panel] {
+                try require(shown == card.statusTitle && !shown.lowercased().contains("research") && !shown.lowercased().contains("writing"),
+                            "Anything else never reads as research while \(status.rawValue): \(shown)")
+            }
+            var research = card
+            research.workerType = "research"
+            var document = card
+            document.workerType = "document"
+            try require(CompanionOverviewModel.taskItem(card: research, reference: reference, decision: nil, hasArtifact: false, date: Date()).state
+                            == status.title(document: false)
+                        && CompanionOverviewModel.taskItem(card: document, reference: reference, decision: nil, hasArtifact: false, date: Date()).state
+                            == status.title(document: true)
+                        && OngoingWork.presentation(status: status, document: false, hasArtifact: false, title: research.statusTitle).state
+                            == OngoingWork.presentation(status: status, document: false, hasArtifact: false).state
+                        && OngoingWork.presentation(status: status, document: true, hasArtifact: false, title: document.statusTitle).state
+                            == OngoingWork.presentation(status: status, document: true, hasArtifact: false).state,
+                        "Research and documents read as before while \(status.rawValue)")
+        }
+        let ready = NativeTaskCardPresentation(id: reference.id.uuidString, title: "Morning summary", status: .completed, milestone: "",
+                                               workerType: NativeSchedule.companionWorkerType)
+        try require(CompanionOverviewModel.taskItem(card: ready, reference: reference, decision: nil, hasArtifact: true, date: Date()).state == "Ready to open",
+                    "Finished work with a document still reads as ready to open")
     }
 
     private static func scheduleAnythingElseWords(_ require: (Bool, String) throws -> Void) throws {
