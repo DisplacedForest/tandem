@@ -122,6 +122,7 @@ extension ChatStore {
         func no(_ sentence: String) -> (entry: CompanionTalkEntry?, refusal: NativeJSONValue?) { (nil, CompanionTalkTools.refusal(sentence)) }
         guard gate.typedHere else { return no(CompanionTalkCopy.notTyped) }
         guard CompanionTalkTools.firstInReply() else { return no(CompanionTalkCopy.notFirst) }
+        guard CompanionTalkTools.checkable(gate.said) else { return no(CompanionTalkCopy.tooLong) }
         guard let entry = gate.control.entry(handle) else { return no(CompanionTalkCopy.unknownItem) }
         guard gate.known.contains(entry.referenceID) else { return no(CompanionTalkCopy.startedAfter) }
         let turn = gate.turn
