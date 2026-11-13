@@ -2556,7 +2556,7 @@ final class ChatStore: ObservableObject {
         turnExecutions[turn.id]?.deadline = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(300)) } catch { return }
             guard self?.turnExecutions[turn.id]?.record.attempt == turn.attempt else { return }
-            self?.stopAnswer(turn.assistantMessageID, reason: "This answer reached its time limit. You can ask a follow-up.")
+            self?.stopAnswer(turn.assistantMessageID, reason: "This answer took too long and was stopped. You can ask a follow-up.")
         }
         turnExecutions[turn.id]?.task = Task {
             let revisionKey = turn.userMessageID.uuidString

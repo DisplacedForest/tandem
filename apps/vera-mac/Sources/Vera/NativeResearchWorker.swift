@@ -120,12 +120,11 @@ final class NativeWorkerIdentitySource: @unchecked Sendable {
 }
 
 enum NativeTaskWorkerFailures {
-    static let terminalCodes: Set<String> = ["request_limit", "request_conflict", "input_limit"]
+    static let terminalCodes: Set<String> = ["request_conflict", "input_limit"]
 
     static func terminalMessage(_ code: String, work: String) -> String {
         switch code {
-        case "request_limit": return "This \(work) task reached its saved generation limit."
-        case "input_limit": return "This \(work) input exceeds the task's saved input limit."
+        case "input_limit": return "This \(work) input is too large."
         default: return "The saved model request conflicts with an earlier attempt."
         }
     }
@@ -139,9 +138,9 @@ enum NativeTaskWorkerFailures {
 
     static func pauseMessage(_ code: String) -> String {
         switch code {
-        case "request_timeout": return "The model request reached its time limit."
+        case "request_timeout": return "The model request took too long."
         case "provider_auth": return "The saved model credential was not accepted."
-        case "provider_quota": return "The model provider's usage limit was reached."
+        case "provider_quota": return "The model provider has no usage left."
         case "credential_unavailable": return "The saved model credential is unavailable."
         case "previous_request_uncertain": return "The previous model request ended without a saved response."
         default: return "The model request did not complete."
@@ -153,7 +152,7 @@ enum NativeResearchWorker {
     static let maximumSources = 14
     static let perSourceCharacters = 1500
     static let stepTimeoutSeconds: Double = 240
-    static let loopRules = "Loop discipline, non-negotiable:\n- A result you have not been handed does not exist: never state or use a result before it arrives, and never cite a source you were not given.\n- At the step limit, give your final answer from what is established, never from guesses."
+    static let loopRules = "Loop discipline, non-negotiable:\n- A result you have not been handed does not exist: never state or use a result before it arrives, and never cite a source you were not given."
 
     static func planPrompt(identity: NativeWorkerIdentity) -> String {
         "\(identity.opening), planning web research for \(identity.planningAudience). " + loopRules + "\n\nGiven a question, output 3-5 focused sub-questions that, researched and combined, would thoroughly answer it. Output ONLY a JSON object with a \"subquestions\" array of strings, nothing else. " + NativeTaskDelivery.notePrompt

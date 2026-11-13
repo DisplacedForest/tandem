@@ -307,7 +307,7 @@ extension SelfTest {
         }
         let rig = try NativeCompanionFinishRig(room: NativeCompanionFinishRig.tightRoom, tools: web, model: searching)
         let id = try rig.create("Find the reading room hours at the public libraries")
-        rig.model.failClosing(NativeTaskGenerationFailure(code: "request_limit"))
+        rig.model.failClosing(NativeTaskGenerationFailure(code: "request_conflict"))
         let ended = try await rig.settle()
         let result = try rig.report(ended.record)
         let report = result["report"] as? String ?? ""
@@ -360,7 +360,7 @@ extension SelfTest {
             try require((NativeCompanionWorker.earlierLine(checkpoint) ?? "").unicodeScalars.count <= NativeTaskStop.stepScalars / 4,
                         "The completed steps line is cut to its limit in scalars")
             _ = try rig.seed(id, checkpoint: try checkpoint.encoded())
-            rig.model.failClosing(NativeTaskGenerationFailure(code: "request_limit"))
+            rig.model.failClosing(NativeTaskGenerationFailure(code: "request_conflict"))
             let ended = try await rig.settle()
             let report = try rig.report(ended.record)["report"] as? String ?? ""
             try require(ended.record.state == .completed && companionClosingOnly(rig, after: 0),
@@ -588,7 +588,7 @@ extension SelfTest {
                            ["content": "{\"seats\":40}", "role": "tool", "tool_call_id": "saved-1"]],
         ]
         _ = try rig.seed(id, checkpoint: try NativeTaskStore.canonical(checkpoint))
-        rig.model.failClosing(NativeTaskGenerationFailure(code: "request_limit"))
+        rig.model.failClosing(NativeTaskGenerationFailure(code: "request_conflict"))
         let ended = try await rig.settle()
         let result = try rig.report(ended.record)
         let report = result["report"] as? String ?? ""

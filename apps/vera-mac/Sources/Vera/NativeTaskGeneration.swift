@@ -99,16 +99,15 @@ struct NativeTaskGenerationMessage: Codable, Equatable, Sendable {
 }
 
 struct NativeTaskGenerationBudget: Equatable, Sendable {
-    let maximumOrdinal: Int
     let maximumMessages: Int?
     let maximumBytes: Int
     let allowsTools: Bool
 
-    static let standard = NativeTaskGenerationBudget(maximumOrdinal: 3, maximumMessages: 8, maximumBytes: 65536, allowsTools: false)
+    static let standard = NativeTaskGenerationBudget(maximumMessages: 8, maximumBytes: 65536, allowsTools: false)
 
     static var dot: NativeTaskGenerationBudget {
         let budget = NativeCompanionWorkerBudget.standard
-        return NativeTaskGenerationBudget(maximumOrdinal: 3, maximumMessages: nil,
+        return NativeTaskGenerationBudget(maximumMessages: nil,
                                           maximumBytes: budget.transcriptBytes, allowsTools: true)
     }
 

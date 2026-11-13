@@ -449,10 +449,6 @@ extension SelfTest {
         } catch let status as NativeTaskLocalStatus { try require(status.code == 409, "Binding mismatch is a conflict") }
         let idle = try await exchange.ready(taskID: task.id, binding: binding)
         try require(idle == nil, "Ready without a pending job delivers nothing")
-        do {
-            _ = try await exchange.complete(task: task, binding: binding, phase: "plan", attempt: "initial", ordinal: 4, messages: messages)
-            throw NativeTaskFixture.Failure.assertion("The per-step request limit holds")
-        } catch let failure as NativeTaskGenerationFailure { try require(failure.code == "request_limit", "Over the limit is request_limit") }
         let worker = Task { try await exchange.complete(task: task, binding: binding, phase: "plan", attempt: "initial", ordinal: 0, messages: messages) }
         var job: NativeTaskGenerationJob?
         for _ in 0..<40 where job == nil {
@@ -932,7 +928,7 @@ extension SelfTest {
         let paused = try await pauseHarness.submit("Quota research twice")
         try require(try await pauseHarness.wait { try pauseHarness.state(paused) == .needsDecision }, "A second provider failure in the same step pauses for a decision")
         let card = try pauseRepository.taskProjection(id: paused.id)!.snapshot!
-        try require(card.decision?.choices == ["retry"] && card.decision?.prompt.contains("usage limit") == true, "The card asks a plain retry question")
+        try require(card.decision?.choices == ["retry"] && card.decision?.prompt.contains("no usage left") == true, "The card asks a plain retry question")
         await pauseHarness.tracker.retry(paused.id)
         try require(try await pauseHarness.wait { try pauseHarness.state(paused) == .completed }, "Retry resumes and completes the task")
         let engineTask = try pauseHarness.engine.store.get(paused.remoteTaskID!)
@@ -1160,7 +1156,7 @@ extension SelfTest {
         let budget = NativeCompanionWorkerBudget.standard
         try require(budget == NativeCompanionWorkerBudget(transcriptBytes: 524288), "The dot budget holds its standard size")
         let enforced = NativeTaskGenerationBudget.forWorker("companion")
-        try require(enforced.maximumOrdinal == 3 && enforced.maximumMessages == nil
+        try require(enforced.maximumMessages == nil
                      && enforced.maximumBytes == budget.transcriptBytes && enforced.allowsTools, "The exchange reads the dot budget")
         try require(NativeTaskGenerationBudget.forWorker("research") == .standard && NativeTaskGenerationBudget.forWorker("document") == .standard,
                     "Research and documents keep their budget")
@@ -1213,11 +1209,33 @@ extension SelfTest {
                 return "other"
             }
         }
-        let accepted3 = await outcome(dotTask, ordinal: 3, base)
-        let rejected4 = await outcome(dotTask, ordinal: 4, base)
-        let research4 = await outcome(researchTask, ordinal: 4, base)
-        try require(accepted3 == "accepted" && rejected4 == "request_limit" && research4 == "request_limit",
-                    "Dot and research share the per-step request ordinal: \(accepted3) \(rejected4) \(research4)")
+        let stepRepository = try LocalChatRepository(inMemory: true)
+        let stepStore = NativeTaskStore(database: stepRepository.database)
+        let stepExchange = NativeTaskGenerationExchange(store: stepStore, admission: { .local(arbiter) })
+        _ = try stepStore.create(workerType: "companion", payload: try dotPayload(), idempotencyKey: "steps")
+        guard let stepTask = try stepStore.claim(workerTypes: ["companion"]) else {
+            throw NativeTaskFixture.Failure.assertion("The stepping task could not be claimed")
+        }
+        _ = try await stepExchange.ready(taskID: stepTask.id, binding: binding)
+        var attempts: [String] = []
+        var answers: [String] = []
+        for ordinal in 0...5 {
+            let turn = Task { try await stepExchange.completeTurn(task: stepTask, binding: binding, phase: "work-1", attempt: "steps",
+                                                              ordinal: ordinal, messages: base) }
+            var pending: NativeTaskGenerationJob?
+            for _ in 0..<200 where pending == nil {
+                try await Task.sleep(for: .milliseconds(10))
+                pending = try await stepExchange.ready(taskID: stepTask.id, binding: binding)
+            }
+            guard let pending else { throw NativeTaskFixture.Failure.assertion("Step \(ordinal) never reached the broker") }
+            attempts.append(pending.attempt)
+            try await stepExchange.result(taskID: stepTask.id, body: NativeTaskGenerationResponse(jobID: pending.id, bindingID: pending.bindingID,
+                generation: pending.generation, messagesDigest: pending.messagesDigest, response: "answer \(ordinal)", failure: nil))
+            answers.append(try await turn.value.content)
+        }
+        try require(answers == (0...5).map { "answer \($0)" } && Set(attempts).count == 6
+                    && attempts == (0...5).map { "steps-\($0)" },
+                    "A step may make any number of model requests, each with its own attempt: \(attempts) \(answers)")
         let filler = (0..<299).map { NativeTaskGenerationMessage(role: $0 % 2 == 0 ? "user" : "assistant", content: "x") }
         let fullTranscript = [NativeTaskGenerationMessage(role: "system", content: "Work")] + filler
         let manyMessages = await outcome(dotTask, fullTranscript)
