@@ -50,6 +50,10 @@ enum Shot {
             CardShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if view == "companion-schedule-card" {
+            CardShot.render(view: "card-schedule-anything-ada", to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("task-card") {
             NativeTaskCardShot.render(view: view, to: path, appearance: appearance)
             return
@@ -82,6 +86,8 @@ enum Shot {
             size = CGSize(width: 1800, height: 640)
         } else if view == "brand-gallery" || view.hasPrefix("chats-image-save") {
             size = CGSize(width: 900, height: 640)
+        } else if view == "scheduled-editor" {
+            size = CGSize(width: 480, height: 340)
         } else if view == "brand-marks" {
             size = CGSize(width: 900, height: 320)
         } else if view == "companion-picker" {
@@ -593,6 +599,20 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "scheduled-editor" {
+            store.adoptAssistantName(NativeDotShotFixture.name)
+            var draft = NativeScheduleDraft()
+            draft.workerType = NativeSchedule.companionWorkerType
+            draft.owner = .dot
+            draft.title = NativeScheduleShotFixture.anythingElseTitle
+            draft.instruction = NativeScheduleShotFixture.anythingElseInstruction
+            content = AnyView(
+                ScheduleEditor(target: .new, draft: draft, onSave: { _ in })
+                    .environment(\.renderSafe, true)
+                    .environmentObject(store)
+                    .frame(width: size.width, height: size.height, alignment: .top)
+                    .background(Theme.bg)
+            )
         } else if view == "vera-header" {
             NativeDotShotFixture.populate(store, paused: true, setupCompleted: true)
             content = AnyView(
@@ -629,7 +649,7 @@ enum Shot {
                  "artifacts-filter-images", "artifacts-no-results", "artifacts-saved", "artifacts-save-failed",
                  "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
                  "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow": section = .artifacts
-            case "scheduled", "scheduled-paused", "scheduled-caught-up": section = .scheduled
+            case "scheduled", "scheduled-paused", "scheduled-caught-up", "scheduled-anything": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty", "integrations-changes": section = .integrations
             case "memory": section = .memory
             case "companion-connection":
@@ -640,8 +660,9 @@ enum Shot {
             }
             store.section = section
             if ConversationTopBarShot.titledViews.contains(view) { ConversationTopBarShot.seedTitledChat(store) }
-            if view == "scheduled" || view == "scheduled-paused" || view == "scheduled-caught-up" {
-                NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused", caughtUp: view == "scheduled-caught-up")
+            if view == "scheduled" || view == "scheduled-paused" || view == "scheduled-caught-up" || view == "scheduled-anything" {
+                NativeScheduleShotFixture.populate(store, assistantPaused: view == "scheduled-paused", caughtUp: view == "scheduled-caught-up",
+                                                   anythingElse: view == "scheduled-anything")
             }
             content = AnyView(
                 ShotView(store: store, section: section,

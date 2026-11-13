@@ -2395,7 +2395,7 @@ final class ChatStore: ObservableObject {
         }
         definitions.append(contentsOf: folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true))
         definitions.append(contentsOf: commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true))
-        if let scheduleTool = scheduleToolDefinition() { definitions.append(scheduleTool) }
+        if let scheduleTool = scheduleToolDefinition(general: isVeraThread(turn.conversationID)) { definitions.append(scheduleTool) }
         if let profileTool { definitions.append(profileTool) }
         let registry = NativeToolRegistry(definitions: definitions)
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
@@ -2453,7 +2453,7 @@ final class ChatStore: ObservableObject {
                 ])
             }
         }
-        if let scheduleTool = scheduleToolDefinition() {
+        if let scheduleTool = scheduleToolDefinition(general: isVeraThread(id)) {
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + [scheduleTool])
         }
         let turnGrants = grants(for: id)

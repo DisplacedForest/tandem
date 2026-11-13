@@ -439,6 +439,7 @@ enum SelfTest {
         do { try runConversationPresence() } catch { print("SELFTEST ERROR: conversation presence \(error)"); exit(1) }
         do { try runComposerEditing() } catch { print("SELFTEST ERROR: composer editing \(error)"); exit(1) }
         do { try await runNativeScheduleTools() } catch { print("SELFTEST ERROR: native schedule tool \(error)"); exit(1) }
+        do { try await runScheduleAnythingElse() } catch { print("SELFTEST ERROR: schedule anything else \(error)"); exit(1) }
         do { try await runNativeFolderTools() } catch { print("SELFTEST ERROR: native folder tools \(error)"); exit(1) }
         do { try await runNativeRules() } catch { print("SELFTEST ERROR: native rules \(error)"); exit(1) }
         do { try runNativeCardChoices() } catch { print("SELFTEST ERROR: native card choices \(error)"); exit(1) }

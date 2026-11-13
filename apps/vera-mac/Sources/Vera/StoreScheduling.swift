@@ -106,7 +106,7 @@ extension ChatStore {
             guard run.checkInKey != key, let schedule = schedules.first(where: { $0.id == run.scheduleID }) else { continue }
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot) else { continue }
             var message = Message(role: .assistant,
-                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(CompanionSavedText.plain(decision.prompt, name: companionName, appWritten: reference.request.workerType == "companion"))",
+                                  text: schedule.checkInSentence(CompanionSavedText.plain(decision.prompt, name: companionName, appWritten: reference.request.workerType == "companion")),
                                   state: .complete)
             message.displayBlocks = [.taskCard(display.card)]
             guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid,
@@ -218,9 +218,9 @@ extension ChatStore {
         throw NativeScheduleError.invalid(scheduleError ?? "The schedule couldn't be saved.")
     }
 
-    func scheduleToolDefinition() -> NativeToolDefinition? {
+    func scheduleToolDefinition(general: Bool = false) -> NativeToolDefinition? {
         guard nativeScheduleStore != nil else { return nil }
-        return NativeScheduleTools.definition(searchAvailable: nativeSearchAvailable, save: { [weak self] draft in
+        return NativeScheduleTools.definition(general: general, searchAvailable: nativeSearchAvailable, save: { [weak self] draft in
             guard let self else { throw NativeScheduleError.invalid("Tandem is closing.") }
             return try await self.scheduleFromChat(draft)
         })
@@ -323,7 +323,7 @@ extension ChatStore {
         guard let nativeConfig = currentNativeConfig else { return .failed("No model is set up. Add one in Settings.") }
         let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
         if nativeTaskConfiguration != nil && profile == nil { return .failed("The model profile couldn't be prepared.") }
-        if !schedule.isDocument && !nativeSearchAvailable() { return .failed("Search isn't set up. Add a search URL in Settings.") }
+        if schedule.workerType == "research" && !nativeSearchAvailable() { return .failed("Search isn't set up. Add a search URL in Settings.") }
         let request: NativeResearchTaskRequest
         do { request = try schedule.taskRequest() } catch { return .failed(error.localizedDescription) }
         guard let conversationID = scheduleConversation(schedule) else {

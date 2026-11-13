@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 enum NativeScheduleShotFixture {
     static func populate(_ store: ChatStore, assistantPaused: Bool = false, waiting: (referenceID: String, prompt: String)? = nil,
-                         caughtUp: Bool = false) {
+                         caughtUp: Bool = false, anythingElse: Bool = false) {
         if assistantPaused {
             store.adoptAssistantName(NativeDotShotFixture.name)
             store.dotProfile = NativeDotProfile(state: .paused, setupCompleted: true)
@@ -46,6 +46,13 @@ enum NativeScheduleShotFixture {
                                   conversationID: "shot", taskReferenceID: waiting?.referenceID ?? "shot-task"),
             ],
         ]
+        if anythingElse, let summary = anythingElseSchedule(zone: zone, calendar: calendar, now: now) {
+            store.schedules.insert(summary, at: 0)
+            store.scheduleRuns[summary.id] = [
+                NativeScheduleRun(scheduleID: summary.id, scheduledFor: today7, startedAt: today7, finishedAt: today7.addingTimeInterval(90),
+                                  outcome: .completed, conversationID: "shot"),
+            ]
+        }
         guard caughtUp else { return }
         store.schedules = [briefing, prices, digest]
         let caughtUpStart = today7.addingTimeInterval(2 * 3600)
@@ -56,5 +63,15 @@ enum NativeScheduleShotFixture {
                               finishedAt: calendar.date(byAdding: .day, value: -1, to: caughtUpStart)!, outcome: .missed,
                               detail: NativeScheduler.missedNote),
         ]
+    }
+
+    static let anythingElseTitle = "Morning summary"
+    static let anythingElseInstruction = "Check my calendar and the weather and tell me what's on today."
+
+    static func anythingElseSchedule(zone: TimeZone, calendar: Calendar, now: Date) -> NativeSchedule? {
+        let today7 = calendar.date(bySettingHour: 7, minute: 0, second: 0, of: now)!
+        return try? NativeSchedule(id: "shot-summary", owner: .dot, workerType: NativeSchedule.companionWorkerType, title: anythingElseTitle,
+                                   instruction: anythingElseInstruction, cadence: .weekdays(minuteOfDay: 7 * 60), timeZone: zone,
+                                   nextRunAt: calendar.date(byAdding: .day, value: 1, to: today7), lastRunAt: today7, lastOutcome: .completed)
     }
 }

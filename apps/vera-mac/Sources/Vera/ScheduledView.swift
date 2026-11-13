@@ -92,12 +92,14 @@ struct ScheduledView: View {
         VStack(spacing: 10) {
             Image(systemName: AppSection.scheduled.icon).font(.system(size: 30, weight: .light)).foregroundStyle(Theme.textSecondary)
             Text("Nothing scheduled yet").font(.system(size: 16, weight: .semibold))
-            Text("Set up research or a document to run every day, on weekdays, weekly, every few hours, or once.")
+            Text(Self.emptyMessage)
                 .font(.system(size: 13)).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center).frame(maxWidth: 380)
             Button("New schedule") { editing = .new }.padding(.top, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    static let emptyMessage = "Set up research, a document or anything else to run every day, on weekdays, weekly, every few hours, or once."
 
     private var scheduleList: some View {
         ShotSafeScroll(renderSafe: renderSafe) {
@@ -147,7 +149,7 @@ private struct ScheduleRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: schedule.isDocument ? "doc.text" : "magnifyingglass")
+            kindIcon
                 .font(.system(size: 15)).foregroundStyle(Theme.accent).frame(width: 22).padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(schedule.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
@@ -163,6 +165,14 @@ private struct ScheduleRow: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    @ViewBuilder private var kindIcon: some View {
+        if schedule.isCompanionWork {
+            InterfaceIconView(icon: .companion, size: InterfaceIconSize.regular)
+        } else {
+            Image(systemName: schedule.isDocument ? "doc.text" : "magnifyingglass")
+        }
     }
 
     private var statusLine: CompanionLine {
@@ -197,7 +207,7 @@ private struct ScheduleDetail: View {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(schedule.title).font(.system(size: 17, weight: .semibold))
-                    CompanionLineText(line: NativeScheduleControls.resultsLine("\(schedule.workTitle). \(schedule.cadenceSummary). ", toCompanion: schedule.owner == .dot, end: "."))
+                    CompanionLineText(line: NativeScheduleControls.resultsLine(schedule.detailLead, toCompanion: schedule.owner == .dot, end: "."))
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     Text(schedule.instruction).font(.system(size: 13)).textSelection(.enabled).padding(.top, 4)
                 }
@@ -360,7 +370,8 @@ struct ScheduleEditor: View {
     let onSave: (NativeScheduleDraft) -> Void
     @EnvironmentObject var store: ChatStore
     @Environment(\.dismiss) private var dismiss
-    @State private var draft = NativeScheduleDraft()
+    @Environment(\.renderSafe) private var renderSafe
+    @State private var draft: NativeScheduleDraft
     @State private var repeatMode: Repeat = .daily
     @State private var time = Date()
     @State private var weekday = 2
@@ -368,19 +379,41 @@ struct ScheduleEditor: View {
     @State private var onceAt = Date().addingTimeInterval(3600)
     @State private var problem: String?
 
+    init(target: ScheduleEditorTarget, draft: NativeScheduleDraft = NativeScheduleDraft(), onSave: @escaping (NativeScheduleDraft) -> Void) {
+        self.target = target
+        self.onSave = onSave
+        _draft = State(initialValue: draft)
+    }
+
+    static func instructionLabel(_ workerType: String) -> String {
+        switch workerType {
+        case "document": return "What to write"
+        case NativeSchedule.companionWorkerType: return "What to do"
+        default: return "What to look into"
+        }
+    }
+
+    static let companionResults = "Results go to {name}."
+    static let workKinds: [(title: String, tag: String)] = [("Research", "research"), ("Document", "document"),
+                                                            ("Anything else", NativeSchedule.companionWorkerType)]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(isNew ? "New schedule" : "Edit schedule").font(.system(size: 17, weight: .semibold)).padding(.bottom, 14)
             Form {
-                TextField("Name", text: $draft.title, prompt: Text("Morning news check"))
-                Picker("Work", selection: $draft.workerType) {
-                    Text("Research").tag("research")
-                    Text("Document").tag("document")
+                if renderSafe {
+                    LabeledContent("Name") { Text(draft.title) }
+                    LabeledContent("Work") { Text(Self.workKinds.first { $0.tag == draft.workerType }?.title ?? "") }
+                } else {
+                    TextField("Name", text: $draft.title, prompt: Text("Morning news check"))
+                    Picker("Work", selection: $draft.workerType) {
+                        ForEach(Self.workKinds, id: \.tag) { Text($0.title).tag($0.tag) }
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(draft.workerType == "document" ? "What to write" : "What to look into")
-                    TextEditor(text: $draft.instruction)
+                    Text(Self.instructionLabel(draft.workerType))
+                    instructionField
                         .font(.system(size: 13))
                         .frame(minHeight: 90)
                         .scrollContentBackground(.hidden)
@@ -389,16 +422,24 @@ struct ScheduleEditor: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
                 }
-                Picker("Results go to", selection: $draft.owner) {
-                    Text(store.companion.leading).tag(NativeScheduleOwner.dot)
-                    Text("Its own chat").tag(NativeScheduleOwner.conversation)
+                if draft.workerType == NativeSchedule.companionWorkerType {
+                    CompanionNamedText(template: Self.companionResults)
+                } else {
+                    Picker("Results go to", selection: $draft.owner) {
+                        Text(store.companion.leading).tag(NativeScheduleOwner.dot)
+                        Text("Its own chat").tag(NativeScheduleOwner.conversation)
+                    }
                 }
                 Picker("Repeat", selection: $repeatMode) {
                     ForEach(Repeat.allCases) { Text($0.title).tag($0) }
                 }
                 switch repeatMode {
                 case .daily, .weekdays:
-                    DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
+                    if renderSafe {
+                        LabeledContent("Time") { Text(time.formatted(date: .omitted, time: .shortened)) }
+                    } else {
+                        DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
+                    }
                 case .weekly:
                     Picker("Day", selection: $weekday) {
                         ForEach(1...7, id: \.self) { Text(NativeScheduleCadence.weekdayName($0)).tag($0) }
@@ -424,6 +465,14 @@ struct ScheduleEditor: View {
         .padding(22)
         .frame(width: 480)
         .onAppear(perform: load)
+    }
+
+    @ViewBuilder private var instructionField: some View {
+        if renderSafe {
+            Text(draft.instruction).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            TextEditor(text: $draft.instruction)
+        }
     }
 
     private var isNew: Bool {
@@ -460,6 +509,7 @@ struct ScheduleEditor: View {
         case .hours: draft.cadence = .everyHours(hours)
         case .once: draft.cadence = .once(onceAt)
         }
+        if draft.workerType == NativeSchedule.companionWorkerType { draft.owner = .dot }
         do {
             _ = try NativeSchedule(owner: draft.owner, workerType: draft.workerType, title: draft.title,
                                    instruction: draft.instruction, cadence: draft.cadence, timeZone: .current)

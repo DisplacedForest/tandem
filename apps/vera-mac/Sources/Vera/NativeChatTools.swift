@@ -233,6 +233,7 @@ struct NativeToolDefinition: Sendable {
     var folderRoots: (@Sendable () -> [String])? = nil
     var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
+    var refusesBeforeAsking: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
     var instructionFor: (@Sendable ([String: NativeJSONValue]) -> NativeInstructionPending?)? = nil
     var chatDecision: (@Sendable ([String: NativeJSONValue]) -> NativeChatDecision)? = nil
     var marksEffect = false
@@ -799,6 +800,7 @@ struct NativeToolLoop: Sendable {
                                     throw NativeToolError.invalidArguments("Tool call identifier and name are required")
                                 }
                                 let arguments = try definition.validatedArguments(call.arguments)
+                                try definition.refusesBeforeAsking?(arguments)
                                 let isSearch = definition.id == NativeWebTools.searchToolID && definition.name == NativeWebTools.searchToolName
                                 let cacheKey = isSearch && definition.confirmation == .none
                                     ? try Self.serializedResult(.object(arguments)) : nil
