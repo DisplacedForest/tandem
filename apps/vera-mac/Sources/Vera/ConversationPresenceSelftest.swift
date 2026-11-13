@@ -4,14 +4,9 @@ import Foundation
 extension SelfTest {
     static func runConversationPresence() throws {
         let require = NativeTaskFixture.require
-        try require(ConversationPresence.headerKind(companionThread: false) == .conversation, "A standard chat has the conversation header")
-        try require(ConversationPresence.headerKind(companionThread: true) == .none, "The companion thread has no header strip")
-        try require(ConversationPresence.headerFigure(companionThread: false) == .none && !ConversationPresence.headerShowsStatus(companionThread: false),
-                    "A standard chat header carries no figure and no state line")
         try require(ConversationPresence.greetingFigure(companionThread: false) == .mark, "A standard chat greeting shows the Tandem mark")
         try require(ConversationPresence.replyFigure(companionThread: false) == .none, "A standard chat reply shows no figure")
-        try require(ConversationPresence.headerFigure(companionThread: true) == .companion
-                    && ConversationPresence.greetingFigure(companionThread: true) == .companion
+        try require(ConversationPresence.greetingFigure(companionThread: true) == .companion
                     && ConversationPresence.replyFigure(companionThread: true) == .companion,
                     "Only the companion thread shows the companion figure")
 
@@ -22,11 +17,6 @@ extension SelfTest {
         try require(ConversationPresence.assistantName(companionThread: true, savedName: "Cedar") == "Cedar"
                     && ConversationPresence.assistantName(companionThread: true, savedName: "Vera") == "Vera",
                     "Companion identity preserves the saved name without renaming user data")
-        try require(ConversationPresence.headerTitle(conversationTitle: "Vera migration notes") == "Vera migration notes",
-                    "Existing chat titles remain intact, including intentional historical product references")
-        try require(ConversationPresence.headerTitle(conversationTitle: nil) == "Tandem"
-                    && ConversationPresence.headerTitle(conversationTitle: "  ") == "Tandem",
-                    "Missing chat titles fall back to the product name")
 
         let owned = "chat-with-work"
         let references = [try OngoingWorkFixture.reference(conversationID: owned, title: "Compare insulation options", state: "running")]
@@ -46,8 +36,7 @@ extension SelfTest {
             repository: repository, artifactPersistenceEnabled: false)
         store.newConversation()
         try require(!store.isVeraThread(store.selectedID), "A new chat is a standard chat by default")
-        try require(ConversationPresence.replyFigure(companionThread: store.isVeraThread(store.selectedID)) == .none
-                    && ConversationPresence.headerFigure(companionThread: store.isVeraThread(store.selectedID)) == .none,
+        try require(ConversationPresence.replyFigure(companionThread: store.isVeraThread(store.selectedID)) == .none,
                     "The default treatment for a conversation is the standard one")
         store.ensureVeraThread()
         store.openVeraThread()

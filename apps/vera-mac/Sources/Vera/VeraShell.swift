@@ -102,7 +102,7 @@ struct CompanionTileBadge: View {
 
 struct SidebarRoundButtonStyle: ButtonStyle {
     var selected = false
-    static let size: CGFloat = 32
+    static let size: CGFloat = 36
 
     func makeBody(configuration: Configuration) -> some View {
         RoundBody(configuration: configuration, selected: selected)
@@ -273,7 +273,7 @@ struct VeraSidebar: View {
                 railButton(store.companion.leading, icon: "bubble.left") { onSelect(.vera) }
                 if !renderSafe { CompactUpdateBadge { collapsed = false } }
             }
-            collapseToggle
+            if ConversationTopBarModel.showsRailToggle(section: store.section) { collapseToggle }
             if renderSafe { railGlyph("gearshape", selected: false) }
             else {
                 SettingsLink { railGlyph("gearshape", selected: false) }
@@ -310,14 +310,15 @@ struct VeraSidebar: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
-                Button { toggleSearch() } label: { Image(systemName: "magnifyingglass") }
+                Button { toggleSearch() } label: { InterfaceIconView(icon: .search, size: ConversationTopBarMetrics.iconSize) }
                     .buttonStyle(SidebarRoundButtonStyle(selected: showsSearch))
                     .help("Search chats").accessibilityLabel("Search chats")
-                Button { store.newConversation() } label: { Image(systemName: "plus") }
+                Button { store.newConversation() } label: { InterfaceIconView(icon: .add, size: ConversationTopBarMetrics.iconSize) }
                     .buttonStyle(SidebarRoundButtonStyle())
                     .help("New chat").accessibilityLabel("New chat")
             }
             .padding(.horizontal, 8).padding(.bottom, 8)
+            .padding(.top, ConversationTopBarMetrics.top)
             companionRow
             if showsSearch { searchField.padding(.top, 6) }
             if renderSafe {
@@ -327,7 +328,7 @@ struct VeraSidebar: View {
                 ScrollView { navigationContents }
             }
         }
-        .padding(.horizontal, 8).padding(.top, Self.topInset + 8)
+        .padding(.horizontal, 8)
         .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 

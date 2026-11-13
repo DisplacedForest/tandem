@@ -56,7 +56,6 @@ enum ConversationMetrics {
     static let bubblePaddingV: CGFloat = 10
     static let bodySize: CGFloat = 15
     static let metaSize: CGFloat = 12
-    static let headerNameSize: CGFloat = 17
     static let avatarSize: CGFloat = 44
     static let replyAvatarSize: CGFloat = 24
     static let cardRadius: CGFloat = 14
