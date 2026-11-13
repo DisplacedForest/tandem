@@ -27,15 +27,22 @@ struct AppLocations: Equatable, Sendable {
     var usesStandardLocations: Bool { situation == .plain }
 
     nonisolated(unsafe) private(set) static var headlessRoot: URL?
+    nonisolated(unsafe) private static var settled: AppLocations?
 
     static var isHeadless: Bool { headlessRoot != nil }
 
     static var current: AppLocations {
-        resolve(environment: ProcessInfo.processInfo.environment,
-                home: FileManager.default.homeDirectoryForCurrentUser,
-                applicationSupport: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
-                headlessRoot: headlessRoot)
+        if let settled { return settled }
+        let value = resolve(environment: ProcessInfo.processInfo.environment,
+                            home: FileManager.default.homeDirectoryForCurrentUser,
+                            applicationSupport: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
+                            headlessRoot: headlessRoot)
+        settled = value
+        return value
     }
+
+    @discardableResult
+    static func settle() -> AppLocations { current }
 
     static var settingInEffect: Bool {
         if case .setting = current.situation { return true }
@@ -47,15 +54,61 @@ struct AppLocations: Equatable, Sendable {
         return URL(fileURLWithPath: raw, isDirectory: true)
     }
 
-    static func namesSameFolder(_ first: URL, _ second: URL) -> Bool {
-        if canonicalPath(first) == canonicalPath(second) { return true }
+    static func existingAncestor(_ url: URL) -> URL {
+        var candidate = url.standardizedFileURL
+        while candidate.path != "/" && fileType(candidate.path) == nil {
+            candidate = candidate.deletingLastPathComponent().standardizedFileURL
+        }
+        return candidate
+    }
+
+    static func isCaseInsensitiveVolume(_ url: URL) -> Bool {
+        let ancestor = existingAncestor(url)
+        let values = try? ancestor.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        guard let sensitive = values?.volumeSupportsCaseSensitiveNames else { return true }
+        return !sensitive
+    }
+
+    static func sameNode(_ first: String, _ second: String) -> Bool {
         var left = stat()
         var right = stat()
-        let bothExist = stat(first.path, &left) == 0 && stat(second.path, &right) == 0
+        let bothExist = stat(first, &left) == 0 && stat(second, &right) == 0
         guard bothExist else { return false }
         let sameDevice = left.st_dev == right.st_dev
-        let sameNode = left.st_ino == right.st_ino
-        return sameDevice && sameNode
+        let sameInode = left.st_ino == right.st_ino
+        return sameDevice && sameInode
+    }
+
+    static func comparableForms(_ url: URL, foldCase: Bool) -> Set<String> {
+        let forms = [url.standardizedFileURL.path, canonicalPath(url)]
+        return Set(foldCase ? forms.map { $0.lowercased() } : forms)
+    }
+
+    static func namesSameFolder(_ first: URL, _ second: URL, foldCase: Bool? = nil) -> Bool {
+        let fold = foldCase ?? isCaseInsensitiveVolume(second)
+        let samePath = !comparableForms(first, foldCase: fold).isDisjoint(with: comparableForms(second, foldCase: fold))
+        return samePath || sameNode(first.path, second.path)
+    }
+
+    static func isInside(_ url: URL, _ folder: URL, includingFolder: Bool = true, foldCase: Bool? = nil) -> Bool {
+        let fold = foldCase ?? isCaseInsensitiveVolume(folder)
+        let roots = comparableForms(folder, foldCase: fold)
+        let paths = comparableForms(url, foldCase: fold)
+        let byPath = paths.contains { path in
+            roots.contains { root in
+                let sameFolder = includingFolder && path == root
+                let nested = path.hasPrefix(root == "/" ? "/" : root + "/")
+                return sameFolder || nested
+            }
+        }
+        if byPath { return true }
+        guard fileType(folder.path) != nil else { return false }
+        var ancestor = includingFolder ? url.standardizedFileURL : url.standardizedFileURL.deletingLastPathComponent().standardizedFileURL
+        while true {
+            if sameNode(ancestor.path, folder.path) { return true }
+            if ancestor.path == "/" { return false }
+            ancestor = ancestor.deletingLastPathComponent().standardizedFileURL
+        }
     }
 
     static func situation(environment: [String: String], home: URL, headlessRoot: URL?) -> Situation {
@@ -121,21 +174,9 @@ struct AppLocations: Equatable, Sendable {
         return url.standardizedFileURL.path
     }
 
-    static func isInside(_ url: URL, _ folder: URL, includingFolder: Bool = true) -> Bool {
-        let roots = Set([folder.standardizedFileURL.path, canonicalPath(folder)].map { $0.lowercased() })
-        let paths = Set([url.standardizedFileURL.path, canonicalPath(url)].map { $0.lowercased() })
-        return paths.contains { path in
-            roots.contains { root in
-                let sameFolder = includingFolder && path == root
-                let nested = path.hasPrefix(root == "/" ? "/" : root + "/")
-                return sameFolder || nested
-            }
-        }
-    }
-
-    static func isInsideRealDataFolder(_ url: URL, realFolder: URL? = realDataFolder) -> Bool {
+    static func isInsideRealDataFolder(_ url: URL, realFolder: URL? = realDataFolder, foldCase: Bool? = nil) -> Bool {
         guard let realFolder else { return true }
-        return isInside(url, realFolder)
+        return isInside(url, realFolder, foldCase: foldCase)
     }
 
     static func refuseRealData(_ url: URL) {
@@ -187,6 +228,7 @@ struct AppLocations: Equatable, Sendable {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try? Data(ownerMarker(pid: getpid(), name: name).utf8).write(to: root.appendingPathComponent(ownerMarkerName))
         headlessRoot = root
+        settled = nil
         atexit { AppLocations.removeHeadlessRoot() }
     }
 

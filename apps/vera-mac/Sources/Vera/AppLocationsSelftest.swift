@@ -18,7 +18,76 @@ enum AppLocationsSelftest {
         try checkSettingTrap(scratch.appendingPathComponent("setting-trap", isDirectory: true))
         try checkScratchRoots(scratch.appendingPathComponent("roots", isDirectory: true))
         try checkLegacyImport(scratch.appendingPathComponent("legacy", isDirectory: true))
+        try checkLetterCase(scratch.appendingPathComponent("letter-case", isDirectory: true))
+        try checkSettledOnce(scratch.appendingPathComponent("settled", isDirectory: true))
+        try checkAssistantRoot(scratch.appendingPathComponent("assistant", isDirectory: true))
         try checkLaunchPlan()
+    }
+
+    static func checkLetterCase(_ root: URL) throws {
+        let require = NativeTaskFixture.require
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let real = AppLocations.dataFolder(home: root)
+        let sibling = real.deletingLastPathComponent()
+            .appendingPathComponent(NativeAttachmentStore.supportFolderName.uppercased(), isDirectory: true)
+            .appendingPathComponent("attachments", isDirectory: true)
+        try require(!AppLocations.isInside(sibling, real, foldCase: false), "On a case-sensitive volume a sibling that differs by letter case is outside")
+        try require(AppLocations.isInside(sibling, real, foldCase: true), "On a case-insensitive volume a sibling that differs by letter case is the same folder")
+        try require(!AppLocations.isInsideRealDataFolder(sibling, realFolder: real, foldCase: false), "The trap leaves a case-sensitive sibling alone")
+        try require(AppLocations.isInsideRealDataFolder(sibling, realFolder: real, foldCase: true), "The trap catches a case-insensitive spelling")
+        let lower = root.appendingPathComponent("home/.vera", isDirectory: true)
+        let upper = root.appendingPathComponent("home/.VERA", isDirectory: true)
+        try require(!AppLocations.namesSameFolder(upper, lower, foldCase: false), "Case-sensitive names differ by letter case")
+        try require(AppLocations.namesSameFolder(upper, lower, foldCase: true), "Case-insensitive names match across letter case")
+        try require(AppLocations.isAcceptableScratchParent(root.appendingPathComponent("tmp"), home: root.appendingPathComponent("home")),
+                    "A scratch parent beside the home is accepted")
+    }
+
+    static func checkSettledOnce(_ root: URL) throws {
+        let require = NativeTaskFixture.require
+        let home = root.appendingPathComponent("home", isDirectory: true)
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let alternate = home.appendingPathComponent(".VERA", isDirectory: true)
+        let environment = [AppLocations.settingName: alternate.path]
+        let before = AppLocations.resolve(environment: environment, home: home, applicationSupport: support, headlessRoot: nil)
+        let currentBefore = AppLocations.current
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".vera", isDirectory: true), withIntermediateDirectories: true)
+        let after = AppLocations.resolve(environment: environment, home: home, applicationSupport: support, headlessRoot: nil)
+        try require(before == after, "The alternate spelling resolves the same before and after the folder exists")
+        if AppLocations.isCaseInsensitiveVolume(home) {
+            try require(before.usesStandardLocations, "On a case-insensitive volume a missing alternate spelling is already the standard folder")
+        } else {
+            try require(!before.usesStandardLocations, "On a case-sensitive volume the alternate spelling is a separate folder")
+        }
+        try require(AppLocations.current == currentBefore, "The locations this run settled on don't change when a folder appears")
+        try require(AppLocations.settle() == currentBefore, "Settling again returns the same locations")
+    }
+
+    static func checkAssistantRoot(_ root: URL) throws {
+        let require = NativeTaskFixture.require
+        let standard = root.appendingPathComponent("home/.vera", isDirectory: true)
+        try FileManager.default.createDirectory(at: standard, withIntermediateDirectories: true)
+        let nested = standard.appendingPathComponent("profiles/test", isDirectory: true)
+        let locations = AppLocations.resolve(environment: [AppLocations.settingName: nested.path], home: root.appendingPathComponent("home"),
+                                             applicationSupport: root, headlessRoot: nil)
+        let assistant = locations.assistant
+        try require(PiExperimentRoot.allowsLocation(assistant, standardConfig: standard, resolvedAssistant: assistant),
+                    "The assistant folder the resolver hands out under a nested setting is accepted")
+        try require(!PiExperimentRoot.allowsLocation(standard, standardConfig: standard, resolvedAssistant: assistant), "The standard config folder itself is refused")
+        try require(!PiExperimentRoot.allowsLocation(standard.appendingPathComponent("config-files"), standardConfig: standard, resolvedAssistant: assistant),
+                    "A sibling under the standard folder that wasn't handed out is refused")
+        try require(!PiExperimentRoot.allowsLocation(nested.appendingPathComponent("data/Other"), standardConfig: standard, resolvedAssistant: assistant),
+                    "A folder next to the handed out assistant folder is refused")
+        try require(!PiExperimentRoot.allowsLocation(standard.deletingLastPathComponent(), standardConfig: standard, resolvedAssistant: assistant),
+                    "A folder that holds the standard folder is refused")
+        try require(!PiExperimentRoot.allowsLocation(assistant, standardConfig: standard, resolvedAssistant: nil),
+                    "Without the setting nothing under the standard folder is accepted")
+        try require(!PiExperimentRoot.allowsLocation(standard.appendingPathComponent("Assistant"), standardConfig: standard,
+                                                     resolvedAssistant: standard.appendingPathComponent("Assistant")),
+                    "An assistant folder directly in the standard folder is still refused")
+        let elsewhere = root.appendingPathComponent("elsewhere/Assistant", isDirectory: true)
+        try require(PiExperimentRoot.allowsLocation(elsewhere, standardConfig: standard, resolvedAssistant: nil), "A folder outside the standard folder is accepted")
     }
 
     static func checkDecision(_ scratch: URL) throws {
@@ -184,7 +253,12 @@ enum AppLocationsSelftest {
         guard let real = AppLocations.realDataFolder else { throw NativeTaskFixture.Failure.assertion("The account home resolves") }
         let realAttachments = real.appendingPathComponent("attachments", isDirectory: true)
         try require(AppLocations.isInsideRealDataFolder(realAttachments), "The trap recognizes the real attachments folder")
-        try require(AppLocations.isInsideRealDataFolder(URL(fileURLWithPath: realAttachments.path.uppercased())), "The trap ignores letter case")
+        let uppercased = URL(fileURLWithPath: realAttachments.path.uppercased())
+        if AppLocations.isCaseInsensitiveVolume(real) {
+            try require(AppLocations.isInsideRealDataFolder(uppercased), "On a case-insensitive volume the trap ignores letter case")
+        } else {
+            try require(!AppLocations.isInsideRealDataFolder(uppercased), "On a case-sensitive volume another letter case is a different folder")
+        }
         try require(AppLocations.isInsideRealDataFolder(realAttachments.appendingPathComponent("../projects")), "The trap sees through dot segments")
         try require(!AppLocations.isInsideRealDataFolder(scratch.appendingPathComponent("attachments")), "The trap leaves a scratch folder alone")
         try require(!AppLocations.current.dataLocations.contains(where: { AppLocations.isInsideRealDataFolder($0) }), "No location this run resolves is inside the real data folder")
