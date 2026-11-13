@@ -6,7 +6,7 @@ actor NativeTaskTracker {
     let service: NativeTaskHandoffService
     let transport: NativeTaskEventTransport
     let configuredBase: @Sendable () -> URL?
-    let onUpdate: @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void
+    let onUpdate: @MainActor @Sendable ([NativeTaskMessageUpdate]) async -> Void
     private let instanceID = UUID()
     private var lease: NativeTaskStreamLease?
     private var progress = NativeTaskStreamProgress()
@@ -17,6 +17,7 @@ actor NativeTaskTracker {
     private var busy = false
     private var actions: Set<UUID> = []
     private var retryActive: Set<UUID> = []
+    private var answerReceipts: [UUID: AnswerReceipt] = [:]
     private var ticks = 0
     private var nextStream: ContinuousClock.Instant?
     private var refreshAfter: [String: ContinuousClock.Instant] = [:]
@@ -25,7 +26,7 @@ actor NativeTaskTracker {
     init(repository: any NativeTaskProjectionRepository, client: NativeTaskClient,
          service: NativeTaskHandoffService, transport: NativeTaskEventTransport = .live,
          configuredBase: @escaping @Sendable () -> URL?,
-         onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in }) {
+         onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) async -> Void = { _ in }) {
         self.repository = repository
         self.client = client
         self.service = service
@@ -254,6 +255,11 @@ actor NativeTaskTracker {
         case dropped
     }
 
+    private struct AnswerReceipt {
+        var readers = 0
+        var delivery: AnswerDelivery?
+    }
+
     @discardableResult
     func decide(_ id: UUID, choice: String, expecting decisionID: String? = nil) async -> Bool {
         await answer(id, choice: choice, expecting: decisionID) != nil
@@ -270,8 +276,14 @@ actor NativeTaskTracker {
         do {
             if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
             let intent = try repository.prepareTaskDecision(id: id, decisionID: decision.id, choice: choice)
+            answerReceipts[intent.key, default: AnswerReceipt()].readers += 1
+            defer {
+                answerReceipts[intent.key]?.readers -= 1
+                if answerReceipts[intent.key]?.readers == 0 { answerReceipts[intent.key] = nil }
+            }
             if let update = try repository.projectTask(id: id, snapshot: nil, cursor: 0,
                 connectionNote: nil, lease: lease, generation: nil) { await onUpdate([update]) }
+            if let delivery = answerReceipts[intent.key]?.delivery { return delivery }
             return await deliverRetry(intent, lease: lease)
         } catch { return nil }
     }
@@ -281,6 +293,7 @@ actor NativeTaskTracker {
         let id = intent.referenceID
         guard let reference = try? repository.taskReference(id: id) else { return .waiting }
         guard !reference.cancelRequested else { try? repository.resolveTaskRetry(intent); return .dropped }
+        if let delivery = answerReceipts[intent.key]?.delivery { return delivery }
         let idle = !retryActive.contains(id) && !actions.contains(id)
         guard idle, current(lease), reference.engine == lease.engine else { return .waiting }
         guard let saved = try? repository.taskProjection(id: id)?.snapshot else { return .waiting }
@@ -298,6 +311,7 @@ actor NativeTaskTracker {
             guard current(lease) else { return .waiting }
             let snapshot = try await client.decide(reference, intent: intent, digest: decision.digest)
             delivery = .sent
+            answerReceipts[intent.key]?.delivery = delivery
             guard current(lease) else { return delivery }
             if let update = try repository.projectTask(id: id, snapshot: snapshot, cursor: 0,
                 connectionNote: nil, lease: lease, generation: generation) { await onUpdate([update]) }

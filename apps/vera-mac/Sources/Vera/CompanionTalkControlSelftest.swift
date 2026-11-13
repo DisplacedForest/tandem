@@ -148,11 +148,16 @@ enum CompanionTalkControlFixture {
         throw NativeTaskFixture.Failure.assertion(message)
     }
 
-    static func harness(name: String? = "Ada", reusing earlier: Harness? = nil, reply: @escaping CompanionTalkTransport.Reply) async throws -> Harness {
+    static func harness(name: String? = "Ada", reusing earlier: Harness? = nil, research: Bool = false,
+                        reply: @escaping CompanionTalkTransport.Reply) async throws -> Harness {
         let repository = try earlier?.repository ?? LocalChatRepository(inMemory: true)
         let gate = earlier?.gate ?? NativeSessionGate()
         let engine = earlier?.engine ?? NativeTaskLocalEngine(database: repository.database, pollSeconds: 0.05,
-                                                              workers: { _ in ["companion": worker(gate: gate)] })
+                                                              workers: { _ in
+            var available = ["companion": worker(gate: gate)]
+            if research { available["research"] = worker(gate: gate) }
+            return available
+        })
         let transport = CompanionTalkTransport(reply)
         let notes = NativeToolDefinition(id: CompanionAskedWorkFixture.notesToolID, name: "notes_lookup", title: "Read notes",
             description: "Read the shared notes page", parameters: .object(["type": .string("object")]),
@@ -300,9 +305,11 @@ enum CompanionTalkControlFixture {
         try await newerStopSnapshot()
         try await sameTitleStaysUnsure()
         try await notFirst()
+        try await workCallOrder()
         try await oldHandles()
         try await answers()
         try await stoppedWhileAnswering()
+        try await retriedWhileAnswering()
         try await staleQuestion()
         try await vetoFailure()
         try await workerStopsBetweenRetries()
@@ -824,6 +831,45 @@ enum CompanionTalkControlFixture {
                     "A stop or answer after another tool ran in the same round changes nothing")
     }
 
+    static func workCallOrder() async throws {
+        let require = NativeTaskFixture.require
+        for stopFirst in [false, true] {
+            let ask = "Research seed storage. Stop the library comparison."
+            let harness = try await harness(research: true) { user, messages, _ in
+                if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("Done.") }
+                guard user == ask else { return CompanionAskedWorkTransport.say("Fine.") }
+                let research = CompanionAskedWorkTransport.call(NativeTaskTools.toolName, [
+                    "worker_type": .string("research"), "objective": .string("Research seed storage"),
+                    "deliverables": .array([.string("Three findings")]),
+                ])
+                let stopping = stop(handle(messages, "libraries"))
+                return CompanionAskedWorkTransport.hand(stopFirst ? [stopping, research] : [research, stopping])
+            }
+            defer { Task { await finish(harness) } }
+            let work = try await start(harness, libraries)
+            try await settle(harness, work, .going)
+            let before = Set(try harness.repository.taskReferences(conversationID: nil).map(\.id))
+            let reply = try await send(harness, ask)
+            let created = try harness.repository.taskReferences(conversationID: nil).filter { !before.contains($0.id) }
+            let started = reply.toolActivities.first { $0.name == NativeTaskTools.toolName }?.result ?? ""
+            let accepted = created.count == 1 && created.first?.deliveryState == .accepted
+            try require(accepted && started.contains("\"started\":true"), "Research starts in either call order: \(started)")
+            let expectedNames = stopFirst ? [CompanionTalkTools.stopName, NativeTaskTools.toolName]
+                : [NativeTaskTools.toolName, CompanionTalkTools.stopName]
+            let matchingOrder = reply.toolActivities.map(\.name) == expectedNames
+            let roundOne = reply.toolActivities.allSatisfy { $0.round == 1 }
+            try require(matchingOrder && roundOne, "Both calls run in the scripted order in the first round")
+            let result = results(reply).first ?? ""
+            let stopped = try stopRequested(harness, work)
+            if stopFirst {
+                try require(stopped && result.contains("\"changed\":true"), "A first stop succeeds before research starts: \(result)")
+            } else {
+                let refused = result.contains(CompanionTalkCopy.notFirst) && result.contains("\"changed\":false")
+                try require(!stopped && refused, "A stop after research starts is refused: \(result)")
+            }
+        }
+    }
+
     static func oldHandles() async throws {
         let require = NativeTaskFixture.require
         let look = "How are things going?"
@@ -930,6 +976,54 @@ enum CompanionTalkControlFixture {
         }
         let refused = result.contains(CompanionTalkCopy.stoppedBeforeAnswer) && result.contains("\"changed\":false")
         try require(refused && replies == 0 && !armed.value, "An answer overtaken by a stop isn't sent and isn't reported as saved: \(result)")
+    }
+
+    static func retriedWhileAnswering() async throws {
+        let require = NativeTaskFixture.require
+        let retry = "Yes, retry the vent schedule."
+        let harness = try await harness { user, messages, _ in
+            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("Done.") }
+            if user == retry { return CompanionAskedWorkTransport.hand([answer(handle(messages, "vent"), "Retry")]) }
+            return CompanionAskedWorkTransport.say("Fine.")
+        }
+        defer { Task { await finish(harness) } }
+        let vent = try await start(harness, askRetry)
+        try await settle(harness, vent, .waiting)
+        guard let projection = harness.store.repository as? any NativeTaskProjectionRepository,
+              let service = harness.store.nativeTaskService,
+              let remote = try harness.repository.taskReference(id: vent.id)?.remoteTaskID else {
+            throw NativeTaskFixture.Failure.assertion("The store tracks the question")
+        }
+        let armed = CompanionTalkBox(false)
+        let rowsBeforeResume = CompanionTalkBox(-1)
+        let movedBeforeResume = CompanionTalkBox(false)
+        let repository = harness.repository
+        let store = harness.store
+        let ventID = vent.id
+        harness.store.stopNativeTaskRecovery()
+        harness.store.nativeTaskTracker = NativeTaskTracker(repository: projection, client: harness.engine.client, service: service,
+            transport: harness.engine.transport, configuredBase: { NativeTaskLocalEngine.identity.base },
+            onUpdate: { [weak store] updates in
+                store?.applyNativeTaskUpdates(updates)
+                guard armed.value else { return }
+                armed.value = false
+                await store?.nativeTaskTracker?.tick()
+                rowsBeforeResume.value = (try? await repository.database.read { db in
+                    try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_decisions WHERE task_id = ?", arguments: [remote]) ?? 0
+                }) ?? -1
+                let saved = try? repository.taskProjection(id: ventID)?.snapshot
+                movedBeforeResume.value = saved.map { $0.state != .needsDecision } ?? false
+            })
+        armed.value = true
+        let reply = try await send(harness, retry)
+        let result = results(reply).first ?? ""
+        let replies = try await repository.database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_engine_task_decisions WHERE task_id = ?", arguments: [remote]) ?? 0
+        }
+        let sent = result.contains(CompanionTalkCopy.answered) && result.contains("\"changed\":true")
+        let deliveredBeforeResume = rowsBeforeResume.value == 1 && movedBeforeResume.value
+        try require(deliveredBeforeResume, "The periodic pass delivers the answer before the original call resumes")
+        try require(sent && replies == 1, "The accepted answer is reported as sent exactly once: \(result)")
     }
 
     static func staleQuestion() async throws {

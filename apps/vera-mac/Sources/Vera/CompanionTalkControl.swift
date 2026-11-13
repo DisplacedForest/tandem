@@ -153,7 +153,7 @@ enum CompanionTalkTools {
 
     static func firstInReply() -> Bool {
         let roundOne = NativeToolCallContext.round == 1
-        let nothingBefore = NativeToolCallContext.otherToolRan == false
+        let nothingBefore = NativeToolCallContext.replyCallOrdinal == 0
         return roundOne && nothingBefore
     }
 
