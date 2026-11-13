@@ -573,6 +573,7 @@ enum NativeMemoryGate {
     }
 
     static func write(_ report: NativeMemoryGateReport, to directory: URL) throws -> (json: URL, markdown: URL) {
+        AppLocations.refuseRealData(directory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let stamp = DateFormatter()
         stamp.locale = Locale(identifier: "en_US_POSIX")

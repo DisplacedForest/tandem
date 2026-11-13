@@ -55,7 +55,7 @@ final class NativeAttachmentStore: Sendable {
     static var standardDirectory: URL { AppLocations.current.attachments }
 
     init(directory: URL = NativeAttachmentStore.standardDirectory) {
-        AppLocations.refuseRealDataInHeadlessRun(directory)
+        AppLocations.refuseRealData(directory)
         self.directory = directory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }

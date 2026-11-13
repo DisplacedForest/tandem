@@ -10,11 +10,13 @@ struct AppLocations: Equatable, Sendable {
 
     static let settingName = "VERA_CONFIG_DIR"
     static let runPrefix = "tandem-run-"
+    static let ownerMarkerName = ".tandem-run-owner"
 
     let situation: Situation
     let configDirectory: URL
     let database: URL
     let configFile: URL
+    let dataRoot: URL
     let attachments: URL
     let projects: URL
     let artifactsIndex: URL
@@ -35,16 +37,31 @@ struct AppLocations: Equatable, Sendable {
                 headlessRoot: headlessRoot)
     }
 
+    static var settingInEffect: Bool {
+        if case .setting = current.situation { return true }
+        return false
+    }
+
     static func settingDirectory(_ environment: [String: String]) -> URL? {
         guard let raw = environment[settingName], !raw.isEmpty else { return nil }
         return URL(fileURLWithPath: raw, isDirectory: true)
     }
 
+    static func namesSameFolder(_ first: URL, _ second: URL) -> Bool {
+        if canonicalPath(first) == canonicalPath(second) { return true }
+        var left = stat()
+        var right = stat()
+        let bothExist = stat(first.path, &left) == 0 && stat(second.path, &right) == 0
+        guard bothExist else { return false }
+        let sameDevice = left.st_dev == right.st_dev
+        let sameNode = left.st_ino == right.st_ino
+        return sameDevice && sameNode
+    }
+
     static func situation(environment: [String: String], home: URL, headlessRoot: URL?) -> Situation {
         if let setting = settingDirectory(environment) {
-            let standard = home.appendingPathComponent(".vera", isDirectory: true).standardizedFileURL.path
-            let namesStandardFolder = setting.standardizedFileURL.path == standard
-            if !namesStandardFolder { return .setting(setting) }
+            let standard = home.appendingPathComponent(".vera", isDirectory: true)
+            if !namesSameFolder(setting, standard) { return .setting(setting) }
         }
         if let headlessRoot { return .headless(headlessRoot) }
         return .plain
@@ -67,6 +84,7 @@ struct AppLocations: Equatable, Sendable {
             configDirectory: configDirectory,
             database: configDirectory.appendingPathComponent("vera.sqlite"),
             configFile: configDirectory.appendingPathComponent("config.json"),
+            dataRoot: dataRoot,
             attachments: dataRoot.appendingPathComponent("attachments", isDirectory: true),
             projects: dataRoot.appendingPathComponent("projects", isDirectory: true),
             artifactsIndex: dataRoot.appendingPathComponent("artifacts.json"),
@@ -79,60 +97,141 @@ struct AppLocations: Equatable, Sendable {
         return URL(fileURLWithPath: String(cString: directory), isDirectory: true)
     }()
 
-    static var realDataFolder: URL? {
-        accountHome?.appendingPathComponent("Library", isDirectory: true)
+    static func dataFolder(home: URL) -> URL {
+        home.appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Application Support", isDirectory: true)
             .appendingPathComponent(NativeAttachmentStore.supportFolderName, isDirectory: true)
     }
 
-    static func isInsideRealDataFolder(_ url: URL) -> Bool {
-        guard let folder = realDataFolder else { return true }
-        let roots = Set([folder.standardizedFileURL.path, folder.resolvingSymlinksInPath().path].map { $0.lowercased() })
-        let paths = Set([url.standardizedFileURL.path, url.resolvingSymlinksInPath().path].map { $0.lowercased() })
+    static var realDataFolder: URL? { accountHome.map(dataFolder(home:)) }
+
+    static func canonicalPath(_ url: URL) -> String {
+        var existing = url.standardizedFileURL
+        var remainder: [String] = []
+        while existing.path != "/" {
+            if let resolved = realpath(existing.path, nil) {
+                defer { free(resolved) }
+                var path = String(cString: resolved)
+                for component in remainder.reversed() { path = (path as NSString).appendingPathComponent(component) }
+                return path
+            }
+            remainder.append(existing.lastPathComponent)
+            existing = existing.deletingLastPathComponent().standardizedFileURL
+        }
+        return url.standardizedFileURL.path
+    }
+
+    static func isInside(_ url: URL, _ folder: URL, includingFolder: Bool = true) -> Bool {
+        let roots = Set([folder.standardizedFileURL.path, canonicalPath(folder)].map { $0.lowercased() })
+        let paths = Set([url.standardizedFileURL.path, canonicalPath(url)].map { $0.lowercased() })
         return paths.contains { path in
             roots.contains { root in
-                let sameFolder = path == root
-                let nested = path.hasPrefix(root + "/")
+                let sameFolder = includingFolder && path == root
+                let nested = path.hasPrefix(root == "/" ? "/" : root + "/")
                 return sameFolder || nested
             }
         }
     }
 
-    static func refuseRealDataInHeadlessRun(_ url: URL) {
-        guard isHeadless, isInsideRealDataFolder(url) else { return }
-        let message = "This run is a test or tool run and may not use the app's real data folder, but it was given \(url.path). Pass a scratch folder instead."
+    static func isInsideRealDataFolder(_ url: URL, realFolder: URL? = realDataFolder) -> Bool {
+        guard let realFolder else { return true }
+        return isInside(url, realFolder)
+    }
+
+    static func refuseRealData(_ url: URL) {
+        let separateRun = isHeadless || settingInEffect
+        guard separateRun, isInsideRealDataFolder(url) else { return }
+        let message = "This run keeps its data apart from the app's real data folder, but it was given \(url.path), which is inside it. Pass a separate folder instead."
         FileHandle.standardError.write(Data((message + "\n").utf8))
         fatalError(message)
     }
 
+    static func checkSettingDataRoot() {
+        let locations = current
+        guard case .setting = locations.situation else { return }
+        refuseRealData(locations.dataRoot)
+    }
+
+    static func isAcceptableScratchParent(_ folder: URL, home: URL?) -> Bool {
+        guard let home else { return false }
+        let insideDataFolder = isInside(folder, dataFolder(home: home))
+        let insideConfigFolder = isInside(folder, home.appendingPathComponent(".vera", isDirectory: true))
+        let isHome = namesSameFolder(folder, home)
+        return !insideDataFolder && !insideConfigFolder && !isHome
+    }
+
+    static var systemTemporaryDirectory: URL {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let length = confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
+        guard length > 0 else { return URL(fileURLWithPath: "/tmp", isDirectory: true) }
+        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return URL(fileURLWithPath: String(decoding: bytes, as: UTF8.self), isDirectory: true)
+    }
+
+    static func scratchParent(_ environment: [String: String], home: URL? = accountHome) -> URL {
+        if let chosen = environment["TMPDIR"], !chosen.isEmpty {
+            let folder = URL(fileURLWithPath: chosen, isDirectory: true)
+            if isAcceptableScratchParent(folder, home: home) { return folder }
+        }
+        let system = systemTemporaryDirectory
+        if isAcceptableScratchParent(system, home: home) { return system }
+        return URL(fileURLWithPath: "/tmp", isDirectory: true)
+    }
+
     static func isolateForHeadlessRun() {
         guard headlessRoot == nil else { return }
-        let root = scratchParent(ProcessInfo.processInfo.environment)
-            .appendingPathComponent(runPrefix + "\(getpid())-\(UUID().uuidString.lowercased())", isDirectory: true)
-        removeAbandonedRoots(in: root.deletingLastPathComponent())
+        let parent = scratchParent(ProcessInfo.processInfo.environment)
+        let name = runPrefix + "\(getpid())-\(UUID().uuidString.lowercased())"
+        let root = parent.appendingPathComponent(name, isDirectory: true)
+        removeAbandonedRoots(in: parent, home: accountHome)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try? Data(ownerMarker(pid: getpid(), name: name).utf8).write(to: root.appendingPathComponent(ownerMarkerName))
         headlessRoot = root
         atexit { AppLocations.removeHeadlessRoot() }
     }
 
-    static func scratchParent(_ environment: [String: String]) -> URL {
-        guard let chosen = environment["TMPDIR"], !chosen.isEmpty else { return FileManager.default.temporaryDirectory }
-        return URL(fileURLWithPath: chosen, isDirectory: true)
+    static func ownerMarker(pid: pid_t, name: String) -> String { "\(pid)\n\(name)" }
+
+    static func runOwner(_ name: String) -> pid_t? {
+        guard name.hasPrefix(runPrefix) else { return nil }
+        let rest = name.dropFirst(runPrefix.count)
+        guard let dash = rest.firstIndex(of: "-") else { return nil }
+        let pidText = rest[rest.startIndex..<dash]
+        let uuidText = String(rest[rest.index(after: dash)...])
+        let digitsOnly = !pidText.isEmpty && pidText.allSatisfy { $0.isASCII && $0.isNumber }
+        let validUUID = UUID(uuidString: uuidText)?.uuidString.lowercased() == uuidText
+        guard digitsOnly, validUUID, let pid = pid_t(pidText), pid > 0 else { return nil }
+        return pid
     }
 
-    static func removeAbandonedRoots(in folder: URL) {
+    static func fileType(_ path: String) -> mode_t? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        return info.st_mode & S_IFMT
+    }
+
+    static func isAbandonedRoot(_ entry: URL) -> Bool {
+        let name = entry.lastPathComponent
+        guard let pid = runOwner(name), fileType(entry.path) == S_IFDIR else { return false }
+        let processIsGone = kill(pid, 0) == -1 && errno == ESRCH
+        guard processIsGone else { return false }
+        let marker = entry.appendingPathComponent(ownerMarkerName)
+        guard fileType(marker.path) == S_IFREG, let contents = try? String(contentsOf: marker, encoding: .utf8) else { return false }
+        return contents == ownerMarker(pid: pid, name: name)
+    }
+
+    static func removeAbandonedRoots(in folder: URL, home: URL?) {
+        guard isAcceptableScratchParent(folder, home: home) else { return }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
         for name in names where name.hasPrefix(runPrefix) {
-            let pidText = name.dropFirst(runPrefix.count).prefix { $0 != "-" }
-            guard let pid = pid_t(pidText), pid > 0 else { continue }
-            let processIsGone = kill(pid, 0) == -1 && errno == ESRCH
-            guard processIsGone else { continue }
-            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name, isDirectory: true))
+            let entry = folder.appendingPathComponent(name, isDirectory: true)
+            guard isAbandonedRoot(entry) else { continue }
+            try? FileManager.default.removeItem(at: entry)
         }
     }
 
     static func removeHeadlessRoot() {
-        guard let root = headlessRoot, root.lastPathComponent.hasPrefix(runPrefix) else { return }
+        guard let root = headlessRoot, runOwner(root.lastPathComponent) == getpid() else { return }
         try? FileManager.default.removeItem(at: root)
     }
 }

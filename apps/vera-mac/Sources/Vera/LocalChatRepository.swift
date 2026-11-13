@@ -65,7 +65,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     init(url: URL, artifactDirectory: URL = NativeAttachmentStore.standardDirectory,
          projectsDirectory: URL = LocalChatRepository.standardProjectsDirectory) throws {
-        for location in [url, artifactDirectory, projectsDirectory] { AppLocations.refuseRealDataInHeadlessRun(location) }
+        for location in [url, artifactDirectory, projectsDirectory] { AppLocations.refuseRealData(location) }
         self.artifactDirectory = artifactDirectory
         self.projectsDirectory = projectsDirectory
         createdThisLaunch = !FileManager.default.fileExists(atPath: url.path)
@@ -80,7 +80,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     init(inMemory: Bool, artifactDirectory: URL = NativeAttachmentStore.standardDirectory,
          projectsDirectory: URL = LocalChatRepository.standardProjectsDirectory) throws {
-        for location in [artifactDirectory, projectsDirectory] { AppLocations.refuseRealDataInHeadlessRun(location) }
+        for location in [artifactDirectory, projectsDirectory] { AppLocations.refuseRealData(location) }
         self.artifactDirectory = artifactDirectory
         self.projectsDirectory = projectsDirectory
         createdThisLaunch = true
@@ -580,6 +580,27 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             return names
         }
     }
+
+    func strictReferencedAttachmentFileNames() throws -> Set<String> {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db, sql: "SELECT attachments_json FROM messages WHERE attachments_json IS NOT NULL")
+            var names: Set<String> = []
+            for row in rows {
+                guard let raw = row["attachments_json"] as String?, let data = raw.data(using: .utf8) else {
+                    throw UnreadableAttachmentRecord()
+                }
+                let attachments = try JSONDecoder().decode([MessageAttachment].self, from: data)
+                for attachment in attachments {
+                    if let fileName = attachment.fileName { names.insert(fileName) }
+                }
+            }
+            names.formUnion(try String.fetchAll(db, sql: "SELECT file_name FROM artifact_versions"))
+            return names
+        }
+    }
+
+    struct UnreadableAttachmentRecord: Error {}
 
     func allMemories() throws -> [NativeMemoryRecord] {
         try database.read { db in

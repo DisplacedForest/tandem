@@ -7,6 +7,7 @@ let launchMode = LaunchPlan.mode(Array(arguments.dropFirst()), isolatedModes: pi
 if LaunchPlan.isHeadless(launchMode, environment: ProcessInfo.processInfo.environment) {
     AppLocations.isolateForHeadlessRun()
 }
+AppLocations.checkSettingDataRoot()
 switch SelectedCredentialAuthorization.dispatch(Array(arguments.dropFirst())) {
 case .authorize(let values):
     SelectedCredentialAuthorization.main(values, configuration: { ConfigFile.read() })

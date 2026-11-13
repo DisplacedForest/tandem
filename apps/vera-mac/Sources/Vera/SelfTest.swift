@@ -1996,7 +1996,7 @@ enum SelfTest {
     }
 
     private static func runNativeMedia() {
-        let directory = FileManager.default.temporaryDirectory
+        let directory = (AppLocations.headlessRoot ?? FileManager.default.temporaryDirectory)
             .appendingPathComponent("vera-selftest-attachments-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         do {
@@ -2059,14 +2059,14 @@ enum SelfTest {
                 print("SELFTEST ERROR: native media attachment persistence in chat history"); exit(1)
             }
 
-            let referenced = try repository.referencedAttachmentFileNames()
-            guard referenced == [fileName] else {
+            let referenced = try repository.strictReferencedAttachmentFileNames()
+            guard referenced == [fileName], try repository.referencedAttachmentFileNames() == referenced else {
                 print("SELFTEST ERROR: native media referenced file name query"); exit(1)
             }
             let orphanURL = directory.appendingPathComponent("orphan.png")
             try pngData.write(to: orphanURL)
             let scratchDatabase = directory.appendingPathComponent("media.sqlite")
-            guard let permit = StartupCleanup.decide(StartupCleanup.Inputs(
+            guard let permit = StartupCleanup.scratchPermitForTests(StartupCleanup.Inputs(
                 overrideInEffect: false, runsFromAppBundle: true, database: scratchDatabase, databaseCreatedThisLaunch: false,
                 mentionedFileCount: referenced.count, folder: store.directory, folderHasFiles: true,
                 resolvedDatabase: scratchDatabase, resolvedFolder: store.directory)) else {

@@ -358,8 +358,10 @@ final class ChatStore: ObservableObject {
         selectedID = conversations.first?.id
         prepareRuleRecords()
         loadArtifacts()
-        if artifactPersistenceEnabled, let artifactRepository,
-           (repository as? LocalChatRepository)?.database.path == LocalChatRepository.defaultURL.path {
+        if artifactPersistenceEnabled, let artifactRepository, let local = repository as? LocalChatRepository,
+           local.database.path == LocalChatRepository.defaultURL.path,
+           Self.legacyImportAllowed(databaseCreatedThisLaunch: local.createdThisLaunch, headless: AppLocations.isHeadless,
+                                    locations: AppLocations.current, index: Self.artifactsURL) {
             do { try Self.importLegacyCanvasLibrary(from: Self.artifactsURL, into: artifactRepository) }
             catch {
                 chatConfigurationError = "Earlier canvas pieces couldn't move into Artifacts: \(error.localizedDescription)"
@@ -374,7 +376,7 @@ final class ChatStore: ObservableObject {
 
         if let startupCleanup, let local = repository as? LocalChatRepository,
            startupCleanup.allows(database: URL(fileURLWithPath: local.database.path)),
-           let referenced = try? local.referencedAttachmentFileNames() {
+           let referenced = try? local.strictReferencedAttachmentFileNames() {
             let store = attachmentStore
             let candidates = store.orphanCandidates(keeping: referenced)
             let mentionsNothing = referenced.isEmpty

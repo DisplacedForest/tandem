@@ -15,6 +15,7 @@ final class PiExperimentRoot: @unchecked Sendable {
     let url: URL
     private var lock: Int32 = -1
     init(_ url: URL) throws {
+        AppLocations.refuseRealData(url)
         var original = stat()
         if lstat(url.path, &original) == 0 { try piCheck((original.st_mode & S_IFMT) == S_IFDIR, .storage) }
         let path = try piCanonical(url)

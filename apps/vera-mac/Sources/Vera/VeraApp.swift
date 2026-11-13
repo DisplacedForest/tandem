@@ -63,22 +63,6 @@ struct VeraApp: App {
                 try? configInstance.save()
             }
         }
-        let fixtureInEffect = fixture != nil || NativeMCPUIFixture.current != nil
-        let overrideInEffect = StartupCleanup.overrideInEffect(locations: locations, fixture: fixtureInEffect,
-                                                               environment: ProcessInfo.processInfo.environment)
-        var startupCleanup: StartupCleanup?
-        if let repository, let mentioned = try? repository.referencedAttachmentFileNames() {
-            startupCleanup = StartupCleanup.decide(StartupCleanup.Inputs(
-                overrideInEffect: overrideInEffect,
-                runsFromAppBundle: StartupCleanup.runsFromAppBundle(.main),
-                database: URL(fileURLWithPath: repository.database.path),
-                databaseCreatedThisLaunch: repository.createdThisLaunch,
-                mentionedFileCount: mentioned.count,
-                folder: attachmentStore.directory,
-                folderHasFiles: StartupCleanup.folderHasFiles(attachmentStore.directory),
-                resolvedDatabase: locations.database,
-                resolvedFolder: locations.attachments))
-        }
         let storeInstance = ChatStore(
             veraAPI: fixture == nil ? VeraAPIClient.resolved(model: native?.model ?? "") : nil,
             nativeConfig: native,
@@ -99,7 +83,6 @@ struct VeraApp: App {
             nativeMCP: configInstance.nativeMCP,
             capabilityDeclarations: configInstance.capabilityTools.declarations,
             attachmentStore: attachmentStore,
-            startupCleanup: startupCleanup,
             nativeTaskConfiguration: NativeMCPUIFixture.current == nil ? NativeTaskConfiguration(
                 settings: { configInstance.nativeSettings },
                 savedTemplate: { configInstance["chat_template_kwargs"] }) : nil,

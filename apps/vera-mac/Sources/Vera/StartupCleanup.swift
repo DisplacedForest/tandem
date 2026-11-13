@@ -23,7 +23,7 @@ struct StartupCleanup: Equatable, Sendable {
 
     static func path(_ url: URL) -> String { url.standardizedFileURL.path }
 
-    static func decide(_ inputs: Inputs) -> StartupCleanup? {
+    static func rulesAllow(_ inputs: Inputs) -> Bool {
         let databaseIsDefault = path(inputs.database) == path(inputs.resolvedDatabase)
         let folderIsResolvedWithDatabase = path(inputs.folder) == path(inputs.resolvedFolder)
         let pairIsTheResolvedOne = databaseIsDefault && folderIsResolvedWithDatabase
@@ -31,21 +31,16 @@ struct StartupCleanup: Equatable, Sendable {
         let databaseMentionsNothing = inputs.mentionedFileCount == 0
         let emptyDatabaseOverFiles = databaseMentionsNothing && inputs.folderHasFiles
         let ownApp = inputs.runsFromAppBundle && !inputs.overrideInEffect
-        guard ownApp, pairIsTheResolvedOne, databaseExistedBefore, !emptyDatabaseOverFiles else { return nil }
+        return ownApp && pairIsTheResolvedOne && databaseExistedBefore && !emptyDatabaseOverFiles
+    }
+
+    static func scratchPermitForTests(_ inputs: Inputs, scratchRoot: URL? = AppLocations.headlessRoot) -> StartupCleanup? {
+        guard let scratchRoot, rulesAllow(inputs) else { return nil }
+        let folderInScratch = AppLocations.isInside(inputs.folder, scratchRoot, includingFolder: false)
+        let databaseInScratch = AppLocations.isInside(inputs.database, scratchRoot, includingFolder: false)
+        let realFolder = AppLocations.isInsideRealDataFolder(inputs.folder)
+        guard folderInScratch, databaseInScratch, !realFolder else { return nil }
         return StartupCleanup(database: inputs.database, folder: inputs.folder)
-    }
-
-    static func overrideInEffect(locations: AppLocations, fixture: Bool, environment: [String: String]) -> Bool {
-        let locationOverride = !locations.usesStandardLocations
-        let headless = AppLocations.isHeadless
-        let fixtureHome = environment["CFFIXED_USER_HOME"] != nil
-        return locationOverride || headless || fixture || fixtureHome
-    }
-
-    static func runsFromAppBundle(_ bundle: Bundle) -> Bool {
-        let packaged = bundle.bundleURL.pathExtension == "app"
-        let identified = bundle.bundleIdentifier?.isEmpty == false
-        return packaged && identified
     }
 
     static func folderHasFiles(_ folder: URL) -> Bool {
