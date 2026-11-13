@@ -346,6 +346,17 @@ enum AppLocationsSelftest {
         let separate = root.appendingPathComponent("separate", isDirectory: true)
         try require(!AppLocations.isInsideRealDataFolder(separate.appendingPathComponent("data/attachments"), realFolder: standIn),
                     "A separate folder is left alone")
+        let ownData = separate.appendingPathComponent("data", isDirectory: true)
+        try FileManager.default.createDirectory(at: ownData, withIntermediateDirectories: true)
+        let realIndex = standIn.appendingPathComponent("artifacts.json")
+        try Data("[]".utf8).write(to: realIndex)
+        try FileManager.default.createSymbolicLink(at: ownData.appendingPathComponent("artifacts.json"), withDestinationURL: realIndex)
+        let linked = AppLocations.resolve(environment: [AppLocations.settingName: separate.path], home: root, applicationSupport: root, headlessRoot: nil)
+        try require(!AppLocations.isInsideRealDataFolder(linked.dataRoot, realFolder: standIn), "A data folder of its own passes the folder check")
+        try require(AppLocations.isInsideRealDataFolder(linked.artifactsIndex, realFolder: standIn),
+                    "An index file that is a link into the real folder is caught on its own")
+        try require(linked.dataLocations.contains { AppLocations.isInsideRealDataFolder($0, realFolder: standIn) },
+                    "Checking every data location at start finds it")
     }
 
     static func checkScratchRoots(_ root: URL) throws {
@@ -463,11 +474,9 @@ enum AppLocationsSelftest {
         let selftest = LaunchPlan.Mode.run("--selftest")
         try require(LaunchPlan.isHeadless(selftest, environment: [:]) && LaunchPlan.isHeadless(selftest, environment: ["VERA_TASK_ENGINE_SELFTEST": "1"]),
                     "Selftests are headless runs")
-        try require(!LaunchPlan.isHeadless(selftest, environment: ["VERA_IMAGE_LIVE_BASE": "http://image.example"])
-                    && !LaunchPlan.isHeadless(selftest, environment: ["VERA_MEMORY_LIVE_BASE": "http://memory.example/v1"]),
-                    "The live checks keep their behaviour")
-        try require(LaunchPlan.isHeadless(selftest, environment: ["VERA_ATTENTION_SELFTEST": "1", "VERA_IMAGE_LIVE_BASE": "http://image.example"]),
-                    "A selftest that runs before the live checks stays headless")
+        try require(LaunchPlan.isHeadless(selftest, environment: ["VERA_IMAGE_LIVE_BASE": "http://image.example"])
+                    && LaunchPlan.isHeadless(selftest, environment: ["VERA_MEMORY_LIVE_BASE": "http://memory.example/v1"]),
+                    "A selftest against a live service still keeps its data in scratch")
         try require(LaunchPlan.realDataModes.allSatisfy { !LaunchPlan.isHeadless(.run($0), environment: [:]) }, "The live modes keep their behaviour")
         try require(!LaunchPlan.isHeadless(.app, environment: ["VERA_TASK_ENGINE_SELFTEST": "1"]), "A plain start is never headless")
     }

@@ -14,9 +14,6 @@ enum LaunchPlan {
     static let namedModes = ["--openrouter-smoke", "--provider-smoke-selftest", "--mcp-selftest", "--domain-state-selftest", "--domain-extraction-selftest", "--shared-runtime-memory-selftest", "--memory-gate-selftest", "--companion-live", "--memory-gate-live", "--memory-evidence-selftest", "--companion-introduction-selftest", "--rule-records-selftest", "--preferences-selftest", selftestMode, "--dump-context"]
 
     static let realDataModes: Set<String> = ["--memory-gate-live", "--companion-live", "--openrouter-smoke", "--dump-context"]
-    static let realDataSelftestSettings = ["VERA_MEMORY_LIVE_BASE", "VERA_IMAGE_LIVE_BASE"]
-    static let selftestSwitchesBeforeLiveChecks = ["VERA_ATTENTION_SELFTEST", "VERA_ASKED_WORK_SELFTEST", "VERA_TALK_CONTROL_SELFTEST", "VERA_PROJECT_CONTEXT_SELFTEST"]
-    static let selftestFixturesBeforeLiveChecks = ["VERA_TASK_TRANSPORT_FIXTURE"]
 
     static func mode(_ arguments: [String], isolatedModes piModes: Set<String>) -> Mode {
         switch SelectedCredentialAuthorization.dispatch(arguments) {
@@ -38,12 +35,7 @@ enum LaunchPlan {
 
     static func usesRealData(_ mode: Mode, environment: [String: String]) -> Bool {
         guard case .run(let flag) = mode else { return false }
-        if realDataModes.contains(flag) { return true }
-        guard flag == selftestMode else { return false }
-        let earlierSwitch = selftestSwitchesBeforeLiveChecks.contains { environment[$0] == "1" }
-        let earlierFixture = selftestFixturesBeforeLiveChecks.contains { environment[$0] != nil }
-        let liveCheck = realDataSelftestSettings.contains { environment[$0] != nil }
-        return liveCheck && !earlierSwitch && !earlierFixture
+        return realDataModes.contains(flag)
     }
 
     static func isHeadless(_ mode: Mode, environment: [String: String]) -> Bool {

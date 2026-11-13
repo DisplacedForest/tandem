@@ -191,6 +191,7 @@ struct AppLocations: Equatable, Sendable {
         let locations = current
         guard case .setting = locations.situation else { return }
         refuseRealData(locations.dataRoot)
+        for location in locations.dataLocations { refuseRealData(location) }
     }
 
     static func isAcceptableScratchParent(_ folder: URL, home: URL?) -> Bool {

@@ -390,6 +390,7 @@ final class ChatStore: ObservableObject {
 
     static var artifactsURL: URL {
         let index = AppLocations.current.artifactsIndex
+        AppLocations.refuseRealData(index)
         try? FileManager.default.createDirectory(at: index.deletingLastPathComponent(), withIntermediateDirectories: true)
         return index
     }
