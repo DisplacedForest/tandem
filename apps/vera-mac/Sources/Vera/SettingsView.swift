@@ -45,7 +45,7 @@ struct ConnectionTab: View {
     }
 }
 
-private struct ModelTab: View {
+struct ModelTab: View {
     var body: some View {
         Form {
             Section("Choose a model") {
@@ -66,7 +66,7 @@ private struct ModelTab: View {
     }
 }
 
-private struct PersonaTab: View {
+struct PersonaTab: View {
     var body: some View {
         Form {
             Section("Preferences") { PreferencesSettingsView() }
@@ -77,7 +77,7 @@ private struct PersonaTab: View {
     }
 }
 
-private struct NativeToolsTab: View {
+struct NativeToolsTab: View {
     var body: some View {
         Form {
             Section("Tools") { NativeToolEditor() }
@@ -365,75 +365,106 @@ struct NativeVisionBridgeEditor: View {
     }
 }
 
+enum SettingsToolsCopy {
+    static let empty = "No tools are available."
+    static let unreadable = "One of your added tools couldn't be loaded."
+    static let services = "Connected services are managed under Integrations."
+    static let openIntegrations = "Open Integrations"
+    static let openSearch = "Open Search"
+    static let openImage = "Open Image"
+
+    static var fixedStrings: [String] {
+        [empty, unreadable, services, openIntegrations, openSearch, openImage]
+    }
+
+    static func tab(for toolID: String) -> SettingsTab? {
+        switch toolID {
+        case NativeWebTools.searchToolID: return .search
+        case NativeImageTools.toolID: return .image
+        default: return nil
+        }
+    }
+
+    static func buttonTitle(for toolID: String) -> String? {
+        switch tab(for: toolID) {
+        case .search: return openSearch
+        case .image: return openImage
+        default: return nil
+        }
+    }
+
+    static func listed(
+        declarations: [NativeToolDeclaration], serverConnected: Bool,
+        imageConfigured: Bool, searchConfigured: Bool
+    ) -> [NativeChatToolDescriptor] {
+        let hidden = Set(declarations.filter { $0.needsAPIBase && !serverConnected }.map(\.id))
+        return NativeChatToolCatalog.tools(
+            veraAPIConfigured: serverConnected, imageConfigured: imageConfigured,
+            searchConfigured: searchConfigured, declarations: declarations)
+            .filter { !hidden.contains($0.id) }
+    }
+}
+
 struct NativeToolEditor: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
 
     private var catalog: [NativeChatToolDescriptor] {
-        NativeChatToolCatalog.tools(
-            veraAPIConfigured: config.veraAPIBase != nil,
+        SettingsToolsCopy.listed(
+            declarations: config.capabilityTools.declarations,
+            serverConnected: config.veraAPIBase != nil,
             imageConfigured: config.imageBase != nil,
-            searchConfigured: config.searchBase != nil,
-            declarations: config.capabilityTools.declarations)
+            searchConfigured: config.searchBase != nil)
     }
-    private var available: [NativeChatToolDescriptor] { catalog.filter(\.available) }
-    private var unavailable: [NativeChatToolDescriptor] { catalog.filter { !$0.available } }
     private var failures: [NativeToolDeclarationFailure] { config.capabilityTools.failures }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Only enabled tools that native chat can actually run are shared with the model.")
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-            if available.isEmpty {
-                Label("No native chat tools are available in this version.", systemImage: "wrench.and.screwdriver")
+            if catalog.isEmpty {
+                Label(SettingsToolsCopy.empty, systemImage: "wrench.and.screwdriver")
                     .font(.system(size: 12, weight: .medium))
             }
-            ForEach(available) { tool in
-                Toggle(isOn: Binding(
-                    get: { config.nativeSettings.enabledToolIDs.contains(tool.id) },
-                    set: { config.setNativeTool(tool.id, enabled: $0) })) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tool.name)
-                        Text(tool.summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            ForEach(catalog) { tool in
+                if tool.available {
+                    Toggle(isOn: Binding(
+                        get: { config.nativeSettings.enabledToolIDs.contains(tool.id) },
+                        set: { config.setNativeTool(tool.id, enabled: $0) })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tool.name)
+                            if !tool.summary.isEmpty {
+                                Text(tool.summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                            }
+                        }
                     }
-                }
-                if config.nativeSettings.enabledToolIDs.contains(tool.id), let access = store.toolAccess(tool.id) {
-                    NativeToolAccessRow(access: access)
+                    if config.nativeSettings.enabledToolIDs.contains(tool.id), let access = store.toolAccess(tool.id) {
+                        NativeToolAccessRow(access: access)
+                    }
+                } else {
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tool.name)
+                            Text(tool.setup).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        }
+                        Spacer()
+                        if let tab = SettingsToolsCopy.tab(for: tool.id), let title = SettingsToolsCopy.buttonTitle(for: tool.id) {
+                            Button(title) { store.settingsTab = tab }
+                        }
+                    }
                 }
             }
-            if !unavailable.isEmpty {
-                Text("Unavailable").font(.system(size: 12, weight: .semibold)).padding(.top, 4)
-                ForEach(unavailable) { tool in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Label(tool.name, systemImage: "minus.circle")
-                        Text(tool.summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                        Text(tool.setup).font(.system(size: 11)).foregroundStyle(.orange)
-                    }
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            }
-            if !failures.isEmpty {
-                Text("Skipped declarations").font(.system(size: 12, weight: .semibold)).padding(.top, 4)
-                ForEach(failures) { failure in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Label(failure.file, systemImage: "exclamationmark.triangle")
-                        Text(failure.reason).font(.system(size: 11)).foregroundStyle(.orange)
-                    }
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
-                }
+            ForEach(failures) { failure in
+                Text(SettingsToolsCopy.unreadable)
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .help("\(failure.file): \(failure.reason)")
             }
             HStack(spacing: 10) {
-                Text("Connected services are managed under Integrations.")
+                Text(SettingsToolsCopy.services)
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                Button("Open Integrations") {
+                Button(SettingsToolsCopy.openIntegrations) {
                     store.section = .integrations
                     NSApp.keyWindow?.performClose(nil)
                 }
             }
-            Text("Tool declarations load from the \(NativeCapabilityTools.directoryName) folder next to your config file. Saving reloads them.")
-                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
         }
     }
 }
@@ -620,7 +651,7 @@ struct NativeMemorySettingsTab: View {
     }
 }
 
-private struct ImageTab: View {
+struct ImageTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
     @State private var status: String?
@@ -716,7 +747,7 @@ struct SearchTab: View {
     }
 }
 
-private struct ServicesTab: View {
+struct ServicesTab: View {
     var body: some View {
         Form {
             EngineSection()
@@ -861,7 +892,7 @@ private struct MaintenanceControls: View {
     }
 }
 
-private struct IdentityTab: View {
+struct IdentityTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
     @State private var changingAppearance = false
@@ -1007,7 +1038,7 @@ private final class RecorderWindowBox {
     weak var window: NSWindow?
 }
 
-private struct AboutTab: View {
+struct AboutTab: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var updates: UpdateChecker
     @State private var serverVersion: String?

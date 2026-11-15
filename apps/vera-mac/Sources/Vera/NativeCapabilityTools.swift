@@ -56,6 +56,7 @@ struct NativeToolDeclaration: Equatable, Hashable, Sendable, Identifiable {
     let name: String
     let title: String
     let description: String
+    var summary: String? = nil
     let properties: [NativeToolProperty]
     let required: [String]
     let endpoint: String
@@ -232,11 +233,9 @@ enum NativeCapabilityTools {
             return NativeChatToolDescriptor(
                 id: declaration.id,
                 name: declaration.title,
-                summary: declaration.description,
+                summary: declaration.summary ?? "",
                 available: available,
-                setup: available
-                    ? "Calls \(declaration.method.rawValue) \(declaration.endpoint)."
-                    : "Set the vera-api base URL in the Connection tab to enable \(declaration.title).")
+                setup: "Connect your Tandem server to use this.")
         }
     }
 
@@ -599,6 +598,8 @@ enum NativeCapabilityTools {
             required: required, endpoint: endpoint, method: method, confirmation: confirmation,
             timeoutSeconds: timeout, enabled: enabled, jsonFields: jsonFields, source: source, sendsTo: sendsTo)
         declaration.verbs = verbs
+        let summary = text(object["summary"])
+        declaration.summary = summary.isEmpty ? nil : summary
         return declaration
     }
 
@@ -629,7 +630,8 @@ enum NativeCapabilityTools {
           "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
           "endpoint": "/actions/registry",
           "method": "GET",
-          "confirmation": "none"
+          "confirmation": "none",
+          "summary": "Lists what your Tandem server can do for you."
         }
         """,
         """
@@ -651,7 +653,8 @@ enum NativeCapabilityTools {
           "json_fields": {"args_json": "args"},
           "endpoint": "/actions/propose_card",
           "method": "POST",
-          "confirmation": "none"
+          "confirmation": "none",
+          "summary": "Suggests something for your Tandem server to do. You decide before anything happens."
         }
         """,
         """
@@ -671,7 +674,8 @@ enum NativeCapabilityTools {
           },
           "endpoint": "/authoring/skill",
           "method": "POST",
-          "confirmation": "required"
+          "confirmation": "required",
+          "summary": "Saves a repeatable set of steps when you ask for one."
         }
         """,
     ]

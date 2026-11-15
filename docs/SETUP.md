@@ -516,7 +516,8 @@ Chat tools beyond the built-ins are configuration, not code. Drop a JSON file in
 and the app loads it at startup and again whenever Settings saves. Each valid file becomes
 a native tool: a toggle appears in Settings, Tools, the model is offered the tool when it is
 enabled and available, calls execute over HTTP, and each call renders as an activity chip
-in chat like any other tool. A malformed file is skipped, with the reason shown in Settings.
+in chat like any other tool. A malformed file is skipped. Settings, Tools says one couldn't be loaded, and hovering
+that line shows the file and the reason.
 
 A declaration is one JSON object per file. For example, a tool over a home inventory
 service:
@@ -546,11 +547,14 @@ service:
 - `name`: the unique function name the model calls.
 - `title`: the short label shown in Settings and in the activity chip.
 - `description`: what the tool does and when to use it, written for the model.
+- `summary`: optional. One short line for people, shown under the title in Settings,
+  Tools. The `description` is never shown there. Without a `summary` the row shows the
+  title alone.
 - `parameters`: a JSON Schema object. The supported subset is string and boolean
   properties, plus `required` and `additionalProperties: false`.
 - `endpoint`: an absolute URL, or a path starting with `/`, resolved against the
-  configured vera-api base URL. A path-relative tool stays unavailable until that URL is
-  set.
+  configured vera-api base URL. A path-relative tool stays unavailable, and off the list in
+  Settings, Tools, until that URL is set.
 - `method`: `GET` sends the arguments as query parameters; `POST` sends them as a JSON
   body.
 - `confirmation`: `"required"` always asks before the request fires, whatever your rules
