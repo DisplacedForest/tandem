@@ -74,22 +74,22 @@ struct ImageGenerationPlaceholder: View {
             let inside = boxSize.width >= Self.controlsInsideMinimumWidth
             ZStack(alignment: .bottom) {
                 effectCanvas
-                if inside { controls.padding(12) }
+                if inside { controls(spread: true).padding(12) }
             }
             .frame(width: boxSize.width, height: boxSize.height)
             .background(Theme.surface.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
             if !inside {
-                controls.frame(width: Self.controlsInsideMinimumWidth)
+                controls(spread: false)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Creating image, \(Int((fraction * 100).rounded())) percent")
     }
 
-    private var controls: some View {
-        HStack {
+    private func controls(spread: Bool) -> some View {
+        HStack(spacing: 8) {
             if let onCancel {
                 Button("Cancel", action: onCancel)
                     .buttonStyle(.plain)
@@ -99,7 +99,7 @@ struct ImageGenerationPlaceholder: View {
                     .background(Capsule().fill(Theme.surface.opacity(0.9)))
                     .accessibilityLabel("Cancel image generation")
             }
-            Spacer()
+            if spread { Spacer() }
             Text("\(Int((fraction * 100).rounded()))%")
                 .font(.system(size: 13, weight: .medium).monospacedDigit())
                 .foregroundStyle(Theme.textPrimary)

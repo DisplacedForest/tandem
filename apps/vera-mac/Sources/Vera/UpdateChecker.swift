@@ -155,14 +155,19 @@ struct UpdateBanner: View {
             HStack(spacing: 8) {
                 InterfaceIconView(icon: .update, size: InterfaceIconSize.regular).foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Update available (\(release.tag_name))")
+                    Text("Update available")
                         .font(.system(size: 12, weight: .medium))
-                    Button("View release notes") { openExternal(release.html_url) }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
-                        .pointerCursor()
+                        .fixedSize()
+                    HStack(spacing: 4) {
+                        Text(release.tag_name)
+                        Button("View release notes") { openExternal(release.html_url) }
+                            .buttonStyle(.plain)
+                            .pointerCursor()
+                    }
+                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize()
                 }
-                Spacer()
+                Spacer(minLength: 4)
                 Button(updates.installing ? "Installing…" : "Install") {
                     Task { await updates.install() }
                 }

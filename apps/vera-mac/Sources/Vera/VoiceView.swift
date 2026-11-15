@@ -43,7 +43,7 @@ struct VoiceView: View {
                     InterfaceIconView(icon: .close, size: InterfaceIconSize.rail)
                         .foregroundStyle(.white)
                         .frame(width: 56, height: 56)
-                        .background(Theme.surfaceHover)
+                        .background(Color.white.opacity(0.16))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)

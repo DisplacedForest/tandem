@@ -194,6 +194,7 @@ struct ConversationTopBar: View {
     @Environment(\.renderSafe) private var renderSafe
     @Environment(\.conversationSidebar) private var sidebar
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.messageActions) private var messageActions
     var profile: Binding<CompanionProfileState>? = nil
     var fixed: CompanionOverviewModel? = nil
     var conversation: Conversation? = nil
@@ -237,6 +238,7 @@ struct ConversationTopBar: View {
                 .frame(height: ConversationTopBarMetrics.fade)
                 .allowsHitTesting(false)
         }
+        .opacity(messageActions?.open == nil ? 1 : 0)
         .alert("Rename chat", isPresented: $renaming, presenting: renameTarget) { target in
             TextField("Title", text: $renameText)
             Button("Rename") { target.rename(to: renameText, in: store) }

@@ -11,7 +11,7 @@ struct NativeAnswerControls: View {
             Text(status).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             if canStop {
                 Button(stopLabel, action: onStop)
-                    .buttonStyle(.borderless).font(.system(size: 12))
+                    .buttonStyle(ConversationButtonStyle(kind: .secondary))
             }
         }
     }
