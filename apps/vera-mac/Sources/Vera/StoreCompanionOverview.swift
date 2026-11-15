@@ -72,9 +72,11 @@ extension ChatStore {
             let settled = settledBeforeDelivery(id)
             let delivered = resultWasDelivered(id)
             let outcome = stopped ?? (settled ? display?.artifact?.report ?? display?.card.answer : nil)
-                ?? (delivered || display?.card.status == .setAside ? nil : display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) })
+                ?? (delivered || display?.card.status == .setAside || display?.card.milestone == NativeTaskProjection.workingLine
+                    ? nil : display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) })
             return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
-                                           canOpen: conversation != nil, before: reference.request.dot?.carried?.request)
+                                           canOpen: conversation != nil, before: reference.request.dot?.carried?.request,
+                                           savedPieceID: display?.artifact.flatMap(savedPieceID))
         case .run(let id):
             guard let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == id }) else {
                 return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)
@@ -83,6 +85,12 @@ extension ChatStore {
             return CompanionActivityDetail(request: reference?.request.objective, outcome: scheduleRunNote(run).plain(name: companionName),
                                            canOpen: run.conversationID.flatMap(companionActivityConversation) != nil)
         }
+    }
+
+    private func savedPieceID(_ artifact: NativeResearchArtifact) -> String? {
+        guard let id = (try? artifactRepository?.artifactVersion(sourceKey: Self.taskArtifactSourceKey(artifact.id)))??.artifactID,
+              artifactRecords.contains(where: { $0.id == id }) else { return nil }
+        return id
     }
 
     private func companionActivityConversation(_ id: String) -> Conversation? {

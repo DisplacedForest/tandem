@@ -300,21 +300,30 @@ struct CompanionThreadPanel: View {
             }
             if item.canRetry || item.canStop || item.canPickUp {
                 HStack {
-                    if item.canRetry { Button("Retry") { store.retryCompanionWork(item) } }
-                    if item.canPickUp { Button(NativeTaskCardPresentation.pickUpTitle) { store.setCompanionWorkAside(item, resume: true) } }
-                    if item.canSetAside { Button(NativeTaskCardPresentation.setAsideTitle) { store.setCompanionWorkAside(item, resume: false) } }
-                    if item.canStop { Button(CompanionOverviewModel.stopTitle) { store.stopCompanionWork(item) } }
-                }.controlSize(.small)
+                    if item.canRetry { Button { store.retryCompanionWork(item) } label: { Text("Retry").frame(maxWidth: .infinity) } }
+                    if item.canPickUp { Button { store.setCompanionWorkAside(item, resume: true) } label: { Text(NativeTaskCardPresentation.pickUpTitle).frame(maxWidth: .infinity) } }
+                    if item.canSetAside { Button { store.setCompanionWorkAside(item, resume: false) } label: { Text(NativeTaskCardPresentation.setAsideTitle).frame(maxWidth: .infinity) } }
+                    if item.canStop { Button { store.stopCompanionWork(item) } label: { Text(CompanionOverviewModel.stopTitle).frame(maxWidth: .infinity) } }
+                }.buttonStyle(.bordered).controlSize(.large)
             }
             if let navigationError {
                 Text(navigationError).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary)
+            }
+            if let savedPieceID = detail.savedPieceID {
+                Button {
+                    store.openCompanionResult(savedPieceID)
+                    onClose?()
+                } label: {
+                    Label { Text("Open") } icon: { InterfaceIconView(icon: .document, size: InterfaceIconSize.regular) }
+                        .frame(maxWidth: .infinity)
+                }.buttonStyle(.bordered).controlSize(.large)
             }
             if detail.canOpen {
                 Button {
                     if store.openCompanionActivity(item) { onClose?() }
                     else { navigationError = "This chat is no longer available." }
                 } label: {
-                    Label { Text("Go to chat") } icon: { InterfaceIconView(icon: .chat, size: InterfaceIconSize.regular) }
+                    Label { Text(CompanionOverviewModel.chatTitle(hasArtifact: item.hasArtifact, savedPiece: detail.savedPieceID != nil)) } icon: { InterfaceIconView(icon: .chat, size: InterfaceIconSize.regular) }
                         .frame(maxWidth: .infinity)
                 }.buttonStyle(.bordered).controlSize(.large)
             }

@@ -371,7 +371,7 @@ final class ChatStore: ObservableObject {
                                     locations: AppLocations.current, index: Self.artifactsURL) {
             do { try Self.importLegacyCanvasLibrary(from: Self.artifactsURL, into: artifactRepository) }
             catch {
-                chatConfigurationError = "Earlier canvas pieces couldn't move into Artifacts: \(error.localizedDescription)"
+                chatConfigurationError = Self.libraryMoveLead + error.localizedDescription
             }
         }
         reloadArtifacts()
@@ -441,6 +441,8 @@ final class ChatStore: ObservableObject {
             nativeAssistantName: configStore.suppliedAssistantName,
             nativeMemorySettings: .fresh)
     }
+
+    static let libraryMoveLead = "Earlier canvas pieces couldn't move into your Library: "
 
     static func buildToolRegistry(
         _ declarations: [NativeToolDeclaration],

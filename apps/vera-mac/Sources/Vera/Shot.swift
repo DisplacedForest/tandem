@@ -90,7 +90,7 @@ enum Shot {
             size = CGSize(width: 520, height: 300)
         } else if view == "companion-states" {
             size = CGSize(width: 900, height: 760)
-        } else if view == "companion-activity-detail" || ["companion-aside-detail", "companion-going-detail", "companion-changed-detail", "companion-newer-detail"].contains(view) {
+        } else if view == "companion-activity-detail" || ["companion-saved-detail", "companion-aside-detail", "companion-going-detail", "companion-changed-detail", "companion-newer-detail"].contains(view) {
             size = CGSize(width: CompanionProfileMetrics.width + 40, height: 700)
         } else if view == "result-two-at-once" {
             size = CGSize(width: 1180, height: 1380)
@@ -505,6 +505,16 @@ enum Shot {
                     .environmentObject(config)
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
+            )
+        } else if view == "companion-saved-detail", let delivered = try? OngoingWorkFixture.deliveredDocumentStore() {
+            let model = CompanionOverviewModel(name: CompanionSubject(CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)).leading, services: "", rules: "", paused: false,
+                                               activity: [delivered.item], outputs: [])
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+            content = AnyView(
+                CompanionThreadPanel(fixed: model, selectedID: delivered.item.id)
+                    .environment(\.renderSafe, true).environmentObject(delivered.store).environmentObject(config)
+                    .padding(20)
+                    .frame(width: size.width, height: size.height, alignment: .top).background(Theme.bg)
             )
         } else if view == "companion-activity-detail" {
             let fixture = OngoingWorkFixture.store()

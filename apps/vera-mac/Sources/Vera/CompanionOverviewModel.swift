@@ -68,6 +68,10 @@ struct CompanionOverviewModel: Equatable, Sendable {
     static let thisMac = "This Mac"
     static let stopTitle = "Stop"
 
+    static func chatTitle(hasArtifact: Bool, savedPiece: Bool) -> String {
+        hasArtifact && !savedPiece ? "Open in chat" : "Go to chat"
+    }
+
     static func pauseTitle(name: String, paused: Bool) -> String { paused ? "Resume \(name)" : "Pause \(name)" }
 
     static func servicesLine(options: [NativeDotServiceOption], selected: Set<String>) -> String {
@@ -165,8 +169,10 @@ struct CompanionActivityDetail: Equatable, Sendable {
     let outcome: String?
     let canOpen: Bool
     var before: String? = nil
+    var savedPieceID: String? = nil
 
-    init(request: String?, outcome: String?, canOpen: Bool, before: String? = nil) {
+    init(request: String?, outcome: String?, canOpen: Bool, before: String? = nil, savedPieceID: String? = nil) {
+        self.savedPieceID = savedPieceID
         self.before = before.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         self.request = request.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         self.outcome = outcome.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }

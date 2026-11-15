@@ -160,6 +160,8 @@ extension ChatStore {
                 beforeText: change.before, truncated: change.truncated, contentAvailable: content != nil)), revising: target)
     }
 
+    static func taskArtifactSourceKey(_ id: String) -> String { "task:\(id)" }
+
     func recordTaskArtifacts(_ blocks: [NativeDisplayBlock], conversationID: String, messageID: String) {
         guard artifactRepository != nil else { return }
         let origin = artifactOriginTitle(conversationID: conversationID)
@@ -167,7 +169,7 @@ extension ChatStore {
         for block in blocks {
             guard case .artifact(let artifact) = block,
                   !artifact.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            let sourceKey = "task:\(artifact.id)"
+            let sourceKey = Self.taskArtifactSourceKey(artifact.id)
             guard !recordedArtifactSourceKeys.contains(sourceKey) else { continue }
             let draft = ArtifactDraft(
                 kind: .document, title: artifact.title, conversationID: conversationID, originTitle: origin,
