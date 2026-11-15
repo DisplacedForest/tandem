@@ -116,7 +116,7 @@ struct SourcesRow: View {
                 withAnimation(.easeInOut(duration: 0.18)) { toggled.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    HStack(spacing: -6) {
+                    HStack(spacing: 2) {
                         ForEach(sources.filter { sourceIsLinked($0.url) }.prefix(5)) { Favicon(urlString: $0.url) }
                     }
                     Text("Sources").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)

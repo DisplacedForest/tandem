@@ -867,7 +867,7 @@ enum NativeTaskDeliverySelftest {
             try snapshotText("failed", ["failure_reason": "request_conflict"]),
             try snapshotText("failed", ["sources": [sources[0]]]),
             NativeTaskTools.acknowledged, NativeTaskTools.searchUnavailable, NativeTaskDelivery.notePrompt,
-            NativeTaskDelivery.modelLead, NativeTaskDelivery.modelTail, "Save as document", "Saved here. This continues once it reconnects.",
+            NativeTaskDelivery.modelLead, NativeTaskDelivery.modelTail, "Saved here. This continues once it reconnects.",
             "This message's request was stopped earlier. Say so in one short sentence.",
             "This message's result was already sent in this conversation. Say so in one short sentence.",
             "This message's request is waiting on the person. Say so in one short sentence.",
