@@ -72,6 +72,11 @@ extension SelfTest {
                     && NativeCompanionWorker.stepLiteral(toolID: "garden", toolTitle: nil, argumentsJSON: "{\"text\":\"hello\"}", title: "Send a note: hello")
                         == "Send a note\nText: hello",
                     "Without the tool, the action's name comes from the saved short title")
+        try require(NativeCompanionWorker.stepLiteral(toolID: "message-send", toolTitle: "Send a message",
+                                                      argumentsJSON: "{\"message\":\"The vents are fixed.\",\"zone\":\"north\",\"to\":\"growers@example.com\",\"title\":\"Vents\"}",
+                                                      title: "Send a message: The vents are fixed.")
+                        == "Send a message\nTo: growers@example.com\nTitle: Vents\nZone: north\nMessage: The vents are fixed.",
+                    "A stopped step lists who it goes to first and the long text last, the same as the card that asked")
         try require(NativeCompanionWorker.earlierLine(done: [], unsure: []) == nil
                     && NativeCompanionWorker.earlierLine(done: ["Edit a file: plan.md"], unsure: []) == "Earlier in this work: Edit a file: plan.md."
                     && NativeCompanionWorker.earlierLine(done: ["A"], unsure: ["B", "C"])

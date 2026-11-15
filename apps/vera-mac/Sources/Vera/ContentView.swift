@@ -1044,7 +1044,7 @@ struct NativeToolConfirmationBar: View {
         if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
             return NativeScheduleTools.literal(for: draft)
         }
-        let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
+        let lines = NativeCompanionWorker.shownDetails(request.title, argumentsJSON: request.request)
         return lines.isEmpty ? nil : lines
     }
 
@@ -1053,10 +1053,8 @@ struct NativeToolConfirmationBar: View {
         return NativeScheduleTools.destination(for: draft)
     }
 
-    private var answers: CardAnswers {
-        var built = onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
-        if request.subject == nil { built.allowTitle = "Approve" }
-        return built
+    var answers: CardAnswers {
+        onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
     }
 
     private var block: String? {

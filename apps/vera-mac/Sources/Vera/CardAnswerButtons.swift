@@ -59,8 +59,11 @@ struct CardAnswers: Equatable {
         }
     }
 
+    static let folderStarts = ["Never edit in ", "Never move things in "]
+
     static func scoped(_ title: String) -> Bool {
-        title == wholeNever || title == commandsNever || (title.hasPrefix(sendStart) && title.hasSuffix(scopeEnd))
+        title == wholeNever || title == commandsNever
+            || ((title.hasPrefix(sendStart) || folderStarts.contains(where: title.hasPrefix)) && title.hasSuffix(scopeEnd))
     }
 
     static func task(choices: [String], covers: String?, neverTitle: String?, run: Bool = false) -> CardAnswers {
