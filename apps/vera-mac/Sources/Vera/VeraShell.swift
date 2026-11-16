@@ -216,7 +216,8 @@ struct VeraSidebar: View {
     static let contextWidth: CGFloat = 244
     static let expandedWidth = railWidth + contextWidth
     static let collapsedWidth = railWidth
-    static let topInset: CGFloat = 40
+    static let topInset = WindowStripMetrics.height
+    static let railGap: CGFloat = 8
 
     private var paletteOpen: Bool { store.section == .agentic && store.agenticFlowID != nil }
     private var wide: Bool { !collapsed || paletteOpen }
@@ -227,11 +228,10 @@ struct VeraSidebar: View {
         HStack(spacing: 0) {
             globalRail
             if wide {
-                Rectangle().fill(Theme.hairline).frame(width: 1)
+                Rectangle().fill(Theme.hairline).frame(width: 1).padding(.top, Self.topInset)
                 VStack(spacing: 0) {
                     if paletteOpen {
                         WorkflowPalette(store: workflowEditor, searchText: $search) { store.agenticFlowID = nil }
-                            .padding(.top, Self.topInset)
                     } else {
                         contextColumn
                     }
@@ -239,11 +239,12 @@ struct VeraSidebar: View {
                 }
                 .frame(width: Self.contextWidth - 1)
                 .background(Theme.sidebar)
+                .padding(.top, Self.topInset)
             }
         }
         .frame(width: wide ? Self.expandedWidth : Self.collapsedWidth)
         .frame(maxHeight: .infinity)
-        .background(Theme.sidebar)
+        .background(Theme.bg)
         .animation(.easeInOut(duration: 0.18), value: wide)
         .onAppear { revealSelectedProject() }
         .onChange(of: store.selectedID) { _, _ in revealSelectedProject() }
@@ -273,7 +274,6 @@ struct VeraSidebar: View {
                 railButton(store.companion.leading, icon: .companion) { onSelect(.vera) }
                 if !renderSafe { CompactUpdateBadge { collapsed = false } }
             }
-            if ConversationTopBarModel.showsRailToggle(section: store.section) { collapseToggle }
             if renderSafe { railGlyph(.settings, selected: false) }
             else {
                 SettingsLink { railGlyph(.settings, selected: false) }
@@ -281,7 +281,7 @@ struct VeraSidebar: View {
                     .help("Settings").accessibilityLabel("Settings")
             }
         }
-        .padding(.top, Self.topInset + 8).padding(.bottom, 12)
+        .padding(.top, Self.topInset + Self.railGap).padding(.bottom, 12)
         .frame(width: Self.railWidth)
         .background(Theme.bg)
     }
@@ -318,7 +318,7 @@ struct VeraSidebar: View {
                     .help("New chat").accessibilityLabel("New chat")
             }
             .padding(.horizontal, 8).padding(.bottom, 8)
-            .padding(.top, ConversationTopBarMetrics.top)
+            .padding(.top, 8)
             companionRow
             if showsSearch { searchField.padding(.top, 6) }
             if renderSafe {
@@ -389,10 +389,6 @@ struct VeraSidebar: View {
 
     private func revealSelectedProject() {
         if let id = store.selected?.projectID { expandedProjects.insert(id) }
-    }
-
-    private var collapseToggle: some View {
-        railButton(collapsed ? "Expand sidebar" : "Collapse sidebar", icon: ConversationTopBarModel.sidebarIcon(collapsed: collapsed)) { collapsed.toggle() }
     }
 
     private var moreSelected: Bool {

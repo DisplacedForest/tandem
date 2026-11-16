@@ -7,6 +7,8 @@ struct ContentView: View {
     @AppStorage("sidebarCollapsed", store: AppLocations.preferences) private var sidebarCollapsed = false
     @StateObject private var workflowEditor = WorkflowEditorStore()
     @State private var windowWidth: CGFloat = 0
+    @State private var fullScreen = false
+    @State private var history = WindowHistory()
     @State private var companionProfile = CompanionProfileState(launchedAt: Date())
 
     private func select(_ item: AppSection) {
@@ -19,10 +21,25 @@ struct ContentView: View {
         }
     }
 
+    private var currentStop: WindowHistory.Stop {
+        WindowHistory.Stop(section: store.section, conversationID: store.selectedID, pane: store.agenticPane)
+    }
+
+    private func step(forward: Bool) {
+        let conversations = Set(store.conversations.map(\.id))
+        guard let stop = history.step(forward: forward, exists: { $0.conversationID.map(conversations.contains) ?? true }) else { return }
+        if stop.section == .chat, let id = stop.conversationID {
+            store.select(id)
+        } else {
+            if let pane = stop.pane { store.agenticPane = pane }
+            select(stop.section)
+        }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             VeraSidebar(collapsed: $sidebarCollapsed, search: $search, workflowEditor: workflowEditor, onSelect: select)
-            Rectangle().fill(Theme.hairline).frame(width: 1)
+            Rectangle().fill(Theme.hairline).frame(width: 1).padding(.top, WindowStripMetrics.height)
             HStack(spacing: 0) {
                 Group {
                     switch store.section {
@@ -39,7 +56,8 @@ struct ContentView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: sidebarCollapsed) { sidebarCollapsed.toggle() })
+                .modifier(WindowStripPane(conversation: chatSection))
+                .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: !sidebarWide, fullScreen: fullScreen) { sidebarCollapsed.toggle() })
                 if store.showCanvas, chatSection {
                     Divider()
                     CanvasPanel().frame(width: 480)
@@ -52,6 +70,11 @@ struct ContentView: View {
             }
             .background(Theme.ink)
         }
+        .modifier(WindowStripChrome(sidebarWide: sidebarWide, collapsed: sidebarCollapsed, fullScreen: fullScreen,
+                                    canGoBack: history.canGoBack, canGoForward: history.canGoForward,
+                                    back: { step(forward: false) }, forward: { step(forward: true) }) { sidebarCollapsed.toggle() })
+        .onChange(of: currentStop, initial: true) { _, stop in history.visit(stop) }
+        .background(WindowButtonsPlacer(fullScreen: $fullScreen))
         .ignoresSafeArea(.container, edges: .top)
         .task { await store.connect() }
         .modifier(CompanionAttentionWindow())
@@ -86,6 +109,7 @@ struct ContentView: View {
     }
 
     private var chatSection: Bool { store.section == .chat || store.section == .vera }
+    private var sidebarWide: Bool { !sidebarCollapsed || (store.section == .agentic && store.agenticFlowID != nil) }
     private var companionThread: Bool {
         CompanionProfileState.available(section: store.section, companionThread: store.isVeraThread(store.selectedID))
     }

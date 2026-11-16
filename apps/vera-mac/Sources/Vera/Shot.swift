@@ -642,7 +642,7 @@ enum Shot {
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty",
                  "artifacts-filter-images", "artifacts-no-results", "artifacts-saved", "artifacts-save-failed",
                  "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
-                 "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow": section = .artifacts
+                 "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow", "artifacts-collapsed": section = .artifacts
             case "scheduled", "scheduled-paused", "scheduled-caught-up": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty", "integrations-changes": section = .integrations
             case "memory": section = .memory
@@ -666,7 +666,8 @@ enum Shot {
                          folder: view == "chats-folder",
                          command: view == "chats-command",
                          schedule: view == "chats-schedule",
-                         collapsedSidebar: view == "sidebar-collapsed" || view == "chat-collapsed",
+                         collapsedSidebar: view == "sidebar-collapsed" || view == "chat-collapsed" || view == "artifacts-collapsed" || view == "chat-fullscreen",
+                         fullScreenShot: view == "chat-fullscreen",
                          mentions: view == "chats-mentions",
                          jumpToLatest: view == "chats-jump",
                          artifactSelection: artifactSeed?.selection,

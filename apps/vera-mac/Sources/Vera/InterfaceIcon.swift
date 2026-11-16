@@ -69,6 +69,8 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
     case collapse
     case next
     case back
+    case goBack
+    case goForward
     case choose
     case latest
     case bridged
@@ -149,6 +151,8 @@ enum InterfaceIcon: String, CaseIterable, Sendable {
         case .collapse: "interface-collapse"
         case .next: "interface-next"
         case .back: "interface-back"
+        case .goBack: "interface-go-back"
+        case .goForward: "interface-go-forward"
         case .choose: "interface-choose"
         case .latest: "interface-latest"
         case .bridged: "interface-bridged"
