@@ -359,7 +359,7 @@ enum NativeChatToolCatalog {
             NativeChatToolDescriptor(
                 id: NativeWebTools.searchToolID,
                 name: "Web search",
-                summary: "Searches the web and answers with numbered sources.",
+                summary: "Searches the web and answers with sources.",
                 available: searchConfigured,
                 setup: "Add your search server to use this."),
             NativeChatToolDescriptor(
