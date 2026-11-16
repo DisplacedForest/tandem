@@ -39,6 +39,8 @@ struct OnboardingSheet: View {
                         IdentityOnboardingEditor()
                         Divider().padding(.vertical, 6)
                         NativeEndpointEditor(addsOnEntry: true)
+                        Text(ModelSettingsCopy.setupNote)
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     case 1: NativeModelEditor()
                     case 2: NativeMemoryOnboardingEditor()
                     default: PulseOnboardingEditor()

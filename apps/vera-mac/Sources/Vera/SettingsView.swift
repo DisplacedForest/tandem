@@ -39,10 +39,13 @@ struct ConnectionTab: View {
                     InfoTip(text: ModelSettingsCopy.endpointsTip)
                 }
             }
-            Section("Setup guide") {
-                Text("Run the guide again at any time. Your saved endpoints, prompt, tools, and chat history stay in place.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            Section {
                 Button("Resume setup guide") { config.beginOnboarding() }
+            } header: {
+                HStack(spacing: 6) {
+                    Text("Setup guide")
+                    InfoTip(text: ModelSettingsCopy.setupGuideTip)
+                }
             }
             SaveSection()
         }
@@ -356,6 +359,8 @@ enum ModelSettingsCopy {
     static let endpointsTip = "API keys are kept in your Mac keychain. The address is the one your model server gives for its OpenAI-compatible API, usually ending in /v1."
     static let capabilitiesTip = "These describe what the chosen model can do. Tandem doesn't check them for you."
     static let visionBridgeTip = "If the chosen model can't read images, Tandem can send them to a second model that can and pass its description along. Without one, Tandem asks before sending a message without its attachment."
+    static let setupGuideTip = "You can run the guide again at any time. Your saved endpoints, prompt, tools and chat history stay in place."
+    static let setupNote = "API keys are saved in your Mac keychain. Use the OpenAI-compatible API root ending in /v1."
     static let namePlaceholder = "Home model server"
     static let baseURLPlaceholder = "https://model-host.example/v1"
     static let visionBaseURLPlaceholder = "https://vision-host.example/v1"
@@ -376,7 +381,7 @@ enum ModelSettingsCopy {
     static let malformed = "The endpoint returned a model response Tandem could not read."
 
     static var fixedStrings: [String] {
-        [endpointsTip, capabilitiesTip, visionBridgeTip, namePlaceholder, baseURLPlaceholder, visionBaseURLPlaceholder,
+        [endpointsTip, capabilitiesTip, visionBridgeTip, setupGuideTip, setupNote, namePlaceholder, baseURLPlaceholder, visionBaseURLPlaceholder,
          visionModelPlaceholder, optionalPlaceholder, savedWithoutModel, savedListHelp, loading, noEndpoint, endpointFirst,
          chooseModel, looking, usesTools, empty, noUsableModels,
          authenticationFailed, networkFailed, malformed]
