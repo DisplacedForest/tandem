@@ -240,8 +240,10 @@ async def test_native_provider_transport_deadlines_and_sanitized_diagnostics(sce
         assert set(timing) <= {'phase', 'outcome', 'status', 'setupSeconds', 'headersSeconds', 'finishSeconds', 'dnsSeconds', 'connectSeconds', 'tlsSeconds'}
         assert timing['phase'] == 'synthesize'
         assert 'synthetic-secret-sentinel' not in stdout.decode()
-        tested = {'setup': value['setup'], 'body': value['idle'], 'overall': value['overall'], 'short-overall': value['overall'], 'cancel': 0.1}
+        tested = {'setup': value['setup'], 'overall': value['overall'], 'short-overall': value['overall'], 'cancel': 0.1}
         assert timing['finishSeconds'] < tested.get(scenario, SERVER_HOLD - LATE_SLACK) + LATE_SLACK
+        if scenario == 'body':
+            assert timing['finishSeconds'] - timing['headersSeconds'] < value['idle'] + LATE_SLACK
         assert result['failure'] == (None if expected == 'completed' else 'canceled' if expected == 'canceled' else 'request_timeout' if expected.endswith('timeout') else expected)
         if scenario == 'headers':
             assert uploaded.is_set() and timing['setupSeconds'] < value['setup']

@@ -267,7 +267,6 @@ enum NativeTurnCurrencyFixture {
             title: "List reminders", round: 1, request: "{}", result: nil, state: .pending, confirmationRequired: false)
         let holder = try await hold(url)
         let probe = NativeTurnCurrencyProbe()
-        let began = ContinuousClock.now
         let marking = probe.run { await store.markTurnDispatchOffMain(activity, turn: turn) }
         try await probe.untilStarted()
         try require(probe.responsive, "Marking a dispatch must not block the main actor while the database is locked")
@@ -276,7 +275,18 @@ enum NativeTurnCurrencyFixture {
                     "Status updates must not wait behind the dispatch marker")
         let marked = await marking.value
         try require(!marked, "A dispatch marker that cannot land declines the tool call instead of running it unmarked")
-        try require(began.duration(to: .now) >= NativeTurnCurrencyProbe.waitFloor,
+        guard let attempt = turn.attempt else { throw NativeTaskFixture.Failure.assertion("The claimed turn has an attempt") }
+        let turnID = turn.id
+        let waited = await Task.detached { () -> Duration? in
+            let start = ContinuousClock.now
+            do {
+                try repository.markTurnDispatch(turnID, attempt: attempt, activity: activity)
+                return nil
+            } catch {
+                return start.duration(to: .now)
+            }
+        }.value
+        try require(waited.map { $0 >= NativeTurnCurrencyProbe.waitFloor } == true,
                     "A dispatch marker that meets the lock waits for it before giving up")
         try await holder.release()
         let released = ContinuousClock.now
