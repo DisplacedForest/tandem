@@ -193,6 +193,7 @@ struct ConversationTopBar: View {
     @Environment(\.renderSafe) private var renderSafe
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.messageActions) private var messageActions
+    @Environment(\.conversationSidebar) private var sidebar
     var profile: Binding<CompanionProfileState>? = nil
     var fixed: CompanionOverviewModel? = nil
     var conversation: Conversation? = nil
@@ -217,9 +218,15 @@ struct ConversationTopBar: View {
                                                 companionThread: store.isVeraThread(conversation?.id))
     }
 
+    private var leadingClearance: CGFloat {
+        guard let sidebar else { return 0 }
+        return WindowStripMetrics.titleClearance(sidebarWide: !sidebar.collapsed, fullScreen: sidebar.fullScreen)
+    }
+
     var body: some View {
         HStack(spacing: ConversationTopBarMetrics.gap) {
-            slot { Color.clear }
+            Color.clear.frame(width: max(ConversationTopBarMetrics.height, leadingClearance - ConversationTopBarMetrics.edge),
+                              height: ConversationTopBarMetrics.height)
             Spacer(minLength: 0)
             pill
             Spacer(minLength: 0)

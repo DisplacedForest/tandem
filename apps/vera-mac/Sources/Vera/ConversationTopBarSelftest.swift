@@ -258,27 +258,64 @@ extension SelfTest {
                     "The strip's new labels are plain words")
 
         var history = WindowHistory()
-        try require(!history.canGoBack && !history.canGoForward && history.back() == nil, "With nothing visited there's nowhere to go")
+        let all: (WindowHistory.Stop) -> Bool = { _ in true }
+        try require(!history.canGoBack && !history.canGoForward && history.step(forward: false, exists: all) == nil,
+                    "With nothing visited there's nowhere to go")
         let home = WindowHistory.Stop(section: .vera, conversationID: "companion")
-        let firstChat = WindowHistory.Stop(section: .chat, conversationID: "a")
+        let chatA = WindowHistory.Stop(section: .chat, conversationID: "a")
+        let chatB = WindowHistory.Stop(section: .chat, conversationID: "b")
+        let chatC = WindowHistory.Stop(section: .chat, conversationID: "c")
         let library = WindowHistory.Stop(section: .artifacts, conversationID: "a")
-        let secondChat = WindowHistory.Stop(section: .chat, conversationID: "b")
-        try require(home.conversationID == nil && library.conversationID == nil && firstChat.conversationID == "a",
+        let workflows = WindowHistory.Stop(section: .agentic, conversationID: nil, pane: .canvas)
+        let activity = WindowHistory.Stop(section: .agentic, conversationID: nil, pane: .activity)
+        try require(home.conversationID == nil && library.conversationID == nil && chatA.conversationID == "a" && library.pane == nil,
                     "Only an ordinary chat is remembered by its own id")
-        for stop in [home, firstChat, firstChat, library] { history.visit(stop) }
-        try require(history.stops == [home, firstChat, library] && history.canGoBack && !history.canGoForward,
+        for stop in [home, chatA, chatA, library] { history.visit(stop) }
+        try require(history.stops == [home, chatA, library] && history.canGoBack && !history.canGoForward,
                     "Visiting the same place twice in a row is remembered once")
-        try require(history.back() == firstChat && history.back() == home && !history.canGoBack && history.canGoForward,
+        try require(history.step(forward: false, exists: all) == chatA && history.step(forward: false, exists: all) == home
+                    && !history.canGoBack && history.canGoForward,
                     "Back steps through what was open and stops at the start")
         history.visit(home)
-        try require(history.stops.count == 3 && history.forward() == firstChat, "Arriving where back already put you changes nothing")
-        history.visit(secondChat)
-        try require(history.stops == [home, firstChat, secondChat] && !history.canGoForward, "Going somewhere new drops what was ahead")
-        history.forget(conversationID: "b")
-        try require(history.stops == [home, firstChat] && history.current == firstChat, "A deleted chat leaves the list")
-        for number in 0..<(WindowHistory.cap + 10) { history.visit(WindowHistory.Stop(section: .chat, conversationID: "c\(number)")) }
-        try require(history.stops.count == WindowHistory.cap && history.current?.conversationID == "c\(WindowHistory.cap + 9)",
+        try require(history.stops.count == 3 && history.step(forward: true, exists: all) == chatA,
+                    "Arriving where back already put you changes nothing")
+        history.visit(chatB)
+        try require(history.stops == [home, chatA, chatB] && !history.canGoForward, "Going somewhere new drops what was ahead")
+
+        var deleted = WindowHistory()
+        for stop in [chatA, chatB, chatC] { deleted.visit(stop) }
+        _ = deleted.step(forward: false, exists: all)
+        _ = deleted.step(forward: false, exists: all)
+        let withoutB: (WindowHistory.Stop) -> Bool = { $0.conversationID != "b" }
+        try require(deleted.current == chatA && deleted.step(forward: true, exists: withoutB) == chatC
+                    && deleted.stops == [chatA, chatC] && deleted.current == chatC && deleted.canGoBack && !deleted.canGoForward,
+                    "Forward skips a deleted chat and lands on the next one that's still there")
+        var behind = WindowHistory()
+        for stop in [chatA, chatB, chatC] { behind.visit(stop) }
+        try require(behind.step(forward: false, exists: withoutB) == chatA && behind.stops == [chatA, chatC]
+                    && behind.current == chatA && behind.canGoForward && behind.step(forward: true, exists: withoutB) == chatC,
+                    "Back skips a deleted chat in one press and forward still returns")
+        var folded = WindowHistory()
+        for stop in [chatA, chatB, chatA, chatC] { folded.visit(stop) }
+        _ = folded.step(forward: false, exists: all)
+        try require(folded.current == chatA && folded.step(forward: false, exists: withoutB) == nil && folded.stops == [chatA, chatC]
+                    && folded.current == chatA && !folded.canGoBack,
+                    "When a deleted chat sat between two visits to the same place, the two fold into one")
+
+        var panes = WindowHistory()
+        for stop in [library, workflows, activity] { panes.visit(stop) }
+        try require(workflows != activity && panes.stops == [library, workflows, activity]
+                    && panes.step(forward: false, exists: all) == workflows && panes.current?.pane == .canvas,
+                    "Workflows and Activity are two places, and back from Activity is Workflows")
+
+        var capped = WindowHistory()
+        for number in 0..<(WindowHistory.cap + 10) { capped.visit(WindowHistory.Stop(section: .chat, conversationID: "c\(number)")) }
+        try require(capped.stops.count == WindowHistory.cap && capped.current?.conversationID == "c\(WindowHistory.cap + 9)",
                     "The list is capped and keeps the newest")
+        try require(strip.titleClearance(sidebarWide: true, fullScreen: false) == 0
+                    && strip.titleClearance(sidebarWide: false, fullScreen: false) + VeraSidebar.collapsedWidth + 1
+                        > strip.dividerLeading(sidebarWide: false, fullScreen: false),
+                    "With the sidebar hidden the conversation's title keeps clear of the strip's glyphs and divider")
         try require(ConversationTopBarModel.sidebarTitle(collapsed: false) == "Hide sidebar"
                     && ConversationTopBarModel.sidebarTitle(collapsed: true) == "Show sidebar", "The sidebar button says what it will do")
         try require(ConversationTopBarModel.sidebarIcon(collapsed: false) == .sidebarShown

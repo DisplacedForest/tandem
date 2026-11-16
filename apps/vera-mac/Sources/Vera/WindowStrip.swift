@@ -34,6 +34,10 @@ enum WindowStripMetrics {
         glyphCentres[index] - glyphSlot / 2 - fullScreenShift(fullScreen)
     }
 
+    static func titleClearance(sidebarWide: Bool, fullScreen: Bool) -> CGFloat {
+        sidebarWide ? 0 : dividerLeading(sidebarWide: false, fullScreen: fullScreen) + dividerGap - VeraSidebar.collapsedWidth - 1
+    }
+
     static func dividerLeading(sidebarWide: Bool, fullScreen: Bool) -> CGFloat {
         sidebarWide ? VeraSidebar.expandedWidth : glyphLeading(2, fullScreen: fullScreen) + glyphSlot + dividerGap
     }
@@ -42,11 +46,13 @@ enum WindowStripMetrics {
 struct WindowHistory: Equatable {
     struct Stop: Equatable {
         let section: AppSection
-        var conversationID: String? = nil
+        let conversationID: String?
+        let pane: AgenticPane?
 
-        init(section: AppSection, conversationID: String?) {
+        init(section: AppSection, conversationID: String?, pane: AgenticPane? = nil) {
             self.section = section
             self.conversationID = section == .chat ? conversationID : nil
+            self.pane = section == .agentic ? pane : nil
         }
     }
 
@@ -66,25 +72,17 @@ struct WindowHistory: Equatable {
         index = stops.count - 1
     }
 
-    mutating func back() -> Stop? {
-        guard canGoBack else { return nil }
-        index -= 1
-        return stops[index]
-    }
-
-    mutating func forward() -> Stop? {
-        guard canGoForward else { return nil }
-        index += 1
-        return stops[index]
-    }
-
-    mutating func forget(conversationID: String) {
-        let kept = current
-        stops.removeAll { $0.conversationID == conversationID }
-        var merged: [Stop] = []
-        for stop in stops where merged.last != stop { merged.append(stop) }
-        stops = merged
-        index = kept.flatMap { stops.lastIndex(of: $0) } ?? stops.count - 1
+    mutating func step(forward: Bool, exists: (Stop) -> Bool) -> Stop? {
+        while true {
+            let next = forward ? index + 1 : index - 1
+            guard stops.indices.contains(index), stops.indices.contains(next) else { return nil }
+            if exists(stops[next]), stops[next] != stops[index] {
+                index = next
+                return stops[index]
+            }
+            stops.remove(at: next)
+            if !forward { index -= 1 }
+        }
     }
 }
 
@@ -246,6 +244,8 @@ struct WindowButtonsPlacer: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) { context.coordinator.place() }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) { coordinator.attach(nil) }
 
     final class AnchorView: NSView {
         weak var coordinator: Coordinator?

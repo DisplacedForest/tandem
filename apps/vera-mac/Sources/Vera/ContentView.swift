@@ -21,21 +21,18 @@ struct ContentView: View {
         }
     }
 
-    private var currentStop: WindowHistory.Stop { WindowHistory.Stop(section: store.section, conversationID: store.selectedID) }
+    private var currentStop: WindowHistory.Stop {
+        WindowHistory.Stop(section: store.section, conversationID: store.selectedID, pane: store.agenticPane)
+    }
 
     private func step(forward: Bool) {
-        while let stop = forward ? history.forward() : history.back() {
-            if stop.section == .chat, let id = stop.conversationID {
-                if store.conversations.contains(where: { $0.id == id }) {
-                    store.select(id)
-                    return
-                }
-                history.forget(conversationID: id)
-                if history.current == currentStop { return }
-            } else {
-                select(stop.section)
-                return
-            }
+        let conversations = Set(store.conversations.map(\.id))
+        guard let stop = history.step(forward: forward, exists: { $0.conversationID.map(conversations.contains) ?? true }) else { return }
+        if stop.section == .chat, let id = stop.conversationID {
+            store.select(id)
+        } else {
+            if let pane = stop.pane { store.agenticPane = pane }
+            select(stop.section)
         }
     }
 
