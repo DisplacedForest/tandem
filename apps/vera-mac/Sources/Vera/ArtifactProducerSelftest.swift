@@ -438,6 +438,7 @@ enum ArtifactProducerSelftest {
         store.retryAnswer(failedTurn.assistantMessageID)
         try await waitUntil("The retried revision never finished") {
             store.conversations.first { $0.id == romeChat }?.messages.last?.state == .complete
+                && !store.turnExecutions.values.contains { $0.record.conversationID == romeChat }
         }
         try check((transport.histories.last?.first?.content ?? "").contains("The user is revising the document titled \"Rome guide\""),
                   "The retried attempt still carries the revision note")

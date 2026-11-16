@@ -91,6 +91,7 @@ extension NativeSessionHTTPFixture {
             guard let id = store.conversations.first?.id else { throw NativeTaskHTTPError.invalidResponse }
             store.select(id)
             store.resumeConversationTurns()
+            FileHandle.standardOutput.write(Data("SESSION_SURVIVOR_READY\n".utf8))
             try await NativeSessionFixture.eventually("The surviving process must recover pending work") {
                 store.conversationTurns.contains { $0.state == .complete }
             }
