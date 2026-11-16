@@ -40,6 +40,7 @@ struct ImageGenerationPlaceholder: View {
     static let maxWidth: CGFloat = 480
     static let maxHeight: CGFloat = 480
     static let controlsInsideMinimumWidth: CGFloat = 240
+    static let controlsStackedMinimumWidth: CGFloat = 110
 
     private var effect: ImagePlaceholderEffect {
         effectOverride ?? ImagePlaceholderEffect.variant(for: activity.id)
@@ -72,41 +73,56 @@ struct ImageGenerationPlaceholder: View {
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
             let inside = boxSize.width >= Self.controlsInsideMinimumWidth
+            let stacked = !inside && boxSize.width >= Self.controlsStackedMinimumWidth
             ZStack(alignment: .bottom) {
                 effectCanvas
-                if inside { controls.padding(12) }
+                if inside { controls(spread: true).padding(12) } else if stacked { stackedControls.padding(10) }
             }
             .frame(width: boxSize.width, height: boxSize.height)
             .background(Theme.surface.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
-            if !inside {
-                controls.frame(width: Self.controlsInsideMinimumWidth)
-            }
+            if !inside && !stacked { controls(spread: false).fixedSize() }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Creating image, \(Int((fraction * 100).rounded())) percent")
     }
 
-    private var controls: some View {
-        HStack {
-            if let onCancel {
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(Capsule().fill(Theme.surface.opacity(0.9)))
-                    .accessibilityLabel("Cancel image generation")
-            }
-            Spacer()
-            Text("\(Int((fraction * 100).rounded()))%")
-                .font(.system(size: 13, weight: .medium).monospacedDigit())
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, 14).padding(.vertical, 7)
-                .background(Capsule().fill(Theme.surface.opacity(0.9)))
-                .accessibilityLabel(activity.progress?.label ?? "Starting")
+    private func controls(spread: Bool) -> some View {
+        HStack(spacing: 8) {
+            cancelControl
+            if spread { Spacer() }
+            percentage
         }
+    }
+
+    private var stackedControls: some View {
+        VStack(spacing: 6) {
+            percentage
+            cancelControl
+        }
+        .fixedSize()
+    }
+
+    @ViewBuilder private var cancelControl: some View {
+        if let onCancel {
+            Button("Cancel", action: onCancel)
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(Capsule().fill(Theme.surface.opacity(0.9)))
+                .accessibilityLabel("Cancel image generation")
+        }
+    }
+
+    private var percentage: some View {
+        Text("\(Int((fraction * 100).rounded()))%")
+            .font(.system(size: 13, weight: .medium).monospacedDigit())
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .background(Capsule().fill(Theme.surface.opacity(0.9)))
+            .accessibilityLabel(activity.progress?.label ?? "Starting")
     }
 
     @ViewBuilder private var effectCanvas: some View {
