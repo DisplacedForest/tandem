@@ -452,18 +452,12 @@ extension NativeTaskDisplayFixture {
             try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: saved).declineMenu.map(\.title) == [shown],
                         "A never title saved with earlier words reads with the current ones: \(saved)")
         }
-        for kept in ["Never edit in Plans for this work", "Never edit in Plans in this task",
-                     "Never move things in Notes for this work to the Trash"] {
+        for kept in ["Never edit in Plans for this work", "Never edit in Plans in this task", "Never edit in Plans for this",
+                     "Never move things in Notes for this work to the Trash", "Never move things in Notes to the Trash for this"] {
             for run in [false, true] {
                 try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: kept, run: run).declineMenu.map(\.title) == [kept],
                             "A folder's own name is never reworded: \(kept)")
             }
-        }
-        for (folder, run) in ["Never edit in Plans for this": "Never edit in Plans for this run",
-                              "Never move things in Notes to the Trash for this": "Never move things in Notes to the Trash for this run"] {
-            try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: folder).declineMenu.map(\.title) == [folder]
-                        && CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: folder, run: true).declineMenu.map(\.title) == [run],
-                        "A folder never says it applies to this run on the Scheduled screen: \(folder)")
         }
         try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: "Never send to Plans for this work for this", run: true)
                         .declineMenu.map(\.title) == ["Never send to Plans for this work for this run"], "A recipient's own name is kept on a scheduled run")
