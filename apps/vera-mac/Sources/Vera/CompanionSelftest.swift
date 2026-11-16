@@ -64,7 +64,8 @@ extension SelfTest {
         }
         func settle() async throws {
             for _ in 0..<500 {
-                if thread()?.messages.contains(where: { $0.role == .assistant && $0.state == .streaming }) == false { return }
+                if thread()?.messages.contains(where: { $0.role == .assistant && $0.state == .streaming }) == false,
+                   !store.turnExecutions.values.contains(where: { $0.record.conversationID == threadID }) { return }
                 try await Task.sleep(nanoseconds: 10_000_000)
             }
             throw NativeTaskFixture.Failure.assertion("the assistant reply settles")

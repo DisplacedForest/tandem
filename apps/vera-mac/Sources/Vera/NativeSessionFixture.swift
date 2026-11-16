@@ -44,7 +44,7 @@ enum NativeSessionFixture {
     static let config = NativeChatConfig(baseURL: URL(string: "http://127.0.0.1:1/v1")!, apiKey: nil,
                                         model: "local-model", chatTemplateKwargs: nil)
 
-    static func store(_ repository: LocalChatRepository, transport: NativeSessionFixtureTransport,
+    static func store(_ repository: any ChatRepository, transport: NativeSessionFixtureTransport,
                       gate: NativeSessionGate, confirmation: Bool = false) -> ChatStore {
         let definition = NativeToolDefinition(id: "hold", name: "hold", title: "Check the reference",
             description: "Read the synthetic reference", parameters: .object(["type": .string("object")]),
