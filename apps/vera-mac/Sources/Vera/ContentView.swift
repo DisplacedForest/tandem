@@ -772,7 +772,6 @@ struct MessageRow: View {
                             connectedTaskIDs: store.connectedNativeTaskIDs,
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask,
                             onDecide: store.answerNativeTask,
-                            onSaveAnswer: store.saveNativeTaskAnswer,
                             highlightedTaskID: store.highlightedTaskID,
                             onRuleOffer: onRuleOffer)
                     }
@@ -904,6 +903,78 @@ struct NativeToolActivityChip: View {
 
     private var declined: Bool { Self.isDeclined(activity) }
 
+    static let shownKeys = ["worker_type": "kind"]
+    static let incomplete = "The request was incomplete, so nothing ran."
+    static let unavailable = "This isn't available in this chat."
+    static let cutShort = "The rest of this message was cut off."
+    static let errorExtras: Set<String> = ["truncated", "truncation_reason"]
+
+    static func fields(_ json: String) -> [String: NativeJSONValue]? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return nil }
+        return try? object.mapValues { try NativeJSONValue(any: $0) }
+    }
+
+    static func shownLabel(_ key: String) -> String {
+        let label = (shownKeys[key.lowercased()] ?? key).replacingOccurrences(of: "_", with: " ")
+        return label.prefix(1).uppercased() + label.dropFirst()
+    }
+
+    static func shownRequest(_ activity: NativeToolActivity) -> String {
+        let asked = NativeToolConfirmationRequest(activity: activity)
+        if let specific = NativeToolConfirmationBar.specificLiteral(for: asked, now: .distantPast) { return specific }
+        guard let values = fields(activity.request) else { return activity.request }
+        var plain: [String: NativeJSONValue] = [:]
+        for (key, value) in values {
+            let label = shownKeys[key.lowercased()] ?? key
+            if case .array(let items) = value {
+                let texts = items.compactMap { item -> String? in if case .string(let text) = item { text } else { nil } }
+                if texts.count == items.count { plain[label] = .string(texts.joined(separator: ", ")); continue }
+            }
+            plain[label] = value
+        }
+        return NativeCompanionWorker.shownDetails(activity.title, argumentsJSON: NativeEffectProposal.canonicalArguments(.object(plain)))
+    }
+
+    static func shownError(_ error: String, cut: Bool) -> String {
+        if error == NativeToolError.unavailable.errorDescription { return unavailable }
+        if error.hasPrefix(SavedWording.argumentsLead) { return incomplete }
+        return cut ? error + "\n" + cutShort : error
+    }
+
+    static func shownResult(_ result: String, toolID: String = "") -> String {
+        guard let values = fields(result) else { return result }
+        if toolID == NativeCommandTools.toolID {
+            var parts = ["stdout", "stderr"].compactMap { key -> String? in
+                guard case .string(let text)? = values[key] else { return nil }
+                let trimmed = text.trimmingCharacters(in: .newlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            if case .string(let error)? = values["error"], !error.isEmpty {
+                parts.insert(shownError(error, cut: values["truncated"] == .bool(true)), at: 0)
+            } else if case .number(let code)? = values["exit_code"], code != 0 {
+                parts.insert("The command failed with exit status \(Int(code)).", at: 0)
+            } else if case .number(let signal)? = values["signal"] {
+                parts.insert("The command was ended by signal \(Int(signal)).", at: 0)
+            }
+            return parts.joined(separator: "\n\n")
+        }
+        if case .string(let error)? = values["error"], Set(values.keys).subtracting(["error"]).isSubset(of: errorExtras) {
+            return shownError(error, cut: values["truncated"] == .bool(true))
+        }
+        var lines: [String] = []
+        for key in NativeCompanionWorker.shownOrder(Array(values.keys)) {
+            switch values[key] {
+            case .string(let text)?:
+                if !text.isEmpty { lines.append(shownLabel(key) + ": " + text.trimmingCharacters(in: .newlines)) }
+            case .bool(let flag)?: lines.append(shownLabel(key) + ": " + (flag ? "Yes" : "No"))
+            case .number(let number)?: lines.append(shownLabel(key) + ": " + NativeEffectProposal.canonicalArguments(.number(number)))
+            case .null?: continue
+            default: return result
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     static func showsSpinner(_ activity: NativeToolActivity, awaitingDecision: Bool) -> Bool {
         activity.state == .pending && !awaitingDecision
     }
@@ -958,9 +1029,11 @@ struct NativeToolActivityChip: View {
                     Text(reason.title).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                inspected("Request", activity.request)
-                if activity.why == nil, let result = activity.result { inspected("Result", result) }
+                let request = Self.shownRequest(activity)
+                if !request.isEmpty { inspected("Request", request) }
+                if activity.why == nil, let result = activity.result.map({ Self.shownResult($0, toolID: activity.toolID) }), !result.isEmpty { inspected("Result", result) }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 8)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
@@ -1045,15 +1118,20 @@ struct NativeToolConfirmationBar: View {
     }
 
     static func literal(for request: NativeToolConfirmationRequest) -> String? {
+        if let specific = specificLiteral(for: request) { return specific }
+        let lines = NativeCompanionWorker.shownDetails(request.title, argumentsJSON: request.request)
+        return lines.isEmpty ? nil : lines
+    }
+
+    static func specificLiteral(for request: NativeToolConfirmationRequest, now: Date = Date()) -> String? {
         if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
             return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
         }
         if request.toolID == NativeFolderTools.toolID, let path = NativeFolderTools.pathArgument(inRequest: request.request) { return path }
-        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
+        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request, now: now) {
             return NativeScheduleTools.literal(for: draft)
         }
-        let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
-        return lines.isEmpty ? nil : lines
+        return nil
     }
 
     static func closing(for request: NativeToolConfirmationRequest) -> String? {
@@ -1061,10 +1139,8 @@ struct NativeToolConfirmationBar: View {
         return NativeScheduleTools.destination(for: draft)
     }
 
-    private var answers: CardAnswers {
-        var built = onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
-        if request.subject == nil { built.allowTitle = "Approve" }
-        return built
+    var answers: CardAnswers {
+        onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
     }
 
     private var block: String? {
@@ -1143,6 +1219,7 @@ private struct ConversationButtonBody: View {
             .padding(.horizontal, 14).frame(height: 28)
             .background(Capsule().fill(kind == .primary ? Theme.sage : Color.clear))
             .overlay(Capsule().stroke(kind == .primary ? Color.clear : Theme.cardStroke, lineWidth: 1))
+            .clipShape(Capsule())
             .contentShape(Capsule())
             .opacity(isEnabled ? (pressed ? 0.8 : 1) : 0.45)
     }

@@ -265,7 +265,7 @@ enum CardShot {
             : NativeCardSubject(action: .networkSends, toolID: "booking-send", toolTitle: toolTitle, alwaysAsks: asks)
         let place = NativeCardPlace.task(taskID: "card-task", conversationID: threadID, scheduleID: nil)
         let offered = NativeCardChoices.offered(subject, place: place)
-        let details = command ? "make pdf\nin \(folder)" : NativeCompanionWorker.details(toolTitle, argumentsJSON: arguments)
+        let details = command ? "make pdf\nin \(folder)" : NativeCompanionWorker.shownDetails(toolTitle, argumentsJSON: arguments)
         let never = offered.first(where: { $0.kind == .never })?.title ?? ""
         let covers = NativeCardChoices.scope(subject) ?? ""
         let decision: [String: Any] = [
@@ -328,7 +328,10 @@ enum CardShot {
             let short = "Send a message: The vents are fixed."
             step = try NativeCompanionWorker.report(checkpoint, assignment: title, text: "Stopped because you declined: \(short)." + effects, keep: false,
                                                     stop: NativeTaskStop(reason: NativeTaskStop.declined,
-                                                                         step: "Send a message\nMessage: The vents are fixed.\nTo: growers@example.com", earlier: earlier))
+                                                                         step: NativeCompanionWorker.stepLiteral(toolID: "message-send", toolTitle: "Send a message",
+                                                                                                                    argumentsJSON: "{\"message\":\"The vents are fixed.\",\"to\":\"growers@example.com\"}",
+                                                                                                                    title: short),
+                                                                         earlier: earlier))
         case "card-stop-unconfirmed":
             let short = "Run a command: rsync -a notes/ /Volumes/Backup/notes"
             step = try NativeCompanionWorker.report(checkpoint, assignment: title,

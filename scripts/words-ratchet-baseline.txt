@@ -96,9 +96,9 @@
 2 apps/vera-mac/Sources/Vera/NativeTaskGenerationBroker.swift
 3 apps/vera-mac/Sources/Vera/NativeTaskGenerationExchange.swift
 11 apps/vera-mac/Sources/Vera/NativeTaskLocalEngine.swift
-13 apps/vera-mac/Sources/Vera/NativeTaskProjectionRepository.swift
+12 apps/vera-mac/Sources/Vera/NativeTaskProjectionRepository.swift
 10 apps/vera-mac/Sources/Vera/NativeTaskStore.swift
-4 apps/vera-mac/Sources/Vera/NativeTaskStoreIntegration.swift
+3 apps/vera-mac/Sources/Vera/NativeTaskStoreIntegration.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskTools.swift
 2 apps/vera-mac/Sources/Vera/NativeTaskTrackingClient.swift
 15 apps/vera-mac/Sources/Vera/NativeTurnAuthorityFixture.swift

@@ -341,10 +341,6 @@ extension NativeTaskDisplayFixture {
         _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: finished)
         try repository.recordSettledBeforeDelivery(id: reference.id)
         _ = try repository.projectTask(id: reference.id, snapshot: finished)
-        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
-                              attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
-        await store.connect()
-        store.select(origin.conversationID)
         func blocks() throws -> [NativeDisplayBlock] {
             try repository.messages(conversationID: origin.conversationID).first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []
         }
@@ -352,35 +348,43 @@ extension NativeTaskDisplayFixture {
             blocks.compactMap { block -> NativeTaskCardPresentation? in if case .taskCard(let card) = block { card } else { nil } }.first
         }
         let before = try blocks()
-        try require(card(before)?.answer == answer && !before.contains { if case .artifact = $0 { true } else { false } }
-                    && !store.artifactRecords.contains { $0.conversationID == origin.conversationID },
-                    "An answer starts on the card with nothing in the Library")
-        store.saveNativeTaskAnswer(reference.id.uuidString)
-        store.saveNativeTaskAnswer(reference.id.uuidString)
-        let after = try blocks()
-        let documents = after.compactMap { block -> NativeResearchArtifact? in if case .artifact(let value) = block { value } else { nil } }
-        try require(documents.count == 1 && documents.first?.isDocument == true && documents.first?.report == answer
-                    && documents.first?.title == card(after)?.title && card(after)?.answer == answer,
-                    "Saving keeps the answer on the card and adds one document titled like the card")
-        let records = store.artifactRecords.filter { $0.conversationID == origin.conversationID }
-        try require(records.count == 1 && records.first?.kind == .document && records.first?.title == card(after)?.title,
-                    "The saved answer lands in the Library once")
+        try require(card(before)?.answer == answer && !before.contains { if case .artifact = $0 { true } else { false } },
+                    "An answer stays on the card and nothing adds a document")
+        guard let finishedCard = card(before), let earlier = NativeTaskProjection.answerDocument(finishedCard) else {
+            throw NativeTaskFixture.Failure.assertion("A finished answer card exists")
+        }
+        try await repository.database.write { db in
+            var seeded = before
+            let index = seeded.firstIndex { $0.id == "task:" + reference.id.uuidString }.map { $0 + 1 } ?? seeded.endIndex
+            seeded.insert(.artifact(earlier), at: index)
+            try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?",
+                           arguments: [try nativeTaskEncoded(seeded), origin.assistantMessageID.uuidString])
+        }
+        func kept(_ blocks: [NativeDisplayBlock]) -> Bool {
+            let documents = blocks.compactMap { block -> NativeResearchArtifact? in if case .artifact(let value) = block { value } else { nil } }
+            return documents == [earlier] && documents.first?.isDocument == true && documents.first?.report == answer
+                && documents.first?.title == card(blocks)?.title && documents.first?.id == card(blocks)?.id && card(blocks)?.answer == answer
+                && blocks.firstIndex { $0.id == "artifact:" + reference.id.uuidString } == blocks.firstIndex { $0.id == "task:" + reference.id.uuidString }.map { $0 + 1 }
+        }
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
+                              attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+        await store.connect()
+        store.select(origin.conversationID)
         let memory = store.conversations.first { $0.id == origin.conversationID }?.messages.first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []
-        try require(memory.filter { if case .artifact = $0 { true } else { false } }.count == 1, "The open chat shows the document once")
+        try require(kept(memory) && kept(try blocks()), "A document saved earlier loads whole, once, under its card")
         store.applyNativeTaskUpdates([NativeTaskMessageUpdate(conversationID: origin.conversationID,
                                                               messageID: origin.assistantMessageID, blocks: before)])
         let afterStale = store.conversations.first { $0.id == origin.conversationID }?.messages
             .first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []
-        let staleDocuments = afterStale.compactMap { block -> NativeResearchArtifact? in if case .artifact(let value) = block { value } else { nil } }
-        let staleCard = card(afterStale)
-        try require(staleDocuments.count == 1 && staleDocuments.first?.id == staleCard?.id
-                    && afterStale.firstIndex { $0.id == "artifact:" + reference.id.uuidString } == afterStale.firstIndex { $0.id == "task:" + reference.id.uuidString }.map { $0 + 1 }
-                    && staleCard.map { NativeDisplayBlocksView.answerSaved($0, in: afterStale) } == true,
-                    "A stale update applied after a save keeps the document under its card and the save action hidden")
+        try require(kept(afterStale), "A stale update keeps a document saved earlier whole and under its card")
         _ = try repository.projectTask(id: reference.id, snapshot: finished)
-        try require(try blocks().filter { if case .artifact = $0 { true } else { false } }.count == 1,
-                    "A later refresh keeps the saved document")
-        try require(try repository.saveTaskAnswer(id: UUID()).isEmpty, "Saving an unknown task does nothing")
+        try require(kept(try blocks()), "A later refresh keeps a document saved earlier whole and under its card")
+        let reopened = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
+                                 attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+        await reopened.connect()
+        reopened.select(origin.conversationID)
+        try require(kept(reopened.conversations.first { $0.id == origin.conversationID }?.messages.first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []),
+                    "Opening the conversation again still shows the document saved earlier")
     }
 
     static func decisionChoices() async throws {
@@ -453,7 +457,7 @@ extension NativeTaskDisplayFixture {
                         "A never title saved with earlier words reads with the current ones: \(saved)")
         }
         for kept in ["Never edit in Plans for this work", "Never edit in Plans in this task", "Never edit in Plans for this",
-                     "Never move things in Notes for this work to the Trash"] {
+                     "Never move things in Notes for this work to the Trash", "Never move things in Notes to the Trash for this"] {
             for run in [false, true] {
                 try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: kept, run: run).declineMenu.map(\.title) == [kept],
                             "A folder's own name is never reworded: \(kept)")
