@@ -187,6 +187,13 @@ enum ArtifactLibrarySelectionSelftest {
         try check(ArtifactLibrarySelection.contentKept(kind: .fileChange, details: kept) && !ArtifactLibrarySelection.contentKept(kind: .fileChange, details: lost)
                   && ArtifactLibrarySelection.contentKept(kind: .document, details: lost),
                   "Only a file change whose contents weren't kept loses Revise and Save as")
+        let titles = ArtifactLibrarySelection.actionTitles
+        try check(titles(true, false, false) == ["Open in conversation"],
+                  "A linked file change whose contents weren't kept offers only Open in conversation, with no Revise")
+        try check(titles(true, true, true) == ["Open in conversation", "Revise", "Save as…", "Reveal in Finder", "Copy"],
+                  "A linked piece with its contents keeps every action, in order")
+        try check(titles(false, true, false) == ["Save as…", "Copy"] && titles(false, false, true) == ["Reveal in Finder"],
+                  "A piece with no conversation never offers Open or Revise")
         try check(AppSection.artifacts.placeholder?.note == "Documents, images and file changes made in your chats are collected here.",
                   "The empty Library says where its pieces come from in plain words")
         try check(CompanionSubject(nil).menuBarLabel(unread: 0).isEmpty && CompanionSubject(nil).menuBarLabel(unread: 2) == "•"
