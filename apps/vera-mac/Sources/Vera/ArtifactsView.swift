@@ -64,11 +64,15 @@ enum ArtifactDateLabel {
             return ArtifactLibrarySelection.companionOriginLabel(name: CompanionSentence.savedName(companionName))
         }
         let title = record.originTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return title.isEmpty ? "No conversation" : title
+        return title
     }
 }
 
 struct ArtifactLibrarySelection: Equatable {
+    static func contentKept(kind: ArtifactKind, details: ArtifactDetails) -> Bool {
+        kind != .fileChange || details.contentAvailable
+    }
+
     var selectedID: String?
     var search = ""
     var filter: ArtifactKindFilter = .all
@@ -179,9 +183,15 @@ extension ChatStore {
         return exported == text ? result : .success(Data(exported.utf8))
     }
 
+    static let originSeparator = " · "
+
     func artifactOriginLine(_ record: ArtifactRecord, lead: String = "", tail: String = "") -> CompanionLine {
         let companion = isVeraThread(record.conversationID) || record.originTitle == CompanionSavedText.marker
-        guard companion, companionName != nil else { return .literal(lead + artifactOriginLabel(record) + tail) }
+        guard companion, companionName != nil else {
+            let label = artifactOriginLabel(record)
+            if label.isEmpty { return .literal(lead + (tail.hasPrefix(Self.originSeparator) ? String(tail.dropFirst(Self.originSeparator.count)) : tail)) }
+            return .literal(lead + label + tail)
+        }
         var parts: [CompanionLinePart] = []
         if !lead.isEmpty { parts.append(.text(lead)) }
         parts.append(.name)
@@ -595,9 +605,11 @@ private struct ArtifactDetail: View {
             items.append(ActionItem(id: "Open in conversation", symbol: "bubble.left.and.text.bubble.right") {
                 store.openArtifactConversation(record)
             })
+        }
+        let contentKept = ArtifactLibrarySelection.contentKept(kind: record.kind, details: version.details)
+        if contentKept, store.artifactConversationExists(record) {
             items.append(ActionItem(id: "Revise", symbol: "pencil") { revising = true })
         }
-        let contentKept = record.kind != .fileChange || version.details.contentAvailable
         if contentKept {
             items.append(ActionItem(id: "Save as…", symbol: "square.and.arrow.down") { onSaveAs(record, version, suggestedName(version)) })
         }

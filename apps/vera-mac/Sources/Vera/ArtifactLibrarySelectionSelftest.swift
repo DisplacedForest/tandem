@@ -174,7 +174,24 @@ enum ArtifactLibrarySelectionSelftest {
         try check(store.artifactOriginLabel(companionOutput) == "Your companion",
                   "An item from an unnamed companion never shows the built-in name as its origin")
         try check(store.artifactOriginLabel(report) == "Greenhouse plan", "An item from an ordinary conversation keeps its conversation title")
-        try check(store.artifactOriginLabel(calendar) == "No conversation", "An item with no conversation says so")
+        try check(store.artifactOriginLabel(calendar).isEmpty, "An item with no conversation names no origin")
+        try check(store.artifactOriginLine(calendar, tail: " · Today") == .literal("Today")
+                  && store.artifactOriginLine(calendar, lead: "Document · ", tail: " · Today") == .literal("Document · Today"),
+                  "An item with no conversation shows its date with no dangling separator")
+        try check(store.artifactOriginLine(report, lead: "Document · ", tail: " · Today") == .literal("Document · Greenhouse plan · Today"),
+                  "An item from a conversation keeps its origin between the kind and the date")
+        var kept = ArtifactDetails()
+        kept.contentAvailable = true
+        var lost = ArtifactDetails()
+        lost.contentAvailable = false
+        try check(ArtifactLibrarySelection.contentKept(kind: .fileChange, details: kept) && !ArtifactLibrarySelection.contentKept(kind: .fileChange, details: lost)
+                  && ArtifactLibrarySelection.contentKept(kind: .document, details: lost),
+                  "Only a file change whose contents weren't kept loses Revise and Save as")
+        try check(AppSection.artifacts.placeholder?.note == "Documents, images and file changes made in your chats are collected here.",
+                  "The empty Library says where its pieces come from in plain words")
+        try check(CompanionSubject(nil).menuBarLabel(unread: 0).isEmpty && CompanionSubject(nil).menuBarLabel(unread: 2) == "•"
+                  && CompanionSubject("Ada").menuBarLabel(unread: 0) == "Ada" && CompanionSubject("Ada").menuBarLabel(unread: 1) == "Ada •",
+                  "With no name saved the menu bar shows the icon only, plus the dot when something's new")
 
         print("  artifact library selection OK")
     }

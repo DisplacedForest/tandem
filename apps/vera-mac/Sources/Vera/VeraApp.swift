@@ -159,7 +159,7 @@ struct VeraApp: App {
                 .environmentObject(companion)
         } label: {
             Label {
-                Text(store.companionUnreadCount > 0 ? store.companion.menuBarTitle + " •" : store.companion.menuBarTitle)
+                Text(store.companion.menuBarLabel(unread: store.companionUnreadCount))
             } icon: {
                 Image(nsImage: TandemTemplate.image(pointSize: 18))
             }
