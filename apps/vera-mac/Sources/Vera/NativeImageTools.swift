@@ -187,9 +187,9 @@ enum NativeImageTools {
         NativeChatToolDescriptor(
             id: toolID,
             name: "Image generation",
-            summary: "Makes images on your ComfyUI server from a description.",
+            summary: "Makes images from a description.",
             available: configured,
-            setup: "Set the ComfyUI URL in the Image tab to enable image generation.")
+            setup: "Add your image server to use this.")
     }
 
     static func attachment(from activity: NativeToolActivity) -> MessageAttachment? {
