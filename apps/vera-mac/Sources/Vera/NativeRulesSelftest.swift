@@ -569,7 +569,7 @@ extension SelfTest {
         try screenIsClean("your companion")
         try identityMatchesMain()
         try require(nameChat.companionName == nil && nameChat.companion.inline == "your companion" && nameChat.companion.leading == "Your companion"
-                        && nameChat.companion.menuBarTitle == "Tandem" && nameChat.nativeWorkerIdentity.current.assistantName == nil,
+                        && nameChat.companion.menuBarTitle.isEmpty && nameChat.nativeWorkerIdentity.current.assistantName == nil,
                     "With no name there is no built-in one: the interface says your companion and the worker identity is empty")
         let nameFake = CompanionAppearanceFixtureStore()
         var renamed = CompanionAppearanceDraft(name: "", appearance: nameFake.load())

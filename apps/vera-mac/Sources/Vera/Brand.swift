@@ -104,7 +104,13 @@ struct CompanionSubject: Equatable, Sendable {
     var inline: String { name ?? CompanionSentence.unnamedSubject }
     var leading: String { CompanionSentence.subject(name: name, after: "") }
     var threadTitle: String { leading }
-    var menuBarTitle: String { name ?? "Tandem" }
+    var menuBarTitle: String { name ?? "" }
+
+    func menuBarLabel(unread: Int) -> String {
+        let title = menuBarTitle
+        guard unread > 0 else { return title }
+        return title.isEmpty ? "•" : title + " •"
+    }
     var thread: String { "\(inline)'s thread" }
 }
 

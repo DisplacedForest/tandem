@@ -39,7 +39,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     var placeholder: (title: String, note: String)? {
         switch self {
         case .projects: ("Projects", "Group a body of work: instructions, folders, files and the conversations that belong together.")
-        case .artifacts: ("Library", "Documents, images and file changes the assistant produces are collected here to open, revise and save.")
+        case .artifacts: ("Library", "Documents, images and file changes made in your chats are collected here.")
         case .scheduled: ("Scheduled", "Work Tandem runs on a schedule, with its upcoming runs and history.")
         case .integrations: ("Integrations", "Services Tandem can use, with what each one is allowed to do.")
         default: nil
