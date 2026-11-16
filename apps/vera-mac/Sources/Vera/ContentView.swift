@@ -772,7 +772,6 @@ struct MessageRow: View {
                             connectedTaskIDs: store.connectedNativeTaskIDs,
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask,
                             onDecide: store.answerNativeTask,
-                            onSaveAnswer: store.saveNativeTaskAnswer,
                             highlightedTaskID: store.highlightedTaskID,
                             onRuleOffer: onRuleOffer)
                     }
@@ -1133,6 +1132,7 @@ private struct ConversationButtonBody: View {
             .padding(.horizontal, 14).frame(height: 28)
             .background(Capsule().fill(kind == .primary ? Theme.sage : Color.clear))
             .overlay(Capsule().stroke(kind == .primary ? Color.clear : Theme.cardStroke, lineWidth: 1))
+            .clipShape(Capsule())
             .contentShape(Capsule())
             .opacity(isEnabled ? (pressed ? 0.8 : 1) : 0.45)
     }
