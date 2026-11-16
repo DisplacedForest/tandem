@@ -21,17 +21,19 @@ struct DotSheetShot: View {
             }
             VStack(alignment: .leading, spacing: 12) {
                 row("Name") { box(Text(store.companionName ?? "Name").font(.system(size: 13)).foregroundStyle(store.companionName == nil ? Theme.textSecondary : Theme.textPrimary), height: nil) }
-                row("Connected services") {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(options) { option in
-                            HStack(alignment: .top, spacing: 7) {
-                                Image(systemName: selected.contains(option.id) ? "checkmark.square.fill" : "square")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(selected.contains(option.id) ? Theme.accent : Theme.textSecondary)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(option.name).font(.system(size: 12))
-                                    if !settings {
-                                        Text(option.detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                if !options.isEmpty {
+                    row("Connected services") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            ForEach(options) { option in
+                                HStack(alignment: .top, spacing: 7) {
+                                    Image(systemName: selected.contains(option.id) ? "checkmark.square.fill" : "square")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(selected.contains(option.id) ? Theme.accent : Theme.textSecondary)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(option.name).font(.system(size: 12))
+                                        if !settings {
+                                            Text(option.detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                                        }
                                     }
                                 }
                             }
