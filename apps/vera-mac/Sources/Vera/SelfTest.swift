@@ -479,6 +479,7 @@ enum SelfTest {
         do { try await runNativeCompanionFinish() } catch { print("SELFTEST ERROR: companion finish \(error)"); exit(1) }
         do { try await runNativeChatLedger() } catch { print("SELFTEST ERROR: chat ledger \(error)"); exit(1) }
         do { try await runStoppedStep() } catch { print("SELFTEST ERROR: stopped step \(error)"); exit(1) }
+        do { try await runOpenedStep() } catch { print("SELFTEST ERROR: opened step \(error)"); exit(1) }
         do { try await NativePreferencesSelftest.run() } catch { print("SELFTEST ERROR: preferences \(error)"); exit(1) }
         do { try await NativeRuleRecordsSelftest.run() } catch { print("SELFTEST ERROR: rule records \(error)"); exit(1) }
         do { try await runNativeMemoryRetrieval() } catch { print("SELFTEST ERROR: native memory retrieval \(error)"); exit(1) }
