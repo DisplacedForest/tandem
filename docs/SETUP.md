@@ -517,7 +517,7 @@ and the app loads it at startup and again whenever Settings saves. Each valid fi
 a native tool: a toggle appears in Settings, Tools, the model is offered the tool when it is
 enabled and available, calls execute over HTTP, and each call renders as an activity chip
 in chat like any other tool. A malformed file is skipped. Settings, Tools says one couldn't be loaded, and hovering
-that line shows the file and the reason.
+that line shows which file.
 
 A declaration is one JSON object per file. For example, a tool over a home inventory
 service:

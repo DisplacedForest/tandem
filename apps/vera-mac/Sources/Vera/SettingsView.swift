@@ -377,6 +377,10 @@ enum SettingsToolsCopy {
         [empty, unreadable, services, openIntegrations, openSearch, openImage]
     }
 
+    static func failureHint(_ file: String) -> String {
+        (file as NSString).deletingPathExtension
+    }
+
     static func tab(for toolID: String) -> SettingsTab? {
         switch toolID {
         case NativeWebTools.searchToolID: return .search
@@ -455,7 +459,7 @@ struct NativeToolEditor: View {
             ForEach(failures) { failure in
                 Text(SettingsToolsCopy.unreadable)
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    .help("\(failure.file): \(failure.reason)")
+                    .help(SettingsToolsCopy.failureHint(failure.file))
             }
             HStack(spacing: 10) {
                 Text(SettingsToolsCopy.services)
