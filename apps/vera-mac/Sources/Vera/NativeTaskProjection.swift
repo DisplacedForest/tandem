@@ -2,6 +2,7 @@ import Foundation
 
 enum NativeTaskProjection {
     static let carryOnChoices: Set<String> = ["continue", "finish"]
+    static let workingLine = "Working on it."
 
     static func carriesOn(_ snapshot: NativeTaskSnapshot) -> Bool {
         guard snapshot.state == .needsDecision, let choices = snapshot.decision?.choices else { return false }
@@ -69,7 +70,7 @@ enum NativeTaskProjection {
         case .queued, .running:
             card.status = snapshot.state == .running ? .working : .queued
             if dot {
-                card.milestone = "Working on it."
+                card.milestone = workingLine
             } else if document {
                 card.milestone = documentMilestone(snapshot.checkpoint)
             } else {
@@ -98,7 +99,7 @@ enum NativeTaskProjection {
             }
             if dot, carriesOn(snapshot) {
                 card.status = .working
-                card.milestone = "Working on it."
+                card.milestone = workingLine
                 break
             }
             card.status = .needsInput

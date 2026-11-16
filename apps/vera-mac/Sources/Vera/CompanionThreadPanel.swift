@@ -298,27 +298,44 @@ struct CompanionThreadPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .safeReportContent()
             }
-            if item.canRetry || item.canStop || item.canPickUp {
+            ForEach(Array(CompanionOverviewModel.actionRows(item).enumerated()), id: \.offset) { _, row in
                 HStack {
-                    if item.canRetry { Button("Retry") { store.retryCompanionWork(item) } }
-                    if item.canPickUp { Button(NativeTaskCardPresentation.pickUpTitle) { store.setCompanionWorkAside(item, resume: true) } }
-                    if item.canSetAside { Button(NativeTaskCardPresentation.setAsideTitle) { store.setCompanionWorkAside(item, resume: false) } }
-                    if item.canStop { Button(CompanionOverviewModel.stopTitle) { store.stopCompanionWork(item) } }
-                }.controlSize(.small)
+                    ForEach(row, id: \.self) { action in
+                        Button { perform(action, on: item) } label: { Text(action.title).frame(maxWidth: .infinity) }
+                    }
+                }.buttonStyle(.bordered).controlSize(.large)
             }
             if let navigationError {
                 Text(navigationError).font(.system(size: 13)).foregroundStyle(Theme.warmTextSecondary)
+            }
+            if let savedPieceID = detail.savedPieceID {
+                Button {
+                    store.openCompanionResult(savedPieceID)
+                    onClose?()
+                } label: {
+                    Label { Text("Open") } icon: { InterfaceIconView(icon: .document, size: InterfaceIconSize.regular) }
+                        .frame(maxWidth: .infinity)
+                }.buttonStyle(.bordered).controlSize(.large)
             }
             if detail.canOpen {
                 Button {
                     if store.openCompanionActivity(item) { onClose?() }
                     else { navigationError = "This chat is no longer available." }
                 } label: {
-                    Label { Text("Go to chat") } icon: { InterfaceIconView(icon: .chat, size: InterfaceIconSize.regular) }
+                    Label { Text(CompanionOverviewModel.chatTitle(hasArtifact: item.hasArtifact, savedPiece: detail.savedPieceID != nil)) } icon: { InterfaceIconView(icon: .chat, size: InterfaceIconSize.regular) }
                         .frame(maxWidth: .infinity)
                 }.buttonStyle(.bordered).controlSize(.large)
             }
         }.foregroundStyle(Theme.warmTextPrimary)
+    }
+
+    private func perform(_ action: CompanionItemAction, on item: CompanionActivityItem) {
+        switch action {
+        case .retry: store.retryCompanionWork(item)
+        case .pickUp: store.setCompanionWorkAside(item, resume: true)
+        case .setAside: store.setCompanionWorkAside(item, resume: false)
+        case .stop: store.stopCompanionWork(item)
+        }
     }
 
     private var outputs: some View {
