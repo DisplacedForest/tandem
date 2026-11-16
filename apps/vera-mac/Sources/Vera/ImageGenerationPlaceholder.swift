@@ -40,6 +40,7 @@ struct ImageGenerationPlaceholder: View {
     static let maxWidth: CGFloat = 480
     static let maxHeight: CGFloat = 480
     static let controlsInsideMinimumWidth: CGFloat = 240
+    static let controlsStackedMinimumWidth: CGFloat = 110
 
     private var effect: ImagePlaceholderEffect {
         effectOverride ?? ImagePlaceholderEffect.variant(for: activity.id)
@@ -72,14 +73,16 @@ struct ImageGenerationPlaceholder: View {
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
             let inside = boxSize.width >= Self.controlsInsideMinimumWidth
+            let stacked = !inside && boxSize.width >= Self.controlsStackedMinimumWidth
             ZStack(alignment: .bottom) {
                 effectCanvas
-                if inside { controls(spread: true).padding(12) } else { stackedControls.padding(10) }
+                if inside { controls(spread: true).padding(12) } else if stacked { stackedControls.padding(10) }
             }
             .frame(width: boxSize.width, height: boxSize.height)
             .background(Theme.surface.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+            if !inside && !stacked { controls(spread: false).fixedSize() }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Creating image, \(Int((fraction * 100).rounded())) percent")
@@ -98,6 +101,7 @@ struct ImageGenerationPlaceholder: View {
             percentage
             cancelControl
         }
+        .fixedSize()
     }
 
     @ViewBuilder private var cancelControl: some View {
