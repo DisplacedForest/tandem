@@ -68,7 +68,7 @@ enum OngoingWorkFixture {
                                                       carried: NativeCompanionCarried(request: changedBefore))
         let references = [
             try? reference(conversationID: conversation.id, title: "Quiet reading spaces", workerType: "companion", state: "running"),
-            try? reference(conversationID: conversation.id, title: "New Indy restaurants", workerType: "companion", state: "paused"),
+            try? reference(conversationID: conversation.id, title: "New Fernhollow restaurants", workerType: "companion", state: "paused"),
             try? reference(conversationID: conversation.id, title: "Library hours", workerType: "companion", state: "running",
                            request: changed),
             try? reference(conversationID: conversation.id, title: "Garden notes", workerType: "companion", state: "archived_later"),

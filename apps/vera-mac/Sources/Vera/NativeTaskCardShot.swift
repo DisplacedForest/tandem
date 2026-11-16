@@ -196,7 +196,7 @@ struct NativeTaskCardShotSurface: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             VStack(alignment: .leading, spacing: 12) {
-                Text(card.isDocument ? "I'll write that in the background. We can keep talking here." : "I'll research that in the background. We can keep talking here.")
+                Text(card.isDocument ? "I'll write that up. We can keep talking here." : "I'll look into that. We can keep talking here.")
                     .font(.system(size: 14))
                 NativeDisplayBlocksView(
                     blocks: blocks, engineConfigured: variant != "task-card-offline",

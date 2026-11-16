@@ -279,7 +279,7 @@ enum CardShot {
         display.card.choices = reference.snapshot?.decision?.choices.filter { NativeTaskCardPresentation.choiceTitle($0) != nil }
         store.nativeTaskEngine.set(engineURL)
         store.nativeTaskReferences = [reference]
-        var message = Message(role: .assistant, text: command ? "I'll rebuild the PDF in the background." : "I'll send the booking request in the background.")
+        var message = Message(role: .assistant, text: command ? "I'll rebuild the PDF now." : "I'll send the booking request.")
         message.displayBlocks = [.taskCard(display.card)]
         store.conversations[index].messages = [
             Message(role: .user, text: command ? "Rebuild the greenhouse PDF when you get a chance." : "Book the workshop inspection for Tuesday morning."),
@@ -375,7 +375,7 @@ enum CardShot {
               let display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot) else { return }
         store.nativeTaskEngine.set(engineURL)
         store.nativeTaskReferences = [reference]
-        var message = Message(role: .assistant, text: "I'll take care of it in the background.")
+        var message = Message(role: .assistant, text: "I'll take care of it.")
         message.displayBlocks = [.taskCard(display.card)] + (display.artifact.map { [NativeDisplayBlock.artifact($0)] } ?? [])
         store.conversations[index].messages = [Message(role: .user, text: ask), message]
     }
@@ -400,13 +400,13 @@ enum CardShot {
         guard let repository = store.repository as? LocalChatRepository,
               let origin = try? NativeTaskFixture.origin(repository),
               let request = try? NativeResearchTaskRequest(objective: "Check current lumber futures and note any move over two percent.",
-                                                           deliverables: ["A short summary"]),
+                                                           deliverables: ["A short summary"], workerType: "companion"),
               let engine = try? NativeTaskEngineIdentity(engineURL),
               let reference = try? repository.prepareTaskReference(origin: origin, engine: engine, request: request, profile: nil) else {
             NativeScheduleShotFixture.populate(store)
             return
         }
-        let prompt = "\(CompanionSentence.placeholder) wants to send a price alert."
+        let prompt = CompanionSavedText.marker + " wants to send a price alert."
         let remote = UUID().uuidString
         if let queued = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "queued"),
            let waiting = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "needs_decision", decision: [
@@ -436,7 +436,7 @@ extension CompanionShotFixture {
             return
         }
         let all: [(String, String)] = [("Lumber prices this month", "research"), ("Workshop plan", "document"),
-                                       ("new Indy restaurants", "research")]
+                                       ("new Fernhollow restaurants", "research")]
         let work: [(String, String)]
         switch view {
         case "companion-working-three": work = all
