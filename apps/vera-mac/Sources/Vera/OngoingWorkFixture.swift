@@ -2,6 +2,8 @@ import Foundation
 
 @MainActor
 enum OngoingWorkFixture {
+    static let engineBase = URL(string: "https://engine.test/api")!
+
     static func reference(conversationID: String, title: String, workerType: String = "research",
                           state: String?, result: [String: Any]? = nil, decision: [String: Any]? = nil,
                           cancelRequested: Bool = false, updatedAt: Double = 1.0,
@@ -12,7 +14,7 @@ enum OngoingWorkFixture {
         let create = NativeTaskCreateRequest(request: request, idempotencyKey: UUID())
         let body = try create.encoded()
         let remote = UUID().uuidString
-        let engine = try NativeTaskEngineIdentity(URL(string: "https://engine.test/api")!)
+        let engine = try NativeTaskEngineIdentity(engineBase)
         var reference = NativeTaskReference(
             id: UUID(),
             origin: NativeTaskOrigin(conversationID: conversationID, userMessageID: UUID(), assistantMessageID: UUID()),
@@ -56,6 +58,58 @@ enum OngoingWorkFixture {
         return store
     }
 
+    static func snapshot(_ reference: NativeTaskReference, state: String, result: [String: Any]? = nil) throws -> NativeTaskSnapshot {
+        let envelope = try JSONSerialization.jsonObject(with: reference.body) as? [String: Any] ?? [:]
+        var object: [String: Any] = [
+            "id": reference.remoteTaskID ?? "", "worker_type": reference.createRequest.workerType, "payload": envelope["payload"] ?? [:],
+            "state": state, "checkpoint": [String: Any](), "cancel_requested": false, "generation": 1, "updated_at": 1.0,
+        ]
+        object["result"] = result
+        return try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical(object))
+    }
+
+    static func deliveredDocumentStore() throws -> (store: ChatStore, item: CompanionActivityItem) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tandem-delivered-document-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let repository = try LocalChatRepository(inMemory: true, artifactDirectory: directory)
+        let conversation = Conversation(id: "delivered-document-shot", title: "Workshop plans", messages: [], updatedAt: Date())
+        try repository.saveConversation(conversation)
+        let user = Message(role: .user, text: "Write up the workshop plan.", createdAt: Date())
+        let answer = Message(role: .assistant, text: "I'll write up the workshop plan.", createdAt: Date(), state: .complete)
+        try repository.saveMessage(user, conversationID: conversation.id, ordinal: 0)
+        try repository.saveMessage(answer, conversationID: conversation.id, ordinal: 1)
+        let request = try NativeResearchTaskRequest(objective: "Workshop plan", deliverables: ["A short plan"],
+                                                    workerType: "document", title: "Workshop plan")
+        let engine = try NativeTaskEngineIdentity(engineBase)
+        let prepared = try repository.prepareTaskReference(
+            origin: NativeTaskOrigin(conversationID: conversation.id, userMessageID: user.id, assistantMessageID: answer.id),
+            engine: engine, request: request, profile: nil)
+        var reference = prepared
+        reference.remoteTaskID = UUID().uuidString
+        let queued = try snapshot(reference, state: "queued")
+        _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: queued)
+        _ = try repository.projectTask(id: reference.id, snapshot: queued)
+        let finished = try snapshot(reference, state: "completed", result: documentResult("Workshop plan"))
+        _ = try repository.acknowledgeTaskReference(id: reference.id, snapshot: finished)
+        _ = try repository.projectTask(id: reference.id, snapshot: finished)
+        _ = try repository.deliverTaskMessages(id: reference.id)
+        let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
+                              attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+        store.conversations = try repository.listConversations()
+        store.selectedID = conversation.id
+        store.reloadNativeTaskReferences()
+        store.reloadArtifacts()
+        guard let saved = store.nativeTaskReferences.first(where: { $0.id == reference.id }) else {
+            throw NativeTaskHTTPError.invalidResponse
+        }
+        let shown = try repository.taskProjection(id: saved.id)?.snapshot ?? saved.snapshot
+        let display = try NativeTaskProjection.display(reference: saved, snapshot: shown)
+        let item = CompanionOverviewModel.taskItem(card: display.card, reference: saved, decision: nil,
+                                                   hasArtifact: display.artifact != nil && store.settledBeforeDelivery(saved.id), date: Date())
+        return (store, item)
+    }
+
     static let changedAssignment = "Compare quiet reading spaces at two public libraries using their official websites."
     static let changedBefore = "Compare quiet reading spaces at three public libraries using their official websites."
 
@@ -68,7 +122,7 @@ enum OngoingWorkFixture {
                                                       carried: NativeCompanionCarried(request: changedBefore))
         let references = [
             try? reference(conversationID: conversation.id, title: "Quiet reading spaces", workerType: "companion", state: "running"),
-            try? reference(conversationID: conversation.id, title: "New Indy restaurants", workerType: "companion", state: "paused"),
+            try? reference(conversationID: conversation.id, title: "New Fernhollow restaurants", workerType: "companion", state: "paused"),
             try? reference(conversationID: conversation.id, title: "Library hours", workerType: "companion", state: "running",
                            request: changed),
             try? reference(conversationID: conversation.id, title: "Garden notes", workerType: "companion", state: "archived_later"),

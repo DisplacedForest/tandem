@@ -19,8 +19,8 @@ extension SelfTest {
         let foreign = try OngoingWorkFixture.reference(conversationID: "ordinary", title: "Other work", state: "running")
         func background() -> CompanionBackgroundWork { store.companionBackgroundWork }
         let words = CompanionCurrentWork.words
-        try require(words("research", "gather", "new Indy restaurants") == "Finding new Indy restaurants"
-                    && words("research", nil, "new Indy restaurants") == "Researching new Indy restaurants"
+        try require(words("research", "gather", "new Fernhollow restaurants") == "Finding new Fernhollow restaurants"
+                    && words("research", nil, "new Fernhollow restaurants") == "Researching new Fernhollow restaurants"
                     && words("research", "synthesize", "Quiet reading spaces") == "Writing up Quiet reading spaces"
                     && words("document", nil, "Workshop plan") == "Writing Workshop plan"
                     && words("companion", nil, "Sort the seed folders") == "Working on Sort the seed folders"

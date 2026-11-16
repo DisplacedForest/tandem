@@ -223,6 +223,55 @@ extension SelfTest {
                     "Deleted scheduled chats offer no navigation and preserve the current conversation")
         let blankDetail = CompanionActivityDetail(request: "  ", outcome: "", canOpen: false)
         try require(blankDetail.request == nil && blankDetail.outcome == nil, "Missing detail fields are omitted")
+        try require(navigation.companionActivityDetail(item).savedPieceID == nil,
+                    "Finished work with nothing saved in the Library offers no Open")
+        let answerCard = try NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot).card
+        let earlierAnswer = navigation.recordArtifact(ArtifactDraft(
+            kind: .document, title: "Earlier answer", conversationID: originID, originTitle: nil, messageID: nil,
+            sourceKey: ChatStore.taskArtifactSourceKey(answerCard.id), data: Data("Kept.".utf8), mime: "text/markdown",
+            fileExtension: "md", details: ArtifactDetails(sources: [])))
+        try require(earlierAnswer != nil && navigation.companionActivityDetail(item).savedPieceID == earlierAnswer?.artifactID,
+                    "A result saved to the Library under its card opens from there, even when the item shows no document now")
+        var crowded = CompanionOverviewFixture.task(UUID(), "Order lumber", status: .needsInput,
+                                                    decision: NativeTaskDecision(id: "d2", prompt: "Try again?", choices: ["retry", "cancel"]), minutesAgo: 1)
+        crowded.canSetAside = true
+        try require(CompanionOverviewModel.actionRows(crowded) == [[.retry, .setAside], [.stop]],
+                    "An item with three actions shows two beside each other and the third below, losing none")
+        try require(CompanionOverviewModel.chatTitle(hasArtifact: true, savedPiece: false) == "Open in chat"
+                    && CompanionOverviewModel.chatTitle(hasArtifact: true, savedPiece: true) == "Go to chat"
+                    && CompanionOverviewModel.chatTitle(hasArtifact: false, savedPiece: false) == "Go to chat"
+                    && CompanionOverviewModel.chatTitle(hasArtifact: false, savedPiece: true) == "Go to chat",
+                    "Ready work not yet in the conversation opens in chat; everything else goes to chat")
+        let delivered = try OngoingWorkFixture.deliveredDocumentStore()
+        let savedStore = delivered.store
+        let savedItem = delivered.item
+        let savedID = savedStore.companionActivityDetail(savedItem).savedPieceID
+        try require(savedStore.resultWasDelivered(savedStore.nativeTaskReferences[0].id) && !savedItem.hasArtifact && savedItem.state != "Ready to open",
+                    "A delivered document reads as delivered, not as ready to open: \(savedItem.state)")
+        try require(savedID != nil && savedID == savedStore.artifactRecords.first?.id,
+                    "A delivered document carries the id that opens it from the Library: \(savedID ?? "nil")")
+        savedStore.openCompanionResult(savedID!)
+        try require(savedStore.section == .artifacts && savedStore.requestedArtifactID == savedID, "The saved piece id opens in the Library")
+
+        let aside = OngoingWorkFixture.asideStore()
+        let asideItems = OngoingWorkFixture.asideItems(aside)
+        try require(aside.nativeTaskReferences.count == asideItems.count, "Every aside fixture item projects")
+        let going = aside.companionActivityDetail(asideItems[0])
+        try require(going.outcome == nil, "Work under way does not repeat the stock working line: \(going.outcome ?? "nil")")
+        let lumberReference = navigation.nativeTaskReferences[1]
+        let lumberItem = CompanionOverviewModel.taskItem(card: try NativeTaskProjection.display(reference: lumberReference, snapshot: lumberReference.snapshot).card,
+                                                         reference: lumberReference, decision: nil, hasArtifact: false, date: Date())
+        let lumber = navigation.companionActivityDetail(lumberItem)
+        try require(lumber.outcome == "Planning the research.", "A real progress line still shows: \(lumber.outcome ?? "nil")")
+
+        let libraryCopy = [DotProfileCopy.startOver, NativeDotRemovalSummary(messages: 2, artifacts: 1).sentence,
+                           NativeDotRemovalSummary(messages: 2, artifacts: 4).sentence, ChatStore.libraryMoveLead]
+        try require(libraryCopy.allSatisfy { !$0.contains("Artifact") && !$0.contains("artifact") },
+                    "Library copy never names artifacts: \(libraryCopy)")
+        try require(DotProfileCopy.startOver == "Removes the conversation, what {name} remembered from it and its schedules. Your Library is kept.",
+                    "Start over names the Library")
+        try require(NativeDotRemovalSummary(messages: 2, artifacts: 4).sentence == "This removes 2 messages. Your Library is kept.",
+                    "The removal summary keeps the Library in one sentence")
 
         let focused = CompanionShotFixture.store()
         focused.newConversation()

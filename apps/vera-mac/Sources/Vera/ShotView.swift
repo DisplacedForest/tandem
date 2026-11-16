@@ -390,7 +390,7 @@ struct ShotView: View {
             Message(role: .assistant, text: "The checks pass. Two files were linted and nothing needs fixing.",
                     toolActivities: [ran],
                     displayBlocks: [
-                        .commandRun(NativeCommandRun(id: "shot-run", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
+                        .commandRun(NativeCommandRun(id: "shot:c1", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
                                                      exitCode: 0, stdout: "markdownlint plan.md watering-log.md\n2 files, 0 errors\n", durationMilliseconds: 1840)),
                     ]),
             Message(role: .user, text: "Now rebuild the PDF."),
@@ -447,7 +447,7 @@ struct ShotView: View {
                     toolActivities: [NativeToolActivity(id: "c1", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
                                                         request: "{\"command\":\"make check\"}", result: "{\"exit_code\":0}", state: .succeeded, confirmationRequired: true)],
                     displayBlocks: [
-                        .commandRun(NativeCommandRun(id: "shot-run", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
+                        .commandRun(NativeCommandRun(id: "shot:c1", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
                                                      exitCode: 0, stdout: "markdownlint plan.md watering-log.md\n2 files, 0 errors\n", durationMilliseconds: 1840)),
                     ]),
         ]
@@ -521,7 +521,7 @@ struct ShotView: View {
     private func shotFileCard(title: String, badge: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Text(badge).font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 6).padding(.vertical, 2).background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 4))

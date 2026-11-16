@@ -2,7 +2,7 @@
 2 apps/vera-mac/Sources/Vera/CanvasPanel.swift
 3 apps/vera-mac/Sources/Vera/CardAnswerButtons.swift
 10 apps/vera-mac/Sources/Vera/CardSentenceLiteralSelftest.swift
-10 apps/vera-mac/Sources/Vera/CardShots.swift
+7 apps/vera-mac/Sources/Vera/CardShots.swift
 9 apps/vera-mac/Sources/Vera/CompanionAskedWorkSelftest.swift
 2 apps/vera-mac/Sources/Vera/CompanionNameSelftest.swift
 1 apps/vera-mac/Sources/Vera/CompanionNameStylingSelftest.swift
@@ -11,7 +11,7 @@
 4 apps/vera-mac/Sources/Vera/CompanionRetiredSettingSelftest.swift
 9 apps/vera-mac/Sources/Vera/CompanionSavedTextSelftest.swift
 10 apps/vera-mac/Sources/Vera/CompanionTalkControlSelftest.swift
-14 apps/vera-mac/Sources/Vera/CompanionWorkWaitingSelftest.swift
+12 apps/vera-mac/Sources/Vera/CompanionWorkWaitingSelftest.swift
 1 apps/vera-mac/Sources/Vera/ComposerMentions.swift
 2 apps/vera-mac/Sources/Vera/ComposerMentionsSelftest.swift
 24 apps/vera-mac/Sources/Vera/EngineLifecycle.swift
@@ -81,7 +81,7 @@
 11 apps/vera-mac/Sources/Vera/NativeSchedulerCatchUpSelftest.swift
 14 apps/vera-mac/Sources/Vera/NativeSchedulerSelftest.swift
 3 apps/vera-mac/Sources/Vera/NativeSessionSafetyFixture.swift
-21 apps/vera-mac/Sources/Vera/NativeTaskCardShot.swift
+19 apps/vera-mac/Sources/Vera/NativeTaskCardShot.swift
 3 apps/vera-mac/Sources/Vera/NativeTaskClient.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskConfiguration.swift
 6 apps/vera-mac/Sources/Vera/NativeTaskDeliverySelftest.swift

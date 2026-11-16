@@ -26,6 +26,7 @@ extension SelfTest {
             try require(item.title == reference.request.displayTitle, "The card title is the task title")
             try require((item.artifact != nil) == (state == OngoingWork.readyToOpen), "Only a finished result opens")
         }
+        try require(OngoingWorkGlyph.icon(for: .waiting) == .question, "Work that needs an answer shows the question mark, not a clock")
         let unopened = OngoingWork.presentation(status: .completed, document: true, hasArtifact: false)
         try require(unopened.glyph == .done && unopened.state == "Document ready", "Completed work without a result keeps its label")
 

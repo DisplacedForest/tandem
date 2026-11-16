@@ -11,8 +11,8 @@ extension SelfTest {
         let cases: [(String, String, String)] = [
             (pausedNote, "Paused with Ada", "Paused with your companion"),
             (NativeScheduleControls.title(.resumeAssistant), "Resume Ada", "Resume your companion"),
-            (DotProfileCopy.startOver, "Removes the conversation, what Ada remembered from it and its schedules. Artifacts stay in Artifacts.",
-             "Removes the conversation, what your companion remembered from it and its schedules. Artifacts stay in Artifacts."),
+            (DotProfileCopy.startOver, "Removes the conversation, what Ada remembered from it and its schedules. Your Library is kept.",
+             "Removes the conversation, what your companion remembered from it and its schedules. Your Library is kept."),
             (DotProfileCopy.subtitle, "Choose what Ada can reach and set what asks first. You can change all of this later from the header.",
              "Choose what your companion can reach and set what asks first. You can change all of this later from the header."),
             (ArtifactLibrarySelection.companionFilterTitle, "From Ada", "From your companion"),
