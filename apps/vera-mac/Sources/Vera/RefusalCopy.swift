@@ -81,10 +81,10 @@ enum RefusalCopy {
         case .rule:
             guard let rule = why.rule else { return .literal(setTo(why) + ".") }
             let sentence = RuleRows.sentence(rule.record, tools: places.tools)
-            return .parts([.text("Your rule: " + sentence + ", ")] + RuleRows.place(rule.scope, places: places).parts + [.text(".")])
+            return .parts([.text("Your rule: " + sentence + " ")] + RuleRows.place(rule.scope, places: places).parts + [.text(".")])
         case .held:
             let title = why.floorItem?.title ?? why.action.title
-            return .literal("\(quoted(title)) is always left to you, and you can turn it on under Advanced in Rules.")
+            return .literal("\(quoted(title)) is left to you unless you turn it on under Advanced in Rules.")
         case .tool:
             return .literal("This always asks you first, whatever your rules say.")
         case .folder:

@@ -453,7 +453,7 @@ extension NativeTaskDisplayFixture {
                         "A never title saved with earlier words reads with the current ones: \(saved)")
         }
         for kept in ["Never edit in Plans for this work", "Never edit in Plans in this task", "Never edit in Plans for this",
-                     "Never move things in Notes for this work to the Trash"] {
+                     "Never move things in Notes for this work to the Trash", "Never move things in Notes to the Trash for this"] {
             for run in [false, true] {
                 try require(CardAnswers.task(choices: ["decline", "never", "approve"], covers: nil, neverTitle: kept, run: run).declineMenu.map(\.title) == [kept],
                             "A folder's own name is never reworded: \(kept)")

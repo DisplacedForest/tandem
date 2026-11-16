@@ -153,6 +153,8 @@ struct ConversationRulesButton: View {
 }
 
 struct ConversationRulesEditor: View {
+    static let stricter = "A chat can be stricter than your settings, never looser. A specific thing you chose to always allow still runs."
+
     @EnvironmentObject private var store: ChatStore
     var conversationID: String? = nil
     var embedded = false
@@ -207,9 +209,10 @@ struct ConversationRulesEditor: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !embedded {
-                Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
-                Text("A chat can be stricter than your settings, never looser. A specific thing you chose to always allow still runs.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 6) {
+                    Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
+                    InfoTip(text: Self.stricter)
+                }
             }
             ForEach(NativeActionClass.configurable, id: \.self) { action in
                 VStack(alignment: .leading, spacing: 3) {

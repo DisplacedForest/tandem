@@ -311,9 +311,30 @@ enum NativeCompanionWorker {
     }
 
     static func details(_ title: String, argumentsJSON: String) -> String {
+        lines(argumentsJSON, order: { $0.sorted() })
+    }
+
+    static let leadingKeys = ["to", "recipient", "recipients", "cc", "bcc", "channel", "subject", "title"]
+    static let trailingKeys = ["body", "message", "entry", "text", "content", "note"]
+
+    static func shownDetails(_ title: String, argumentsJSON: String) -> String {
+        lines(argumentsJSON, order: shownOrder)
+    }
+
+    static func shownOrder(_ keys: [String]) -> [String] {
+        func rank(_ key: String) -> (Int, String) {
+            let lowered = key.lowercased()
+            if let index = leadingKeys.firstIndex(of: lowered) { return (index, key) }
+            if let index = trailingKeys.firstIndex(of: lowered) { return (leadingKeys.count + 1 + index, key) }
+            return (leadingKeys.count, key)
+        }
+        return keys.sorted { rank($0) < rank($1) }
+    }
+
+    static func lines(_ argumentsJSON: String, order: ([String]) -> [String]) -> String {
         guard let object = try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8)) as? [String: Any],
               let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return argumentsJSON }
-        let lines = values.keys.sorted().map { key -> String in
+        let lines = order(Array(values.keys)).map { key -> String in
             let label = key.replacingOccurrences(of: "_", with: " ")
             let shown = label.prefix(1).uppercased() + label.dropFirst()
             if case .string(let text)? = values[key] { return "\(shown): \(text)" }
@@ -552,7 +573,7 @@ enum NativeCompanionWorker {
                 literal = (object["directory"] as? String).map { command + "\nin " + $0 } ?? command
             } else {
                 let name = toolTitle ?? title.components(separatedBy: ": ").first ?? ""
-                let lines = details(name, argumentsJSON: argumentsJSON)
+                let lines = shownDetails(name, argumentsJSON: argumentsJSON)
                 literal = name.isEmpty ? lines : name + "\n" + lines
             }
         }
@@ -745,7 +766,7 @@ private struct NativeCompanionRun {
 
     func approvalExtra(_ subject: NativeCardSubject, title: String, digest: String, authority: NativeCompanionWorkerAuthority,
                        argumentsJSON: String) -> [String: Any] {
-        var literal = NativeCompanionWorker.details(title, argumentsJSON: argumentsJSON)
+        var literal = NativeCompanionWorker.shownDetails(title, argumentsJSON: argumentsJSON)
         if let command = subject.command, let object = try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8)) as? [String: Any] {
             literal = (object["directory"] as? String).map { command + "\nin " + $0 } ?? command
         }
@@ -1377,7 +1398,7 @@ private struct NativeCompanionRun {
                 return try NativeCompanionWorker.decide(checkpoint, approvalPrompt(shown, definition: asked, title: title), offered,
                                                   extra: shown.map { approvalExtra($0, title: asked?.title ?? record.proposal.function, digest: digest,
                                                                                    authority: standing, argumentsJSON: record.proposal.argumentsJSON) }
-                                                      ?? ["digest": digest, "details": NativeCompanionWorker.details(asked?.title ?? record.proposal.function,
+                                                      ?? ["digest": digest, "details": NativeCompanionWorker.shownDetails(asked?.title ?? record.proposal.function,
                                                                                                                      argumentsJSON: record.proposal.argumentsJSON)])
             }
             guard let definition = definition(named: call.name), let arguments = try? definition.validatedArguments(call.arguments),
