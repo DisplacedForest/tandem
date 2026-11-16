@@ -174,7 +174,31 @@ enum ArtifactLibrarySelectionSelftest {
         try check(store.artifactOriginLabel(companionOutput) == "Your companion",
                   "An item from an unnamed companion never shows the built-in name as its origin")
         try check(store.artifactOriginLabel(report) == "Greenhouse plan", "An item from an ordinary conversation keeps its conversation title")
-        try check(store.artifactOriginLabel(calendar) == "No conversation", "An item with no conversation says so")
+        try check(store.artifactOriginLabel(calendar).isEmpty, "An item with no conversation names no origin")
+        try check(store.artifactOriginLine(calendar, tail: " · Today") == .literal("Today")
+                  && store.artifactOriginLine(calendar, lead: "Document · ", tail: " · Today") == .literal("Document · Today"),
+                  "An item with no conversation shows its date with no dangling separator")
+        try check(store.artifactOriginLine(report, lead: "Document · ", tail: " · Today") == .literal("Document · Greenhouse plan · Today"),
+                  "An item from a conversation keeps its origin between the kind and the date")
+        var kept = ArtifactDetails()
+        kept.contentAvailable = true
+        var lost = ArtifactDetails()
+        lost.contentAvailable = false
+        try check(ArtifactLibrarySelection.contentKept(kind: .fileChange, details: kept) && !ArtifactLibrarySelection.contentKept(kind: .fileChange, details: lost)
+                  && ArtifactLibrarySelection.contentKept(kind: .document, details: lost),
+                  "Only a file change whose contents weren't kept loses Revise and Save as")
+        let titles = ArtifactLibrarySelection.actionTitles
+        try check(titles(true, false, false) == ["Open in conversation"],
+                  "A linked file change whose contents weren't kept offers only Open in conversation, with no Revise")
+        try check(titles(true, true, true) == ["Open in conversation", "Revise", "Save as…", "Reveal in Finder", "Copy"],
+                  "A linked piece with its contents keeps every action, in order")
+        try check(titles(false, true, false) == ["Save as…", "Copy"] && titles(false, false, true) == ["Reveal in Finder"],
+                  "A piece with no conversation never offers Open or Revise")
+        try check(AppSection.artifacts.placeholder?.note == "Documents, images and file changes made in your chats are collected here.",
+                  "The empty Library says where its pieces come from in plain words")
+        try check(CompanionSubject(nil).menuBarLabel(unread: 0).isEmpty && CompanionSubject(nil).menuBarLabel(unread: 2) == "•"
+                  && CompanionSubject("Ada").menuBarLabel(unread: 0) == "Ada" && CompanionSubject("Ada").menuBarLabel(unread: 1) == "Ada •",
+                  "With no name saved the menu bar shows the icon only, plus the dot when something's new")
 
         print("  artifact library selection OK")
     }
