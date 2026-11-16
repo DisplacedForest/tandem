@@ -208,7 +208,7 @@ extension SelfTest {
         try requireRetiredFree(summaries, "Start over")
 
         var copy = [DotProfileCopy.subtitle, DotProfileCopy.startOver, DotProfileCopy.pausedNote, DotProfileCopy.servicesNote,
-                    DotProfileCopy.noServices, DotProfileCopy.rulesNote,
+                    DotProfileCopy.rulesNote,
                     CompanionErrorCopy.loadLead, CompanionErrorCopy.loadTail, CompanionErrorCopy.saveLead, CompanionErrorCopy.clearLead,
                     CompanionErrorCopy.threadLead, CompanionErrorCopy.resetLead, CompanionErrorCopy.resetTail,
                     NativeTaskTools.pausedReply, NativeTaskTools.laterRound,
