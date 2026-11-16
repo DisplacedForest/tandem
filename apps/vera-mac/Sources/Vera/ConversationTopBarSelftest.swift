@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 enum ConversationTopBarShot {
-    static let titledViews: Set<String> = ["chat", "chat-collapsed"]
+    static let titledViews: Set<String> = ["chat", "chat-collapsed", "chat-fullscreen"]
     static let chatTitle = "Planning the spring garden beds"
 
     static func project(_ id: String, _ name: String) -> ProjectRecord {
@@ -134,6 +134,8 @@ extension SelfTest {
         .collapse: IconGeometry(bytes: 115, hash: 7228592855516792996),
         .next: IconGeometry(bytes: 120, hash: 12069323854929476458),
         .back: IconGeometry(bytes: 120, hash: 6253633672018244088),
+        .goBack: IconGeometry(bytes: 129, hash: 8227909724223668882),
+        .goForward: IconGeometry(bytes: 131, hash: 10027564804366374425),
         .choose: IconGeometry(bytes: 628, hash: 2182408223912166480),
         .latest: IconGeometry(bytes: 131, hash: 3304619820672566877),
         .bridged: IconGeometry(bytes: 1069, hash: 9936219808698129602),
@@ -224,11 +226,59 @@ extension SelfTest {
         try require(MessageReaction.addIcon == .addReaction, "Adding a reaction shows its own icon")
         try require(VeraResources.url("interface-icons-NOTICE", ext: "txt") != nil, "The icon notice ships inside the app")
 
-        for section in AppSection.allCases {
-            let shows = ConversationTopBarModel.showsRailToggle(section: section)
-            try require(shows == !(section == .chat || section == .vera),
-                        "Only one sidebar control shows for \(section.rawValue)")
+        let strip = WindowStripMetrics.self
+        for index in 0..<3 {
+            let origin = strip.buttonOrigin(index: index)
+            try require(abs(origin.y + strip.buttonSize / 2 - strip.centre) < 0.5, "Each window button is centred in the strip")
         }
+        try require(abs(strip.glyphTop + strip.glyphSlot / 2 - strip.centre) < 0.5,
+                    "Back, forward and the sidebar toggle share the window buttons' centre line")
+        try require(strip.height == 44 && abs(strip.buttonOrigin(index: 0).x + strip.buttonSize / 2 - 23.5) < 0.01
+                    && abs(strip.buttonOrigin(index: 2).x + strip.buttonSize / 2 - 67.5) < 0.01,
+                    "The strip and the window buttons sit at the reference's measurements")
+        try require((0..<3).map { strip.glyphLeading($0, fullScreen: false) + strip.glyphSlot / 2 } == [99, 131, 164]
+                    && strip.glyphLeading(0, fullScreen: false) >= strip.buttonsTrailing() + 8,
+                    "Back, forward and the toggle sit at the reference's centres and clear the window buttons")
+        try require(strip.dividerLeading(sidebarWide: true, fullScreen: false) == VeraSidebar.expandedWidth,
+                    "With the sidebar shown the strip's short divider sits where the sidebar ends")
+        try require(strip.dividerLeading(sidebarWide: false, fullScreen: false) > strip.glyphLeading(2, fullScreen: false) + strip.glyphSlot
+                    && strip.dividerLeading(sidebarWide: false, fullScreen: false) > VeraSidebar.collapsedWidth,
+                    "With the sidebar hidden the divider comes after the toggle")
+        try require(strip.glyphLeading(0, fullScreen: true) == strip.fullScreenLeading && strip.fullScreenLeading < strip.buttonsTrailing(),
+                    "In full screen the glyphs take the window buttons' place and leave no gap")
+        try require(VeraSidebar.topInset == strip.height && VeraSidebar.railGap > 0,
+                    "The rail's first button and the sidebar start below the strip")
+        try require(strip.control == SidebarRoundButtonStyle.size && abs(strip.controlTop + strip.control / 2 - strip.centre) < 0.5
+                    && ConversationTopBarMetrics.top == strip.controlTop,
+                    "The conversation's title and its round button sit on the strip's centre line")
+        let real = strip.buttonOrigin(index: 2, size: CGSize(width: 16, height: 16), pitch: 23, containerHeight: strip.height)
+        try require(abs(real.y + 8 - strip.centre) < 0.5 && abs(real.x + 8 - (strip.firstButtonCentre + 46)) < 0.01,
+                    "Window buttons of another size are still centred and evenly spaced")
+        try require(WindowStripControls.backTitle == "Back" && WindowStripControls.forwardTitle == "Forward",
+                    "The strip's new labels are plain words")
+
+        var history = WindowHistory()
+        try require(!history.canGoBack && !history.canGoForward && history.back() == nil, "With nothing visited there's nowhere to go")
+        let home = WindowHistory.Stop(section: .vera, conversationID: "companion")
+        let firstChat = WindowHistory.Stop(section: .chat, conversationID: "a")
+        let library = WindowHistory.Stop(section: .artifacts, conversationID: "a")
+        let secondChat = WindowHistory.Stop(section: .chat, conversationID: "b")
+        try require(home.conversationID == nil && library.conversationID == nil && firstChat.conversationID == "a",
+                    "Only an ordinary chat is remembered by its own id")
+        for stop in [home, firstChat, firstChat, library] { history.visit(stop) }
+        try require(history.stops == [home, firstChat, library] && history.canGoBack && !history.canGoForward,
+                    "Visiting the same place twice in a row is remembered once")
+        try require(history.back() == firstChat && history.back() == home && !history.canGoBack && history.canGoForward,
+                    "Back steps through what was open and stops at the start")
+        history.visit(home)
+        try require(history.stops.count == 3 && history.forward() == firstChat, "Arriving where back already put you changes nothing")
+        history.visit(secondChat)
+        try require(history.stops == [home, firstChat, secondChat] && !history.canGoForward, "Going somewhere new drops what was ahead")
+        history.forget(conversationID: "b")
+        try require(history.stops == [home, firstChat] && history.current == firstChat, "A deleted chat leaves the list")
+        for number in 0..<(WindowHistory.cap + 10) { history.visit(WindowHistory.Stop(section: .chat, conversationID: "c\(number)")) }
+        try require(history.stops.count == WindowHistory.cap && history.current?.conversationID == "c\(WindowHistory.cap + 9)",
+                    "The list is capped and keeps the newest")
         try require(ConversationTopBarModel.sidebarTitle(collapsed: false) == "Hide sidebar"
                     && ConversationTopBarModel.sidebarTitle(collapsed: true) == "Show sidebar", "The sidebar button says what it will do")
         try require(ConversationTopBarModel.sidebarIcon(collapsed: false) == .sidebarShown

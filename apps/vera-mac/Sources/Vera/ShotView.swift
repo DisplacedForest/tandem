@@ -14,6 +14,7 @@ struct ShotView: View {
     var schedule: Bool = false
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
+    var fullScreenShot: Bool = false
     var mentions: Bool = false
     var jumpToLatest: Bool = false
     var dotHeader: Bool = false
@@ -91,8 +92,11 @@ struct ShotView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
-            .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: collapsedSidebar) {})
+            .modifier(WindowStripPane(conversation: section == .vera || section == .chat))
+            .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: collapsedSidebar, fullScreen: fullScreenShot) {})
         }
+        .modifier(WindowStripChrome(sidebarWide: !collapsedSidebar, collapsed: collapsedSidebar, fullScreen: fullScreenShot, standIns: true,
+                                    canGoBack: true, canGoForward: false, back: {}, forward: {}) {})
     }
 
     private var conversationColumn: some View {
@@ -549,7 +553,7 @@ struct ShotView: View {
                         workflowEditor: WorkflowEditorStore(), onSelect: { _ in })
                 .environmentObject(store)
                 .environment(\.renderSafe, true)
-            Rectangle().fill(Theme.hairline).frame(width: 1)
+            Rectangle().fill(Theme.hairline).frame(width: 1).padding(.top, WindowStripMetrics.height)
         }
         .fixedSize(horizontal: true, vertical: false)
     }

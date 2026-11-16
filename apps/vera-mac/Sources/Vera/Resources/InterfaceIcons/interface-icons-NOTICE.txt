@@ -69,6 +69,8 @@ src/components/Icon/svg/ChevronDown.tsx as interface-expand.svg
 src/components/Icon/svg/ChevronUp.tsx as interface-collapse.svg
 src/components/Icon/svg/ChevronRight.tsx as interface-next.svg
 src/components/Icon/svg/ChevronLeft.tsx as interface-back.svg
+src/components/Icon/svg/ArrowLeft.tsx as interface-go-back.svg
+src/components/Icon/svg/ArrowRight.tsx as interface-go-forward.svg
 src/components/Icon/svg/ChevronUpDown.tsx as interface-choose.svg
 src/components/Icon/svg/ArrowDown.tsx as interface-latest.svg
 src/components/Icon/svg/Branch.tsx as interface-bridged.svg
