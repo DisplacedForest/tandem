@@ -12,7 +12,7 @@ enum NativeTaskFixture {
                          state: String = "queued", canceled: Bool = false) throws -> Data {
         let body = try JSONSerialization.jsonObject(with: reference.body) as! [String: Any]
         return try NativeTaskClient.canonical([
-            "id": id, "worker_type": "research", "payload": body["payload"]!,
+            "id": id, "worker_type": reference.createRequest.workerType, "payload": body["payload"]!,
             "state": state, "checkpoint": [:], "cancel_requested": canceled,
             "generation": 1, "updated_at": 1.0,
         ])

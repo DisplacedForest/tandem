@@ -787,7 +787,7 @@ struct MessageRow: View {
                         Label { Text(message.failure.map(SavedWording.current) ?? "The response was interrupted") } icon: { InterfaceIconView(icon: .warning, size: InterfaceIconSize.small) }
                             .font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
                         Button("Retry answer") { store.retryAnswer(message.id) }
-                            .buttonStyle(.borderless).font(.system(size: 11))
+                            .buttonStyle(ConversationButtonStyle(kind: .secondary))
                     }
                     AssistantBody(message: message, section: .actions, companionThread: companionThread, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                 }
@@ -835,16 +835,19 @@ struct AttachmentRouteBadge: View {
         }
     }
 
-    private var label: String {
+    private var label: String { Self.label(note, missingImages: missingImages) }
+
+    static func label(_ note: MessageRouteNote, missingImages: [String]) -> String {
         switch note.route {
         case .direct where !missingImages.isEmpty:
-            return "\(missingImages.joined(separator: ", ")) could not be loaded and was not included in the model request"
+            let names = missingImages.joined(separator: ", ")
+            return missingImages.count == 1 ? "\(names) couldn't be loaded, so it wasn't sent" : "\(names) couldn't be loaded, so they weren't sent"
         case .direct:
-            return "Image included in the model request"
+            return "Image sent with your message"
         case .bridged where note.disclosure == nil:
-            return "Routing through the vision bridge\(note.bridgeModel.map { " (\($0))" } ?? "")"
+            return "Having the image described first"
         case .bridged:
-            return "Described by the vision bridge\(note.bridgeModel.map { " (\($0))" } ?? ""). The model did not receive the image."
+            return "Described by a second model first. The one answering didn't see the image itself."
         case .withheld:
             return "Sent without the attachment"
         }
@@ -972,16 +975,22 @@ struct NativeToolActivityChip: View {
         return lines.joined(separator: "\n")
     }
 
-    private var icon: InterfaceIcon {
+    static func showsSpinner(_ activity: NativeToolActivity, awaitingDecision: Bool) -> Bool {
+        activity.state == .pending && !awaitingDecision
+    }
+
+    static func icon(for activity: NativeToolActivity, awaitingDecision: Bool) -> InterfaceIcon {
         if activity.why != nil { return .needsYou }
-        if declined { return .declined }
+        if isDeclined(activity) { return .declined }
         switch activity.state {
-        case .pending: return .scheduled
+        case .pending: return awaitingDecision ? .needsYou : .scheduled
         case .succeeded: return .done
         case .failed: return .failed
         case .canceled: return .stopped
         }
     }
+
+    private var icon: InterfaceIcon { Self.icon(for: activity, awaitingDecision: awaitingDecision) }
 
     private var status: String {
         if let why = activity.why { return RefusalCopy.label(why) }
@@ -1029,7 +1038,7 @@ struct NativeToolActivityChip: View {
         } label: {
             VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                if activity.state == .pending {
+                if Self.showsSpinner(activity, awaitingDecision: awaitingDecision) {
                     ProgressView().controlSize(.mini)
                 } else {
                     InterfaceIconView(icon: icon, size: InterfaceIconSize.regular).foregroundStyle(iconColor)
@@ -1044,8 +1053,7 @@ struct NativeToolActivityChip: View {
                 }
                 if activity.state == .pending, let onCancel {
                     Button("Cancel", action: onCancel)
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 11))
+                        .buttonStyle(ConversationButtonStyle(kind: .secondary))
                         .accessibilityLabel("Cancel \(activity.title)")
                 }
             }

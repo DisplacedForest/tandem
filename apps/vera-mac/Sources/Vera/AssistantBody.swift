@@ -24,11 +24,15 @@ struct AssistantBody: View {
         case .extras:
             if message.pulse == nil { extras }
         case .actions:
-            if message.pulse == nil && Self.showsActionRow(companionThread: companionThread) { actions }
+            if message.pulse == nil && Self.showsActionRow(companionThread: companionThread, state: message.state) { actions }
         }
     }
 
     static func showsActionRow(companionThread: Bool) -> Bool { !companionThread }
+
+    static func showsActionRow(companionThread: Bool, state: MessageState) -> Bool {
+        showsActionRow(companionThread: companionThread) && state != .streaming
+    }
 
     private var parsed: (clean: String, calls: [ToolCall]) { ToolCallParser.parse(message.text) }
 

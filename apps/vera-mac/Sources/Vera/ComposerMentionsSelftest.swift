@@ -29,6 +29,13 @@ extension SelfTest {
         try require(catalog.sections("").map(\.0) == [.add, .tools, .plugins], "Sections appear in order")
         try require(catalog.items.first { $0.id == "plugin-b" }?.available == false, "A disconnected plugin is dimmed")
         try require(catalog.items.first { $0.id == NativeImageTools.toolID }?.available == false, "An unconfigured tool is dimmed")
+        let listed = catalog.sections("").flatMap(\.1).map(\.id)
+        try require(!listed.contains("plugin-b") && !listed.contains("plugin-d") && !listed.contains(NativeImageTools.toolID),
+                    "Rows that can't be used are left out of the list: \(listed)")
+        try require(catalog.sections("web").flatMap(\.1).map(\.id) == [NativeWebTools.searchToolID], "A filtered list leaves out rows that can't be used")
+        let offline = ComposerMentionCatalog(items: [ComposerMentionCatalog.filesItem,
+            ComposerMentionCatalog.plugin(name: "Slack", serverID: "b", connected: false, toolIDs: [], allowedIDs: [])])
+        try require(offline.sections("").map(\.0) == [.add], "A section with no usable rows shows no heading")
 
         try require(ComposerMentions.resolve("@Search the web what is new", catalog: catalog) == [NativeWebTools.searchToolID], "A mention resolves to its tool")
         try require(ComposerMentions.resolve("@search THE Web please", catalog: catalog) == [NativeWebTools.searchToolID], "Mentions are case-insensitive")

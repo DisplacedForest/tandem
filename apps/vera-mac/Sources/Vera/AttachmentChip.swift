@@ -88,7 +88,7 @@ struct AttachmentChipView: View {
                 Text(att.name)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 Text(att.status == .failed ? "FAILED" : att.ext)
                     .font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textSecondary)

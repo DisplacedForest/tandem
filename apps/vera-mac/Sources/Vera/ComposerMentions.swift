@@ -81,7 +81,7 @@ struct ComposerMentionCatalog: Equatable, Sendable {
     }
 
     func sections(_ query: String) -> [(ComposerMentionSection, [ComposerMentionItem])] {
-        let visible = matching(query)
+        let visible = matching(query).filter(\.available)
         return ComposerMentionSection.allCases.compactMap { section in
             let rows = visible.filter { $0.section == section }
             return rows.isEmpty ? nil : (section, rows)
