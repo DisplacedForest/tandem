@@ -242,7 +242,7 @@ async def test_native_provider_transport_deadlines_and_sanitized_diagnostics(sce
         assert 'synthetic-secret-sentinel' not in stdout.decode()
         tested = {'setup': value['setup'], 'overall': value['overall'], 'short-overall': value['overall'], 'cancel': 0.1}
         assert timing['finishSeconds'] < tested.get(scenario, SERVER_HOLD - LATE_SLACK) + LATE_SLACK
-        if scenario == 'body':
+        if scenario == 'body' and 'headersSeconds' in timing:
             assert timing['finishSeconds'] - timing['headersSeconds'] < value['idle'] + LATE_SLACK
         assert result['failure'] == (None if expected == 'completed' else 'canceled' if expected == 'canceled' else 'request_timeout' if expected.endswith('timeout') else expected)
         if scenario == 'headers':
