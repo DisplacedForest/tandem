@@ -57,12 +57,18 @@ extension SelfTest {
 
         let ran = NativeToolActivity(id: "ran", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
                                      request: "{\"command\":\"make check\"}", result: "{\"exit_code\":0}", state: .succeeded, confirmationRequired: true)
-        let card = NativeDisplayBlock.commandRun(NativeCommandRun(id: "turn:ran", command: "make check", directory: "/tmp", outcome: .ran))
+        let card = NativeDisplayBlock.commandRun(NativeCommandRun(id: "0f4c2a6e-5b1d-4e8a-9c3f-7a2b1d6e4c90:ran", command: "make check", directory: "/tmp", outcome: .ran))
         let shown = Message(role: .assistant, text: "Done.", toolActivities: [ran, asking], displayBlocks: [card])
         try require(NativeTaskTranscript.visibleActivities(in: shown).map(\.id) == ["ask"],
                     "A command shown as a card is not also listed as a row, and one still waiting stays")
         let bare = Message(role: .assistant, text: "Done.", toolActivities: [ran])
         try require(NativeTaskTranscript.visibleActivities(in: bare).map(\.id) == ["ran"], "A command with no card keeps its row")
+        let grouped = NativeDisplayBlock.commandRun(NativeCommandRun(id: "0f4c2a6e-5b1d-4e8a-9c3f-7a2b1d6e4c90:group:ran", command: "make check", directory: "/tmp", outcome: .ran))
+        let other = Message(role: .assistant, text: "Done.", toolActivities: [ran], displayBlocks: [grouped])
+        try require(NativeTaskTranscript.visibleActivities(in: other).map(\.id) == ["ran"],
+                    "A command keeps its row when the only card belongs to a different call whose name ends the same way")
+        try require(NativeTaskTranscript.callID(ofRun: "ran") == "ran" && NativeTaskTranscript.callID(ofRun: "turn:ran") == "turn:ran",
+                    "Only a conversation turn's own prefix is taken off a card's name")
 
         let label = AttachmentRouteBadge.label
         try require(label(MessageRouteNote(route: .direct), ["photo.png"]) == "photo.png couldn't be loaded, so it wasn't sent",

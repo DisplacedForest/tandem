@@ -980,8 +980,7 @@ struct NativeToolActivityChip: View {
                 }
                 if activity.state == .pending, let onCancel {
                     Button("Cancel", action: onCancel)
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 11))
+                        .buttonStyle(ConversationButtonStyle(kind: .secondary))
                         .accessibilityLabel("Cancel \(activity.title)")
                 }
             }

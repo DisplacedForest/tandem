@@ -14,6 +14,12 @@ enum NativeTaskTranscript {
 
     static func shownAsCommandRun(_ activity: NativeToolActivity, runs: [String]) -> Bool {
         guard activity.toolID == NativeCommandTools.toolID, activity.state != .pending else { return false }
-        return runs.contains { $0 == activity.id || $0.hasSuffix(":" + activity.id) }
+        return runs.contains { callID(ofRun: $0) == activity.id }
+    }
+
+    static func callID(ofRun id: String) -> String {
+        let scope = id.prefix(36)
+        guard id.count > 37, UUID(uuidString: String(scope)) != nil, id.dropFirst(36).first == ":" else { return id }
+        return String(id.dropFirst(37))
     }
 }
