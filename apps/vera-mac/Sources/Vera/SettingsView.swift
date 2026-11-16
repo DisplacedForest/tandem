@@ -109,7 +109,7 @@ struct NativeEndpointEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if config.nativeSettings.profiles.isEmpty {
-                Text("Add an OpenAI-compatible endpoint to begin.")
+                Text(ModelSettingsCopy.noEndpoint)
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Button("Add endpoint") { config.addNativeProfile() }
             } else {
@@ -170,7 +170,7 @@ struct NativeModelEditor: View {
             if let profile {
                 Text("Endpoint: \(profile.name)")
                     .font(.system(size: 12, weight: .medium))
-                Button(discovery == .loading ? "Discovering…" : "Refresh model list") { discover() }
+                Button(discovery == .loading ? ModelSettingsCopy.looking : "Refresh model list") { discover() }
                     .disabled(discovery == .loading)
                     .help(discovery == .idle && !models.isEmpty ? ModelSettingsCopy.savedListHelp : "")
                 discoveryMessage
@@ -211,7 +211,7 @@ struct NativeModelEditor: View {
                     }
                 }
             } else {
-                Text("Add an endpoint before discovering models.")
+                Text(ModelSettingsCopy.endpointFirst)
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
         }
@@ -282,7 +282,7 @@ struct NativeCapabilityEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if model.isEmpty {
-                Text("Choose a model to review its capability profile.")
+                Text(ModelSettingsCopy.chooseModel)
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             } else {
                 if resolution.source == .override {
@@ -299,7 +299,7 @@ struct NativeCapabilityEditor: View {
                             }),
                         in: 1...16)
                 }
-                Toggle("Supports tool calls", isOn: capabilityBinding(\.supportsTools))
+                Toggle(ModelSettingsCopy.usesTools, isOn: capabilityBinding(\.supportsTools))
                 Toggle("Supports streaming replies", isOn: capabilityBinding(\.supportsStreaming))
                 Toggle("Supports reasoning controls", isOn: capabilityBinding(\.supportsReasoning))
             }
@@ -364,6 +364,11 @@ enum ModelSettingsCopy {
     static let savedWithoutModel = "Saved. Add a model server and choose a model to start chatting."
     static let savedListHelp = "This is the list from the last time it loaded."
     static let loading = "Loading models…"
+    static let noEndpoint = "Add a model server to begin."
+    static let endpointFirst = "Add a model server first."
+    static let chooseModel = "Choose a model to see what it can do."
+    static let looking = "Looking for models…"
+    static let usesTools = "Can use tools"
     static let empty = "The endpoint returned an empty model list. Check the server, then retry."
     static let noUsableModels = "The server listed models, but none of them can be used."
     static let authenticationFailed = "Authentication failed. Check the API key, save it, then retry."
@@ -372,7 +377,8 @@ enum ModelSettingsCopy {
 
     static var fixedStrings: [String] {
         [endpointsTip, capabilitiesTip, visionBridgeTip, namePlaceholder, baseURLPlaceholder, visionBaseURLPlaceholder,
-         visionModelPlaceholder, optionalPlaceholder, savedWithoutModel, savedListHelp, loading, empty, noUsableModels,
+         visionModelPlaceholder, optionalPlaceholder, savedWithoutModel, savedListHelp, loading, noEndpoint, endpointFirst,
+         chooseModel, looking, usesTools, empty, noUsableModels,
          authenticationFailed, networkFailed, malformed]
     }
 

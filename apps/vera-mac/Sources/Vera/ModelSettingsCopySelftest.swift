@@ -4,7 +4,7 @@ import Foundation
 extension SelfTest {
     static func runModelSettingsCopy() async throws {
         let require = NativeTaskFixture.require
-        let banned = ["identifier", "probed", "runtime", "routed", "/v1 model endpoint", "model id", "\u{2014}"]
+        let banned = ["identifier", "probed", "runtime", "routed", "/v1 model endpoint", "model id", "discover", "capability profile", "tool calls", "\u{2014}"]
         let states: [ModelDiscoveryState] = [.idle, .loading, .models(["a"]), .models(["a", "b", "c"]), .empty,
                                              .noUsableModels, .authenticationFailed, .networkFailed, .malformed]
         let messages = states.compactMap(ModelSettingsCopy.discoveryMessage)
@@ -20,6 +20,10 @@ extension SelfTest {
         try require(ModelSettingsCopy.discoveryMessage(.models(["a"])) == "Loaded 1 model", "One model reads singular")
         try require(ModelSettingsCopy.discoveryMessage(.models(["a", "b", "c"])) == "Loaded 3 models", "Three models read plural")
         try require(ModelSettingsCopy.discoveryMessage(.loading) == "Loading models…", "Loading reads plainly")
+        try require(ModelSettingsCopy.noEndpoint == "Add a model server to begin." && ModelSettingsCopy.endpointFirst == "Add a model server first."
+                        && ModelSettingsCopy.chooseModel == "Choose a model to see what it can do." && ModelSettingsCopy.looking == "Looking for models…"
+                        && ModelSettingsCopy.usesTools == "Can use tools",
+                    "The empty states, the refresh button and the switch read plainly")
         try require(ModelSettingsCopy.discoveryMessage(.idle) == nil, "Idle shows nothing on the face of the tab")
         print("  model settings copy OK (plain placeholders, tips, save line and loading lines)")
     }
