@@ -22,6 +22,10 @@ enum Shot {
             NativeToolAccessShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if view.hasPrefix(SettingsTabShot.prefix) {
+            SettingsTabShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view == "rules" || view.hasPrefix("rules-") {
             RulesShot.render(view: view, to: path, appearance: appearance)
             return
@@ -1274,8 +1278,6 @@ struct NativeSettingsShotView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("TOOLS").font(.system(size: 10, weight: .semibold)).tracking(0.5)
                     .foregroundStyle(Theme.textSecondary)
-                Text("Only enabled tools that native chat can actually run are shared with the model.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark.square.fill").foregroundStyle(Theme.accent)
                     VStack(alignment: .leading, spacing: 2) {
