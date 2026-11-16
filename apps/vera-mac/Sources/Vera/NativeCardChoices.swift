@@ -221,7 +221,7 @@ enum NativeCardChoices {
         switch covered {
         case .folders(let folders):
             let names = list(folders.map { name($0.value) })
-            return action == .trash ? "Never move things in \(names) to the Trash" : "Never edit in \(names)"
+            return (action == .trash ? "Never move things in \(names) to the Trash " : "Never edit in \(names) ") + place.neverWords
         case .sendTargets(let targets): return "Never send to " + list(targets.map(\.value)) + " " + place.neverWords
         case .wholeTool, .commandPrefix, .commandsOnly, .none: return "Never allow \(place.neverThing) \(place.neverWords)"
         }

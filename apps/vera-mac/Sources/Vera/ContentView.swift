@@ -772,7 +772,6 @@ struct MessageRow: View {
                             connectedTaskIDs: store.connectedNativeTaskIDs,
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask,
                             onDecide: store.answerNativeTask,
-                            onSaveAnswer: store.saveNativeTaskAnswer,
                             highlightedTaskID: store.highlightedTaskID,
                             onRuleOffer: onRuleOffer)
                     }
@@ -1044,7 +1043,7 @@ struct NativeToolConfirmationBar: View {
         if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
             return NativeScheduleTools.literal(for: draft)
         }
-        let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
+        let lines = NativeCompanionWorker.shownDetails(request.title, argumentsJSON: request.request)
         return lines.isEmpty ? nil : lines
     }
 
@@ -1053,10 +1052,8 @@ struct NativeToolConfirmationBar: View {
         return NativeScheduleTools.destination(for: draft)
     }
 
-    private var answers: CardAnswers {
-        var built = onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
-        if request.subject == nil { built.allowTitle = "Approve" }
-        return built
+    var answers: CardAnswers {
+        onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
     }
 
     private var block: String? {
@@ -1135,6 +1132,7 @@ private struct ConversationButtonBody: View {
             .padding(.horizontal, 14).frame(height: 28)
             .background(Capsule().fill(kind == .primary ? Theme.sage : Color.clear))
             .overlay(Capsule().stroke(kind == .primary ? Color.clear : Theme.cardStroke, lineWidth: 1))
+            .clipShape(Capsule())
             .contentShape(Capsule())
             .opacity(isEnabled ? (pressed ? 0.8 : 1) : 0.45)
     }

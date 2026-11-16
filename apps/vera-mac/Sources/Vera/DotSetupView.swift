@@ -64,7 +64,9 @@ struct DotProfileForm: View {
                             set: { if $0 { selected.insert(option.id) } else { selected.remove(option.id) } })) {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(option.name).font(.system(size: 12))
-                                Text(option.detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                if !option.detail.isEmpty {
+                                    Text(option.detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                }
                             }
                         }
                     }

@@ -49,6 +49,26 @@ extension SelfTest {
             }
         }
 
+        let plainActivity = NativeToolActivity(id: "plain-card", toolID: "booking-send", name: "booking_send", title: "Send a booking request", round: 1,
+                                               request: "{\"zone\":\"north\",\"body\":\"See you Tuesday\",\"title\":\"Inspection\",\"CC\":\"bo@example.com\",\"to\":\"ana@example.com\",\"amount\":3}",
+                                               result: nil, state: .pending, confirmationRequired: true)
+        let plainRequest = NativeToolConfirmationRequest(activity: plainActivity)
+        for chosen in [nil, { (_: NativeCardChoiceKind) in }] as [((NativeCardChoiceKind) -> Void)?] {
+            let answers = NativeToolConfirmationBar(request: plainRequest, onDecision: { _ in }, onChoice: chosen).answers
+            try require(answers.allowTitle == "Allow" && answers.declineTitle == "Decline", "A chat card with no saved choices still answers Decline and Allow")
+        }
+        try require(NativeToolConfirmationBar.literal(for: plainRequest)
+                        == "To: ana@example.com\nCC: bo@example.com\nTitle: Inspection\nAmount: 3\nZone: north\nBody: See you Tuesday",
+                    "A card shows who it goes to first and the long text last: \(NativeToolConfirmationBar.literal(for: plainRequest) ?? "")")
+        try require(NativeCompanionWorker.details("Send a booking request", argumentsJSON: plainActivity.request)
+                        == "CC: bo@example.com\nAmount: 3\nBody: See you Tuesday\nTitle: Inspection\nTo: ana@example.com\nZone: north",
+                    "Saved step text keeps its original key order")
+        try require(NativeCompanionWorker.shownDetails("Note", argumentsJSON: "{\"note\":\"n\",\"message\":\"m\",\"subject\":\"s\",\"list\":\"Garden\",\"recipients\":\"r\",\"bcc\":\"b\",\"channel\":\"c\",\"recipient\":\"p\"}")
+                        == "Recipient: p\nRecipients: r\nBcc: b\nChannel: c\nSubject: s\nList: Garden\nMessage: m\nNote: n",
+                    "Every recipient key comes first in its fixed order and every long text key last")
+        try require(ConversationRulesEditor.stricter == "A chat can be stricter than your settings, never looser. A specific thing you chose to always allow still runs.",
+                    "The chat rules tooltip says a chat can only be stricter")
+
         let notes = "/Volumes/Notes/Greenhouse/notes"
         let edit = NativeCardSubject(action: .fileEdits, toolID: NativeFolderTools.toolID, toolTitle: "Edit a file",
                                      targets: [NativeRuleTarget.make(.folder, notes + "/a.txt")!])
@@ -66,6 +86,16 @@ extension SelfTest {
                     "A move across two folders saves one record per folder")
         var trash = edit
         trash.action = .trash
+        for (place, here, edits, trashed) in [(chat, NativeRuleScope.conversation("c1"), "Never edit in notes in this chat",
+                                               "Never move things in notes to the Trash in this chat"),
+                                              (task, NativeRuleScope.task("t1"), "Never edit in notes for this", "Never move things in notes to the Trash for this")] {
+            try require(title(edit, place, .never) == edits && title(trash, place, .never) == trashed,
+                        "A folder never names the folder and where it applies: \(place)")
+            let saved = NativeCardChoices.records(.never, subject: edit, place: place, originMessageID: nil)
+                + NativeCardChoices.records(.never, subject: trash, place: place, originMessageID: nil)
+            try require(saved.count == 2 && saved.allSatisfy { $0.scope == here && $0.scope != .everywhere && $0.effect == .forbid && valid($0) },
+                        "A folder never saves only for the place its words name: \(place)")
+        }
         let trashRecords = NativeCardChoices.records(.allowAlways, subject: trash, place: chat, originMessageID: nil)
         try require(trashRecords.count == 1 && trashRecords[0].action == .trash && valid(trashRecords[0]), "A Trash card saves a Trash record")
 
