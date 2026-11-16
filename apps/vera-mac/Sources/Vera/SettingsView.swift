@@ -31,8 +31,13 @@ struct ConnectionTab: View {
     @EnvironmentObject var config: ConfigStore
     var body: some View {
         Form {
-            Section("Saved endpoints") {
+            Section {
                 NativeEndpointEditor()
+            } header: {
+                HStack(spacing: 6) {
+                    Text("Saved endpoints")
+                    InfoTip(text: ModelSettingsCopy.endpointsTip)
+                }
             }
             Section("Setup guide") {
                 Text("Run the guide again at any time. Your saved endpoints, prompt, tools, and chat history stay in place.")
@@ -51,11 +56,21 @@ struct ModelTab: View {
             Section("Choose a model") {
                 NativeModelEditor()
             }
-            Section("Capabilities") {
+            Section {
                 NativeCapabilityEditor()
+            } header: {
+                HStack(spacing: 6) {
+                    Text("Capabilities")
+                    InfoTip(text: ModelSettingsCopy.capabilitiesTip)
+                }
             }
-            Section("Vision bridge") {
+            Section {
                 NativeVisionBridgeEditor()
+            } header: {
+                HStack(spacing: 6) {
+                    Text("Vision bridge")
+                    InfoTip(text: ModelSettingsCopy.visionBridgeTip)
+                }
             }
             Section {
                 NativeAdvancedControlsEditor()
@@ -109,22 +124,23 @@ struct NativeEndpointEditor: View {
                     Button("Add") { config.addNativeProfile() }
                 }
                 LabeledContent("Saved name") {
-                    TextField("Home model server", text: config.activeProfileBinding(\.name))
-                        .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+                    TextField("", text: config.activeProfileBinding(\.name),
+                              prompt: Text(verbatim: ModelSettingsCopy.namePlaceholder))
+                        .labelsHidden().accessibilityLabel("Saved name").textFieldStyle(.roundedBorder).frame(maxWidth: 360)
                 }
                 LabeledContent("Base URL") {
-                    TextField("https://model-host.example/v1", text: config.activeProfileBinding(\.baseURL))
-                        .textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
+                    TextField("", text: config.activeProfileBinding(\.baseURL),
+                              prompt: Text(verbatim: ModelSettingsCopy.baseURLPlaceholder))
+                        .labelsHidden().accessibilityLabel("Base URL").textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
                 }
                 LabeledContent("API key") {
-                    SecureField("Optional", text: config.apiKeyBinding())
-                        .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+                    SecureField("", text: config.apiKeyBinding(),
+                                prompt: Text(verbatim: ModelSettingsCopy.optionalPlaceholder))
+                        .labelsHidden().accessibilityLabel("API key").textFieldStyle(.roundedBorder).frame(maxWidth: 360)
                 }
                 if let error = config.credentialError {
                     Text(error).font(.system(size: 12)).foregroundStyle(.orange)
                 }
-                Text("API keys are saved in your Mac keychain. Use the OpenAI-compatible API root ending in /v1.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 if let override = config.envOverride("model_base") {
                     Text("\(override) currently overrides this saved endpoint URL.")
                         .font(.system(size: 11)).foregroundStyle(.orange)
@@ -156,6 +172,7 @@ struct NativeModelEditor: View {
                     .font(.system(size: 12, weight: .medium))
                 Button(discovery == .loading ? "Discovering…" : "Refresh model list") { discover() }
                     .disabled(discovery == .loading)
+                    .help(discovery == .idle && !models.isEmpty ? ModelSettingsCopy.savedListHelp : "")
                 discoveryMessage
                 if !profile.selectedModel.isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
@@ -201,36 +218,35 @@ struct NativeModelEditor: View {
     }
 
     @ViewBuilder private var discoveryMessage: some View {
-        switch discovery {
-        case .idle:
-            if !models.isEmpty {
-                Label("Showing the saved model list from the last successful refresh.", systemImage: "clock.arrow.circlepath")
+        if let text = ModelSettingsCopy.discoveryMessage(discovery) {
+            switch discovery {
+            case .idle:
+                EmptyView()
+            case .loading:
+                HStack { ProgressView().controlSize(.small); Text(verbatim: text) }
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            case .models:
+                Label(text, systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 12)).foregroundStyle(.green)
+            case .empty:
+                Label(text, systemImage: "tray")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            case .noUsableModels:
+                Label(text, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 12)).foregroundStyle(.orange)
+            case .authenticationFailed:
+                Label(text, systemImage: "lock.trianglebadge.exclamationmark")
+                    .font(.system(size: 12)).foregroundStyle(.red)
+            case .networkFailed:
+                Label(text, systemImage: "network.slash")
+                    .font(.system(size: 12)).foregroundStyle(.red)
+            case .malformed:
+                Label(text, systemImage: "doc.badge.ellipsis")
+                    .font(.system(size: 12)).foregroundStyle(.red)
+            case .failed:
+                Label(text, systemImage: "xmark.circle.fill")
+                    .font(.system(size: 12)).foregroundStyle(.red)
             }
-        case .loading:
-            HStack { ProgressView().controlSize(.small); Text("Loading model identifiers…") }
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-        case .models(let values):
-            Label("Loaded \(values.count) model identifier\(values.count == 1 ? "" : "s").", systemImage: "checkmark.circle.fill")
-                .font(.system(size: 12)).foregroundStyle(.green)
-        case .empty:
-            Label("The endpoint returned an empty model list. Check the server, then retry.", systemImage: "tray")
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-        case .noUsableModels:
-            Label("The endpoint returned model entries, but none had a usable identifier.", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 12)).foregroundStyle(.orange)
-        case .authenticationFailed:
-            Label("Authentication failed. Check the API key, save it, then retry.", systemImage: "lock.trianglebadge.exclamationmark")
-                .font(.system(size: 12)).foregroundStyle(.red)
-        case .networkFailed:
-            Label("Tandem could not reach the endpoint. Check its URL and network connection, then retry.", systemImage: "network.slash")
-                .font(.system(size: 12)).foregroundStyle(.red)
-        case .malformed:
-            Label("The endpoint returned a model response Tandem could not read.", systemImage: "doc.badge.ellipsis")
-                .font(.system(size: 12)).foregroundStyle(.red)
-        case .failed(let message):
-            Label(message, systemImage: "xmark.circle.fill")
-                .font(.system(size: 12)).foregroundStyle(.red)
         }
     }
 
@@ -269,15 +285,8 @@ struct NativeCapabilityEditor: View {
                 Text("Choose a model to review its capability profile.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             } else {
-                Text("These settings decide how attachments are routed before each send. They describe the model; nothing is probed at runtime.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                HStack(spacing: 8) {
-                    Image(systemName: sourceIcon).foregroundStyle(Theme.accent)
-                    Text(sourceLabel).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    Spacer()
-                    if resolution.source == .override {
-                        Button("Use defaults") { config.clearCapabilityOverride(model: model) }
-                    }
+                if resolution.source == .override {
+                    Button("Use defaults") { config.clearCapabilityOverride(model: model) }
                 }
                 Toggle("Accepts image input", isOn: capabilityBinding(\.acceptsImages))
                 if resolution.profile.acceptsImages {
@@ -294,25 +303,6 @@ struct NativeCapabilityEditor: View {
                 Toggle("Supports streaming replies", isOn: capabilityBinding(\.supportsStreaming))
                 Toggle("Supports reasoning controls", isOn: capabilityBinding(\.supportsReasoning))
             }
-        }
-    }
-
-    private var sourceIcon: String {
-        switch resolution.source {
-        case .override: return "person.crop.circle.badge.checkmark"
-        case .pattern: return "text.magnifyingglass"
-        case .fallback: return "square.dashed"
-        }
-    }
-
-    private var sourceLabel: String {
-        switch resolution.source {
-        case .override:
-            return "Your saved profile for \(model)."
-        case .pattern(let pattern):
-            return "Defaults for \(model), matched by the bundled name pattern \"\(pattern)\"."
-        case .fallback:
-            return "Default text-only profile. Adjust it if \(model) accepts images."
         }
     }
 
@@ -335,19 +325,20 @@ struct NativeVisionBridgeEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("When the selected model does not accept images, Tandem can send attachments to this separate OpenAI-compatible vision endpoint and share its description with your model, clearly labeled in the conversation.")
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             LabeledContent("Base URL") {
-                TextField("https://vision-host.example/v1", text: config.visionBridgeBinding(\.baseURL))
-                    .textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
+                TextField("", text: config.visionBridgeBinding(\.baseURL),
+                          prompt: Text(verbatim: ModelSettingsCopy.visionBaseURLPlaceholder))
+                    .labelsHidden().accessibilityLabel("Base URL").textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
             }
             LabeledContent("Model") {
-                TextField("vision-model-id", text: config.visionBridgeBinding(\.model))
-                    .textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
+                TextField("", text: config.visionBridgeBinding(\.model),
+                          prompt: Text(verbatim: ModelSettingsCopy.visionModelPlaceholder))
+                    .labelsHidden().accessibilityLabel("Model").textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
             }
             LabeledContent("API key") {
-                SecureField("Optional", text: $config.visionBridgeAPIKey)
-                    .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+                SecureField("", text: $config.visionBridgeAPIKey,
+                            prompt: Text(verbatim: ModelSettingsCopy.optionalPlaceholder))
+                    .labelsHidden().accessibilityLabel("API key").textFieldStyle(.roundedBorder).frame(maxWidth: 360)
             }
             if let error = config.credentialError {
                 Text(error).font(.system(size: 12)).foregroundStyle(.orange)
@@ -356,11 +347,50 @@ struct NativeVisionBridgeEditor: View {
                 Label("The bridge is configured. Unsupported attachments are described here, with disclosure on every bridged turn.",
                       systemImage: "checkmark.circle.fill")
                     .font(.system(size: 12)).foregroundStyle(.green)
-            } else {
-                Label("No bridge configured. When the model cannot take an attachment, Tandem asks whether to send the message without it.",
-                      systemImage: "circle.dashed")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
+        }
+    }
+}
+
+enum ModelSettingsCopy {
+    static let endpointsTip = "API keys are kept in your Mac keychain. The address is the one your model server gives for its OpenAI-compatible API, usually ending in /v1."
+    static let capabilitiesTip = "These describe what the chosen model can do. Tandem doesn't check them for you."
+    static let visionBridgeTip = "If the chosen model can't read images, Tandem can send them to a second model that can and pass its description along. Without one, Tandem asks before sending a message without its attachment."
+    static let namePlaceholder = "Home model server"
+    static let baseURLPlaceholder = "https://model-host.example/v1"
+    static let visionBaseURLPlaceholder = "https://vision-host.example/v1"
+    static let visionModelPlaceholder = "Model name"
+    static let optionalPlaceholder = "Optional"
+    static let savedWithoutModel = "Saved. Add a model server and choose a model to start chatting."
+    static let savedListHelp = "This is the list from the last time it loaded."
+    static let loading = "Loading models…"
+    static let empty = "The endpoint returned an empty model list. Check the server, then retry."
+    static let noUsableModels = "The server listed models, but none of them can be used."
+    static let authenticationFailed = "Authentication failed. Check the API key, save it, then retry."
+    static let networkFailed = "Tandem could not reach the endpoint. Check its URL and network connection, then retry."
+    static let malformed = "The endpoint returned a model response Tandem could not read."
+
+    static var fixedStrings: [String] {
+        [endpointsTip, capabilitiesTip, visionBridgeTip, namePlaceholder, baseURLPlaceholder, visionBaseURLPlaceholder,
+         visionModelPlaceholder, optionalPlaceholder, savedWithoutModel, savedListHelp, loading, empty, noUsableModels,
+         authenticationFailed, networkFailed, malformed]
+    }
+
+    static func loaded(_ count: Int) -> String {
+        "Loaded \(count) model\(count == 1 ? "" : "s")"
+    }
+
+    static func discoveryMessage(_ state: ModelDiscoveryState) -> String? {
+        switch state {
+        case .idle: return nil
+        case .loading: return loading
+        case .models(let values): return loaded(values.count)
+        case .empty: return empty
+        case .noUsableModels: return noUsableModels
+        case .authenticationFailed: return authenticationFailed
+        case .networkFailed: return networkFailed
+        case .malformed: return malformed
+        case .failed(let message): return message
         }
     }
 }
@@ -1213,7 +1243,7 @@ private struct SaveSection: View {
         }
         guard let resolved = config.nativeResolved else {
             store.reloadCapabilityTools(config.capabilityTools.declarations)
-            status = "Saved. Add a /v1 model endpoint and model id to connect"
+            status = ModelSettingsCopy.savedWithoutModel
             return
         }
         store.adoptNative(

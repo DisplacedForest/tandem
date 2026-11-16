@@ -484,6 +484,7 @@ enum SelfTest {
         do { try await NativeRuleRecordsSelftest.run() } catch { print("SELFTEST ERROR: rule records \(error)"); exit(1) }
         do { try await runNativeMemoryRetrieval() } catch { print("SELFTEST ERROR: native memory retrieval \(error)"); exit(1) }
         do { try await runSettingsToolsCopy() } catch { print("SELFTEST ERROR: settings tools copy \(error)"); exit(1) }
+        do { try await runModelSettingsCopy() } catch { print("SELFTEST ERROR: model settings copy \(error)"); exit(1) }
         await runNativeImageTools()
         await runNativeCapabilityTools()
         do {
