@@ -8,7 +8,7 @@ extension SelfTest {
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: nil)
         let thread = Conversation(id: "waiting-companion", title: "Companion", messages: [
             Message(role: .user, text: "Sort the seed folders."),
-            Message(role: .assistant, text: "I'll sort them in the background."),
+            Message(role: .assistant, text: "I'll sort them now."),
         ], updatedAt: Date(), originType: ChatStore.veraThreadOriginType, originID: ChatStore.veraThreadOriginID)
         let ordinary = Conversation(id: "waiting-ordinary", title: "Other", messages: [], updatedAt: Date())
         store.conversations = [thread, ordinary]
@@ -46,7 +46,7 @@ extension SelfTest {
         store.revealCompanionApproval()
         try require(store.selectedID == threadID, "The approval opens the companion conversation")
         try require(store.pendingTaskReveal == waiting.id.uuidString, "The approval scrolls to the waiting task")
-        let owner = Message(id: waiting.origin.assistantMessageID, role: .assistant, text: "I'll sort them in the background.")
+        let owner = Message(id: waiting.origin.assistantMessageID, role: .assistant, text: "I'll sort them now.")
         try require(OngoingWork.owningMessageID(taskID: waiting.id.uuidString, fallback: waiting.origin.assistantMessageID,
                                                 in: [owner]) == waiting.origin.assistantMessageID,
                     "The scroll lands on the message that started the task")
