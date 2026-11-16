@@ -903,6 +903,7 @@ struct NativeToolActivityChip: View {
     static let shownKeys = ["worker_type": "kind"]
     static let incomplete = "The request was incomplete, so nothing ran."
     static let unavailable = "This isn't available in this chat."
+    static let cutShort = "The rest of this message was cut off."
     static let errorExtras: Set<String> = ["truncated", "truncation_reason"]
 
     static func fields(_ json: String) -> [String: NativeJSONValue]? {
@@ -917,7 +918,7 @@ struct NativeToolActivityChip: View {
 
     static func shownRequest(_ activity: NativeToolActivity) -> String {
         let asked = NativeToolConfirmationRequest(activity: activity)
-        if let specific = NativeToolConfirmationBar.specificLiteral(for: asked) { return specific }
+        if let specific = NativeToolConfirmationBar.specificLiteral(for: asked, now: .distantPast) { return specific }
         guard let values = fields(activity.request) else { return activity.request }
         var plain: [String: NativeJSONValue] = [:]
         for (key, value) in values {
@@ -931,19 +932,31 @@ struct NativeToolActivityChip: View {
         return NativeCompanionWorker.shownDetails(activity.title, argumentsJSON: NativeEffectProposal.canonicalArguments(.object(plain)))
     }
 
+    static func shownError(_ error: String, cut: Bool) -> String {
+        if error == NativeToolError.unavailable.errorDescription { return unavailable }
+        if error.hasPrefix(SavedWording.argumentsLead) { return incomplete }
+        return cut ? error + "\n" + cutShort : error
+    }
+
     static func shownResult(_ result: String, toolID: String = "") -> String {
         guard let values = fields(result) else { return result }
         if toolID == NativeCommandTools.toolID {
-            let parts = ["error", "stdout", "stderr"].compactMap { key -> String? in
+            var parts = ["stdout", "stderr"].compactMap { key -> String? in
                 guard case .string(let text)? = values[key] else { return nil }
                 let trimmed = text.trimmingCharacters(in: .newlines)
                 return trimmed.isEmpty ? nil : trimmed
             }
+            if case .string(let error)? = values["error"], !error.isEmpty {
+                parts.insert(shownError(error, cut: values["truncated"] == .bool(true)), at: 0)
+            } else if case .number(let code)? = values["exit_code"], code != 0 {
+                parts.insert("The command failed with exit status \(Int(code)).", at: 0)
+            } else if case .number(let signal)? = values["signal"] {
+                parts.insert("The command was ended by signal \(Int(signal)).", at: 0)
+            }
             return parts.joined(separator: "\n\n")
         }
         if case .string(let error)? = values["error"], Set(values.keys).subtracting(["error"]).isSubset(of: errorExtras) {
-            if error == NativeToolError.unavailable.errorDescription { return unavailable }
-            return error.hasPrefix(SavedWording.argumentsLead) ? incomplete : error
+            return shownError(error, cut: values["truncated"] == .bool(true))
         }
         var lines: [String] = []
         for key in NativeCompanionWorker.shownOrder(Array(values.keys)) {
@@ -1102,12 +1115,12 @@ struct NativeToolConfirmationBar: View {
         return lines.isEmpty ? nil : lines
     }
 
-    static func specificLiteral(for request: NativeToolConfirmationRequest) -> String? {
+    static func specificLiteral(for request: NativeToolConfirmationRequest, now: Date = Date()) -> String? {
         if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
             return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
         }
         if request.toolID == NativeFolderTools.toolID, let path = NativeFolderTools.pathArgument(inRequest: request.request) { return path }
-        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request) {
+        if request.toolID == NativeScheduleTools.toolID, let draft = NativeScheduleTools.draft(inRequest: request.request, now: now) {
             return NativeScheduleTools.literal(for: draft)
         }
         return nil

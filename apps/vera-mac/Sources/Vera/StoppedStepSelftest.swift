@@ -222,22 +222,35 @@ extension SelfTest {
         try require(only == "Wrote notes.pdf", "A command step shows only what it printed: \(only)")
         let both = try printed(NativeCommandRun(id: "o2", command: "make pdf", directory: folder, outcome: .ran, exitCode: 2,
                                                 stdout: "Building notes.pdf\n", stderr: "missing fonts.tex\n"))
-        try require(both == "Building notes.pdf\n\nmissing fonts.tex", "A command step shows its output, then its errors: \(both)")
+        try require(both == "The command failed with exit status 2.\n\nBuilding notes.pdf\n\nmissing fonts.tex", "A failed command says so, then shows its output and its errors: \(both)")
         let slow = try printed(NativeCommandRun(id: "o3", command: "make pdf", directory: folder, outcome: .timedOut, stdout: "Building notes.pdf\n"))
         try require(slow == "The command took too long and was stopped\n\nBuilding notes.pdf", "A stopped command says so before its output: \(slow)")
+        let failed = try printed(NativeCommandRun(id: "o5", command: "test -f notes.pdf", directory: folder, outcome: .ran, exitCode: 2))
+        try require(failed == "The command failed with exit status 2.", "A command that failed without printing anything still says it failed: \(failed)")
+        let killed = try printed(NativeCommandRun(id: "o6", command: "make pdf", directory: folder, outcome: .ran, signal: 9, stdout: "Building notes.pdf\n"))
+        try require(killed == "The command was ended by signal 9.\n\nBuilding notes.pdf", "A command ended from outside says so before its output: \(killed)")
+        let command = { (text: String) in NativeToolActivityChip.shownResult(text, toolID: NativeCommandTools.toolID) }
+        let empty = command(try NativeToolResultBudget.serializedError(NativeToolError.invalidArguments("Provide a command.").localizedDescription, maximumBytes: 20000))
+        try require(empty == "The request was incomplete, so nothing ran.", "An incomplete command request says nothing ran: \(empty)")
+        let gone = command(try NativeToolResultBudget.serializedError(NativeToolError.unavailable.localizedDescription, maximumBytes: 20000))
+        try require(gone == "This isn't available in this chat.", "A command that isn't available says so plainly: \(gone)")
         let silent = try printed(NativeCommandRun(id: "o4", command: "touch notes.md", directory: folder, outcome: .ran, exitCode: 0))
         try require(silent.isEmpty, "A command that printed nothing hides its result: \(silent)")
 
         let send = request(step("garden-mail", "Send the notes", "{\"to\":\"ana@greenhouse.test\"}"))
         try require(send == "To: ana@greenhouse.test", "A send shows who it goes to as a plain line: \(send)")
-        let command = request(step(NativeCommandTools.toolID, "Run a command", "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}"))
-        try require(command == "make pdf\nin /Volumes/Notes/Greenhouse", "A command shows the command and its folder: \(command)")
+        let commandLines = request(step(NativeCommandTools.toolID, "Run a command", "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}"))
+        try require(commandLines == "make pdf\nin /Volumes/Notes/Greenhouse", "A command shows the command and its folder: \(commandLines)")
         let edit = request(step(NativeFolderTools.toolID, "Edit a file",
                                 "{\"path\":\"/Volumes/Notes/Greenhouse/notes.md\",\"old_text\":\"basil\",\"new_text\":\"thyme\"}"))
         try require(edit == "/Volumes/Notes/Greenhouse/notes.md", "A file edit shows the path: \(edit)")
         let schedule = request(step(NativeScheduleTools.toolID, "Schedule work",
                                     "{\"title\":\"Daily check\",\"worker_type\":\"document\",\"instruction\":\"Write a short note\",\"results_to\":\"own_chat\",\"repeat\":\"every_hours\",\"hours\":6}"))
         try require(schedule == "Daily check, every 6 hours\nWrite a short note", "A schedule shows its title, repeat and instruction: \(schedule)")
+        let past = request(step(NativeScheduleTools.toolID, "Schedule work",
+                                "{\"title\":\"Seed order\",\"worker_type\":\"document\",\"instruction\":\"Write the order\",\"results_to\":\"own_chat\",\"repeat\":\"once\",\"at\":\"2001-03-04T09:30\"}"))
+        try require(past.hasPrefix("Seed order, ") && past.hasSuffix("\nWrite the order") && !past.contains("own_chat") && !past.lowercased().contains("repeat"),
+                    "A one-time schedule whose time has passed still reads as a schedule: \(past)")
         let started = request(step(NativeTaskTools.toolID, "Start work",
                                    "{\"worker_type\":\"research\",\"objective\":\"Lumber prices this month\",\"deliverables\":[\"A short summary\",\"Three prices\"]}"))
         try require(started == "Deliverables: A short summary, Three prices\nKind: research\nObjective: Lumber prices this month",
@@ -251,6 +264,9 @@ extension SelfTest {
         try require(unset == "This can't start until Tandem is set up for it.", "Another failure shows its sentence only: \(unset)")
         let missing = result(try NativeToolResultBudget.serializedError(NativeToolError.unavailable.localizedDescription, maximumBytes: 20000))
         try require(missing == "This isn't available in this chat.", "A step that isn't available says so plainly: \(missing)")
+        let long = String(repeating: "The folder could not be read. ", count: 30)
+        let cut = result(try NativeToolResultBudget.serializedError(long, maximumBytes: 20000))
+        try require(cut == String(long.prefix(500)) + "\nThe rest of this message was cut off.", "A failure that was cut short says so: \(cut.suffix(60))")
         try require(result("{\"sent\":true}") == "Sent: Yes", "A flat result reads as plain lines")
         let nested = "{\"items\":[{\"name\":\"basil\"}]}"
         try require(result(nested) == nested, "A nested result is shown as it is")
@@ -258,7 +274,7 @@ extension SelfTest {
         try require(ran == "Command: make pdf\nExit code: 0\nStdout: Wrote notes.pdf\nTimed out: No", "A command result reads as plain lines: \(ran)")
 
         let banned = CompanionTalkControlFixture.banned + ["tool", "eng" + "ine", "arguments"]
-        for text in [send, command, edit, schedule, started, incomplete, unset, missing, ran, only, both, slow] {
+        for text in [send, commandLines, edit, schedule, past, started, incomplete, unset, missing, ran, only, both, slow, failed, killed, empty, gone, cut] {
             let words = Set(text.lowercased().components(separatedBy: CharacterSet.letters.inverted))
             try require(words.isDisjoint(with: banned) && !text.contains("{") && !text.contains("\"") && !text.contains("\u{2014}"),
                         "Opened steps use plain words: \(text)")
@@ -273,6 +289,6 @@ extension SelfTest {
         try require(stored == before && stored.request == "{\"worker_type\":\"research\",\"deliverables\":[\"A short summary\"]}"
                         && stored.result == "{\"error\":\"The tool arguments are invalid: Provide the kind of work, an objective and deliverables.\"}",
                     "Showing a step leaves its stored request and result unchanged")
-        print("  opened step OK (send, command, file edit, schedule, plain labels and lists, incomplete request, other failure, flat and nested results, command output, errors, stopped and silent commands, plain words, stored step unchanged)")
+        print("  opened step OK (send, command, file edit, schedule, plain labels and lists, incomplete request, other failure, flat and nested results, command output, errors, stopped, failed, ended and silent commands, a past one-time schedule, a cut failure, plain words, stored step unchanged)")
     }
 }
