@@ -137,6 +137,7 @@ final class ChatStore: ObservableObject {
     @Published var artifactRecords: [ArtifactRecord] = []
     @Published var pendingConversationDeletion: PendingConversationDeletion?
     var recordedArtifactSourceKeys: Set<String> = []
+    var taskPieceIDs: [String: String] = [:]
     @Published var projects: [ProjectRecord] = []
     @Published var requestedArtifactID: String?
     @Published var pendingLibraryConversationID: String?

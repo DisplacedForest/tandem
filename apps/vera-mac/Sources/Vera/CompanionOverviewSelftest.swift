@@ -225,6 +225,18 @@ extension SelfTest {
         try require(blankDetail.request == nil && blankDetail.outcome == nil, "Missing detail fields are omitted")
         try require(navigation.companionActivityDetail(item).savedPieceID == nil,
                     "Finished work with nothing saved in the Library offers no Open")
+        let answerCard = try NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot).card
+        let earlierAnswer = navigation.recordArtifact(ArtifactDraft(
+            kind: .document, title: "Earlier answer", conversationID: originID, originTitle: nil, messageID: nil,
+            sourceKey: ChatStore.taskArtifactSourceKey(answerCard.id), data: Data("Kept.".utf8), mime: "text/markdown",
+            fileExtension: "md", details: ArtifactDetails(sources: [])))
+        try require(earlierAnswer != nil && navigation.companionActivityDetail(item).savedPieceID == earlierAnswer?.artifactID,
+                    "A result saved to the Library under its card opens from there, even when the item shows no document now")
+        var crowded = CompanionOverviewFixture.task(UUID(), "Order lumber", status: .needsInput,
+                                                    decision: NativeTaskDecision(id: "d2", prompt: "Try again?", choices: ["retry", "cancel"]), minutesAgo: 1)
+        crowded.canSetAside = true
+        try require(CompanionOverviewModel.actionRows(crowded) == [[.retry, .setAside], [.stop]],
+                    "An item with three actions shows two beside each other and the third below, losing none")
         try require(CompanionOverviewModel.chatTitle(hasArtifact: true, savedPiece: false) == "Open in chat"
                     && CompanionOverviewModel.chatTitle(hasArtifact: true, savedPiece: true) == "Go to chat"
                     && CompanionOverviewModel.chatTitle(hasArtifact: false, savedPiece: false) == "Go to chat"

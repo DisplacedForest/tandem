@@ -12,6 +12,7 @@ extension ChatStore {
 
     func reloadArtifacts() {
         artifactRecords = (try? artifactRepository?.listArtifacts()) ?? []
+        taskPieceIDs = (try? artifactRepository?.artifactIDs(sourceKeyPrefix: Self.taskArtifactSourceKey(""))) ?? [:]
     }
 
     func artifactVersions(_ artifactID: String) -> [ArtifactVersion] {

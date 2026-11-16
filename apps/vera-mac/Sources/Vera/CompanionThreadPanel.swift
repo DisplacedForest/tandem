@@ -298,12 +298,11 @@ struct CompanionThreadPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .safeReportContent()
             }
-            if item.canRetry || item.canStop || item.canPickUp {
+            ForEach(Array(CompanionOverviewModel.actionRows(item).enumerated()), id: \.offset) { _, row in
                 HStack {
-                    if item.canRetry { Button { store.retryCompanionWork(item) } label: { Text("Retry").frame(maxWidth: .infinity) } }
-                    if item.canPickUp { Button { store.setCompanionWorkAside(item, resume: true) } label: { Text(NativeTaskCardPresentation.pickUpTitle).frame(maxWidth: .infinity) } }
-                    if item.canSetAside { Button { store.setCompanionWorkAside(item, resume: false) } label: { Text(NativeTaskCardPresentation.setAsideTitle).frame(maxWidth: .infinity) } }
-                    if item.canStop { Button { store.stopCompanionWork(item) } label: { Text(CompanionOverviewModel.stopTitle).frame(maxWidth: .infinity) } }
+                    ForEach(row, id: \.self) { action in
+                        Button { perform(action, on: item) } label: { Text(action.title).frame(maxWidth: .infinity) }
+                    }
                 }.buttonStyle(.bordered).controlSize(.large)
             }
             if let navigationError {
@@ -328,6 +327,15 @@ struct CompanionThreadPanel: View {
                 }.buttonStyle(.bordered).controlSize(.large)
             }
         }.foregroundStyle(Theme.warmTextPrimary)
+    }
+
+    private func perform(_ action: CompanionItemAction, on item: CompanionActivityItem) {
+        switch action {
+        case .retry: store.retryCompanionWork(item)
+        case .pickUp: store.setCompanionWorkAside(item, resume: true)
+        case .setAside: store.setCompanionWorkAside(item, resume: false)
+        case .stop: store.stopCompanionWork(item)
+        }
     }
 
     private var outputs: some View {

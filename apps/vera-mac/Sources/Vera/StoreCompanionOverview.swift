@@ -76,7 +76,7 @@ extension ChatStore {
                     ? nil : display.map { shown -> String in shown.card.milestoneLine.plain(name: companionName) })
             return CompanionActivityDetail(request: request ?? reference.request.objective, outcome: outcome,
                                            canOpen: conversation != nil, before: reference.request.dot?.carried?.request,
-                                           savedPieceID: display?.artifact.flatMap(savedPieceID))
+                                           savedPieceID: savedPieceID([display?.artifact?.id, display?.card.id].compactMap { $0 }))
         case .run(let id):
             guard let run = scheduleRuns.values.flatMap({ $0 }).first(where: { $0.id == id }) else {
                 return CompanionActivityDetail(request: nil, outcome: nil, canOpen: false)
@@ -87,10 +87,9 @@ extension ChatStore {
         }
     }
 
-    private func savedPieceID(_ artifact: NativeResearchArtifact) -> String? {
-        guard let id = (try? artifactRepository?.artifactVersion(sourceKey: Self.taskArtifactSourceKey(artifact.id)))??.artifactID,
-              artifactRecords.contains(where: { $0.id == id }) else { return nil }
-        return id
+    private func savedPieceID(_ ids: [String]) -> String? {
+        ids.lazy.compactMap { self.taskPieceIDs[Self.taskArtifactSourceKey($0)] }
+            .first { id in self.artifactRecords.contains { $0.id == id } }
     }
 
     private func companionActivityConversation(_ id: String) -> Conversation? {

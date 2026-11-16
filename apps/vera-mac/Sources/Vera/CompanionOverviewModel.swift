@@ -68,6 +68,15 @@ struct CompanionOverviewModel: Equatable, Sendable {
     static let thisMac = "This Mac"
     static let stopTitle = "Stop"
 
+    static func actionRows(_ item: CompanionActivityItem) -> [[CompanionItemAction]] {
+        var actions: [CompanionItemAction] = []
+        if item.canRetry { actions.append(.retry) }
+        if item.canPickUp { actions.append(.pickUp) }
+        if item.canSetAside { actions.append(.setAside) }
+        if item.canStop { actions.append(.stop) }
+        return stride(from: 0, to: actions.count, by: 2).map { Array(actions[$0..<min($0 + 2, actions.count)]) }
+    }
+
     static func chatTitle(hasArtifact: Bool, savedPiece: Bool) -> String {
         hasArtifact && !savedPiece ? "Open in chat" : "Go to chat"
     }
@@ -238,5 +247,18 @@ enum CompanionProfileCopy {
         let sameYear = calendar.component(.year, from: since) == calendar.component(.year, from: now)
         formatter.setLocalizedDateFormatFromTemplate(sameYear ? "MMMd" : "MMMdyyyy")
         return "Active on \(formatter.string(from: since))"
+    }
+}
+
+enum CompanionItemAction: Hashable {
+    case retry, pickUp, setAside, stop
+
+    var title: String {
+        switch self {
+        case .retry: "Retry"
+        case .pickUp: NativeTaskCardPresentation.pickUpTitle
+        case .setAside: NativeTaskCardPresentation.setAsideTitle
+        case .stop: CompanionOverviewModel.stopTitle
+        }
     }
 }
