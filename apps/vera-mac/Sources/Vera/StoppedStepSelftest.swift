@@ -204,4 +204,73 @@ extension SelfTest {
         }
         print("  stopped step OK (left to you, after an earlier step, declined with keep, unclear stop, nothing in the Library, old results and cards, unknown reasons, plain words named and unnamed)")
     }
+
+    static func runOpenedStep() async throws {
+        let require = NativeTaskFixture.require
+        func step(_ toolID: String, _ title: String, _ request: String, result: String? = nil) -> NativeToolActivity {
+            NativeToolActivity(id: "opened-\(title)", toolID: toolID, name: "opened", title: title, round: 0, request: request, result: result,
+                               state: .succeeded, confirmationRequired: false)
+        }
+        let request = NativeToolActivityChip.shownRequest
+        let result = { (text: String) in NativeToolActivityChip.shownResult(text) }
+        func printed(_ run: NativeCommandRun) throws -> String {
+            NativeToolActivityChip.shownResult(try NativeToolResultBudget.serialized(NativeCommandTools.result(run), maximumBytes: NativeCommandTools.resultBudget),
+                                               toolID: NativeCommandTools.toolID)
+        }
+        let folder = "/Volumes/Notes/Greenhouse"
+        let only = try printed(NativeCommandRun(id: "o1", command: "make pdf", directory: folder, outcome: .ran, exitCode: 0, stdout: "Wrote notes.pdf\n"))
+        try require(only == "Wrote notes.pdf", "A command step shows only what it printed: \(only)")
+        let both = try printed(NativeCommandRun(id: "o2", command: "make pdf", directory: folder, outcome: .ran, exitCode: 2,
+                                                stdout: "Building notes.pdf\n", stderr: "missing fonts.tex\n"))
+        try require(both == "Building notes.pdf\n\nmissing fonts.tex", "A command step shows its output, then its errors: \(both)")
+        let slow = try printed(NativeCommandRun(id: "o3", command: "make pdf", directory: folder, outcome: .timedOut, stdout: "Building notes.pdf\n"))
+        try require(slow == "The command took too long and was stopped\n\nBuilding notes.pdf", "A stopped command says so before its output: \(slow)")
+        let silent = try printed(NativeCommandRun(id: "o4", command: "touch notes.md", directory: folder, outcome: .ran, exitCode: 0))
+        try require(silent.isEmpty, "A command that printed nothing hides its result: \(silent)")
+
+        let send = request(step("garden-mail", "Send the notes", "{\"to\":\"ana@greenhouse.test\"}"))
+        try require(send == "To: ana@greenhouse.test", "A send shows who it goes to as a plain line: \(send)")
+        let command = request(step(NativeCommandTools.toolID, "Run a command", "{\"command\":\"make pdf\",\"directory\":\"/Volumes/Notes/Greenhouse\"}"))
+        try require(command == "make pdf\nin /Volumes/Notes/Greenhouse", "A command shows the command and its folder: \(command)")
+        let edit = request(step(NativeFolderTools.toolID, "Edit a file",
+                                "{\"path\":\"/Volumes/Notes/Greenhouse/notes.md\",\"old_text\":\"basil\",\"new_text\":\"thyme\"}"))
+        try require(edit == "/Volumes/Notes/Greenhouse/notes.md", "A file edit shows the path: \(edit)")
+        let schedule = request(step(NativeScheduleTools.toolID, "Schedule work",
+                                    "{\"title\":\"Daily check\",\"worker_type\":\"document\",\"instruction\":\"Write a short note\",\"results_to\":\"own_chat\",\"repeat\":\"every_hours\",\"hours\":6}"))
+        try require(schedule == "Daily check, every 6 hours\nWrite a short note", "A schedule shows its title, repeat and instruction: \(schedule)")
+        let started = request(step(NativeTaskTools.toolID, "Start work",
+                                   "{\"worker_type\":\"research\",\"objective\":\"Lumber prices this month\",\"deliverables\":[\"A short summary\",\"Three prices\"]}"))
+        try require(started == "Deliverables: A short summary, Three prices\nKind: research\nObjective: Lumber prices this month",
+                    "A start request uses plain labels and lists its items: \(started)")
+        try require(request(step("fixture", "Plain", "not json")) == "not json", "A request that is not an object is shown as it is")
+
+        let incomplete = result(try NativeToolResultBudget.serializedError(NativeToolError.invalidArguments(NativeTaskTools.missingArguments).localizedDescription,
+                                                                            maximumBytes: 20000))
+        try require(incomplete == "The request was incomplete, so nothing ran.", "An incomplete request says nothing ran: \(incomplete)")
+        let unset = result(try NativeToolResultBudget.serializedError(NativeTaskError.invalidEngine.localizedDescription, maximumBytes: 20000))
+        try require(unset == "This can't start until Tandem is set up for it.", "Another failure shows its sentence only: \(unset)")
+        try require(result("{\"sent\":true}") == "Sent: Yes", "A flat result reads as plain lines")
+        let nested = "{\"items\":[{\"name\":\"basil\"}]}"
+        try require(result(nested) == nested, "A nested result is shown as it is")
+        let ran = result("{\"command\":\"make pdf\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"Wrote notes.pdf\\n\",\"timed_out\":false}")
+        try require(ran == "Command: make pdf\nExit code: 0\nStdout: Wrote notes.pdf\nTimed out: No", "A command result reads as plain lines: \(ran)")
+
+        let banned = ["vera", "task", "background", "worker", "agent", "tool", "engine", "arguments"]
+        for text in [send, command, edit, schedule, started, incomplete, unset, ran, only, both, slow] {
+            let words = Set(text.lowercased().components(separatedBy: CharacterSet.letters.inverted))
+            try require(words.isDisjoint(with: banned) && !text.contains("{") && !text.contains("\"") && !text.contains("\u{2014}"),
+                        "Opened steps use plain words: \(text)")
+        }
+
+        let stored = step(NativeTaskTools.toolID, "Start work", "{\"worker_type\":\"research\",\"deliverables\":[\"A short summary\"]}",
+                          result: "{\"error\":\"The tool arguments are invalid: Provide the kind of work, an objective and deliverables.\"}")
+        let before = stored
+        _ = request(stored)
+        _ = result(stored.result ?? "")
+        _ = NativeToolActivityChip.shownResult(stored.result ?? "", toolID: NativeCommandTools.toolID)
+        try require(stored == before && stored.request == "{\"worker_type\":\"research\",\"deliverables\":[\"A short summary\"]}"
+                        && stored.result == "{\"error\":\"The tool arguments are invalid: Provide the kind of work, an objective and deliverables.\"}",
+                    "Showing a step leaves its stored request and result unchanged")
+        print("  opened step OK (send, command, file edit, schedule, plain labels and lists, incomplete request, other failure, flat and nested results, command output, errors, stopped and silent commands, plain words, stored step unchanged)")
+    }
 }
