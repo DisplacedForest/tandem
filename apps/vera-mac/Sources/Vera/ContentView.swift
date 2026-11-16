@@ -903,6 +903,7 @@ struct NativeToolActivityChip: View {
 
     static let shownKeys = ["worker_type": "kind"]
     static let incomplete = "The request was incomplete, so nothing ran."
+    static let unavailable = "This isn't available in this chat."
     static let errorExtras: Set<String> = ["truncated", "truncation_reason"]
 
     static func fields(_ json: String) -> [String: NativeJSONValue]? {
@@ -942,6 +943,7 @@ struct NativeToolActivityChip: View {
             return parts.joined(separator: "\n\n")
         }
         if case .string(let error)? = values["error"], Set(values.keys).subtracting(["error"]).isSubset(of: errorExtras) {
+            if error == NativeToolError.unavailable.errorDescription { return unavailable }
             return error.hasPrefix(SavedWording.argumentsLead) ? incomplete : error
         }
         var lines: [String] = []

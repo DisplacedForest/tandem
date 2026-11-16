@@ -249,6 +249,8 @@ extension SelfTest {
         try require(incomplete == "The request was incomplete, so nothing ran.", "An incomplete request says nothing ran: \(incomplete)")
         let unset = result(try NativeToolResultBudget.serializedError(NativeTaskError.invalidEngine.localizedDescription, maximumBytes: 20000))
         try require(unset == "This can't start until Tandem is set up for it.", "Another failure shows its sentence only: \(unset)")
+        let missing = result(try NativeToolResultBudget.serializedError(NativeToolError.unavailable.localizedDescription, maximumBytes: 20000))
+        try require(missing == "This isn't available in this chat.", "A step that isn't available says so plainly: \(missing)")
         try require(result("{\"sent\":true}") == "Sent: Yes", "A flat result reads as plain lines")
         let nested = "{\"items\":[{\"name\":\"basil\"}]}"
         try require(result(nested) == nested, "A nested result is shown as it is")
@@ -256,7 +258,7 @@ extension SelfTest {
         try require(ran == "Command: make pdf\nExit code: 0\nStdout: Wrote notes.pdf\nTimed out: No", "A command result reads as plain lines: \(ran)")
 
         let banned = ["vera", "task", "background", "worker", "agent", "tool", "engine", "arguments"]
-        for text in [send, command, edit, schedule, started, incomplete, unset, ran, only, both, slow] {
+        for text in [send, command, edit, schedule, started, incomplete, unset, missing, ran, only, both, slow] {
             let words = Set(text.lowercased().components(separatedBy: CharacterSet.letters.inverted))
             try require(words.isDisjoint(with: banned) && !text.contains("{") && !text.contains("\"") && !text.contains("\u{2014}"),
                         "Opened steps use plain words: \(text)")
