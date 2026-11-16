@@ -360,23 +360,31 @@ extension NativeTaskDisplayFixture {
             try db.execute(sql: "UPDATE messages SET display_blocks_json = ? WHERE id = ?",
                            arguments: [try nativeTaskEncoded(seeded), origin.assistantMessageID.uuidString])
         }
+        func kept(_ blocks: [NativeDisplayBlock]) -> Bool {
+            let documents = blocks.compactMap { block -> NativeResearchArtifact? in if case .artifact(let value) = block { value } else { nil } }
+            return documents == [earlier] && documents.first?.isDocument == true && documents.first?.report == answer
+                && documents.first?.title == card(blocks)?.title && documents.first?.id == card(blocks)?.id && card(blocks)?.answer == answer
+                && blocks.firstIndex { $0.id == "artifact:" + reference.id.uuidString } == blocks.firstIndex { $0.id == "task:" + reference.id.uuidString }.map { $0 + 1 }
+        }
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
                               attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
         await store.connect()
         store.select(origin.conversationID)
         let memory = store.conversations.first { $0.id == origin.conversationID }?.messages.first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []
-        try require(memory.filter { if case .artifact = $0 { true } else { false } }.count == 1, "A document saved earlier still shows once")
+        try require(kept(memory) && kept(try blocks()), "A document saved earlier loads whole, once, under its card")
         store.applyNativeTaskUpdates([NativeTaskMessageUpdate(conversationID: origin.conversationID,
                                                               messageID: origin.assistantMessageID, blocks: before)])
         let afterStale = store.conversations.first { $0.id == origin.conversationID }?.messages
             .first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []
-        let staleDocuments = afterStale.compactMap { block -> NativeResearchArtifact? in if case .artifact(let value) = block { value } else { nil } }
-        try require(staleDocuments.count == 1 && staleDocuments.first?.id == card(afterStale)?.id
-                    && afterStale.firstIndex { $0.id == "artifact:" + reference.id.uuidString } == afterStale.firstIndex { $0.id == "task:" + reference.id.uuidString }.map { $0 + 1 },
-                    "A stale update keeps a document saved earlier under its card")
+        try require(kept(afterStale), "A stale update keeps a document saved earlier whole and under its card")
         _ = try repository.projectTask(id: reference.id, snapshot: finished)
-        try require(try blocks().filter { if case .artifact = $0 { true } else { false } }.count == 1,
-                    "A later refresh keeps a document saved earlier")
+        try require(kept(try blocks()), "A later refresh keeps a document saved earlier whole and under its card")
+        let reopened = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository,
+                                 attachmentStore: NativeAttachmentStore(directory: directory), artifactPersistenceEnabled: false)
+        await reopened.connect()
+        reopened.select(origin.conversationID)
+        try require(kept(reopened.conversations.first { $0.id == origin.conversationID }?.messages.first { $0.id == origin.assistantMessageID }?.displayBlocks ?? []),
+                    "Opening the conversation again still shows the document saved earlier")
     }
 
     static func decisionChoices() async throws {
