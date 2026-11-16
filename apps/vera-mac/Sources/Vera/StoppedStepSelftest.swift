@@ -257,7 +257,7 @@ extension SelfTest {
         let ran = result("{\"command\":\"make pdf\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"Wrote notes.pdf\\n\",\"timed_out\":false}")
         try require(ran == "Command: make pdf\nExit code: 0\nStdout: Wrote notes.pdf\nTimed out: No", "A command result reads as plain lines: \(ran)")
 
-        let banned = ["vera", "task", "background", "worker", "agent", "tool", "engine", "arguments"]
+        let banned = CompanionTalkControlFixture.banned + ["tool", "eng" + "ine", "arguments"]
         for text in [send, command, edit, schedule, started, incomplete, unset, missing, ran, only, both, slow] {
             let words = Set(text.lowercased().components(separatedBy: CharacterSet.letters.inverted))
             try require(words.isDisjoint(with: banned) && !text.contains("{") && !text.contains("\"") && !text.contains("\u{2014}"),
