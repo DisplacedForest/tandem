@@ -411,7 +411,7 @@ enum CardShot {
         if let queued = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "queued"),
            let waiting = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "needs_decision", decision: [
                "id": "card-schedule", "prompt": prompt, "choices": ["decline", "never", "allow_always", "allow_here", "approve"],
-               "details": "Message: Lumber is up 2.4 percent since yesterday.\nTo: workshop@example.com",
+               "details": "To: workshop@example.com\nMessage: Lumber is up 2.4 percent since yesterday.",
                "covers": "This action every time", "never": "Never allow it for this",
            ]) {
             _ = try? repository.acknowledgeTaskReference(id: reference.id, snapshot: queued)

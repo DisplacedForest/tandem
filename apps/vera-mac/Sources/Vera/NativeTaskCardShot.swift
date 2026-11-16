@@ -121,7 +121,7 @@ struct NativeTaskCardShotSurface: View {
             result.status = .needsInput
             result.milestone = "Waiting for your decision. Send the booking request to the inspector?"
             result.choices = ["decline", "never", "allow_always", "allow_here", "approve"]
-            result.details = "Send a booking request\nmessage: Please book the workshop inspection for Tuesday morning and confirm by email.\nto: inspections@example.com"
+            result.details = "To: inspections@example.com\nMessage: Please book the workshop inspection for Tuesday morning and confirm by email."
         case "task-card-answer":
             result.title = "What's the weather in Chicago tomorrow?"
             result.workerType = "companion"
