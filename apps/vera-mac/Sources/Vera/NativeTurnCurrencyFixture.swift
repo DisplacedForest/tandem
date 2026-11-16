@@ -21,11 +21,28 @@ struct NativeTurnCurrencyHold: Sendable {
 
 @MainActor
 final class NativeTurnCurrencyProbe {
+    static let stallLimit: Duration = .milliseconds(200)
+    static let waitFloor: Duration = .milliseconds(200)
+    static let retryLimit: Duration = .seconds(1)
+    static let tickLimit: Duration = .milliseconds(1_500)
     private(set) var started = false
     private(set) var finished = false
+    private var startedAt: ContinuousClock.Instant?
+
+    var responsive: Bool {
+        guard let startedAt else { return false }
+        return !finished && startedAt.duration(to: .now) < Self.stallLimit
+    }
+
+    static func prompt(_ body: () -> Void) -> Bool {
+        let start = ContinuousClock.now
+        body()
+        return start.duration(to: .now) < stallLimit
+    }
 
     func run<Value: Sendable>(_ work: @escaping @MainActor () async -> Value) -> Task<Value, Never> {
         Task { @MainActor in
+            self.startedAt = .now
             self.started = true
             let value = await work()
             self.finished = true
@@ -151,12 +168,12 @@ enum NativeTurnCurrencyFixture {
         var message = store.conversations[location.conversation].messages[location.reply]
         message.text = "Checkpoint under contention"
         let holder = try await hold(url)
-        store.scheduleTurnCheckpoint(turn, message: message, ordinal: location.reply)
-        try require(store.turnExecutions[turn.id]?.checkpoint != nil && store.turnExecutions[turn.id]?.checkpointFailingSince == nil,
+        let scheduled = NativeTurnCurrencyProbe.prompt { store.scheduleTurnCheckpoint(turn, message: message, ordinal: location.reply) }
+        try require(scheduled && store.turnExecutions[turn.id]?.checkpoint != nil && store.turnExecutions[turn.id]?.checkpointFailingSince == nil,
                     "Scheduling a checkpoint must not block the main actor while the database is locked")
         await Task.yield()
-        store.setTurnStatus("Working on this answer", turn: turn)
-        try require(store.turnStatuses[turn.assistantMessageID] == "Working on this answer"
+        let noted = NativeTurnCurrencyProbe.prompt { store.setTurnStatus("Working on this answer", turn: turn) }
+        try require(noted && store.turnStatuses[turn.assistantMessageID] == "Working on this answer"
                     && store.turnExecutions[turn.id]?.checkpoint != nil && store.turnExecutions[turn.id]?.checkpointFailingSince == nil,
                     "Status updates must not wait behind a checkpoint write")
         try await NativeSessionFixture.eventually("A checkpoint that met the lock is remembered for retry") {
@@ -166,13 +183,16 @@ enum NativeTurnCurrencyFixture {
                     && store.turnExecutions[turn.id]?.task == nil && store.turnOwned(turn),
                     "A failed checkpoint never interrupts the answer")
         try await holder.release()
+        let released = ContinuousClock.now
         message.text = "Checkpoint after release"
         store.scheduleTurnCheckpoint(turn, message: message, ordinal: location.reply)
         guard let retry = store.turnExecutions[turn.id]?.checkpoint else {
             throw NativeTaskFixture.Failure.assertion("The retried checkpoint is scheduled at once")
         }
         await retry.value
-        try require(try repository.messages(conversationID: turn.conversationID)[location.reply].text == "Checkpoint after release",
+        let landed = released.duration(to: .now)
+        try require(try repository.messages(conversationID: turn.conversationID)[location.reply].text == "Checkpoint after release"
+                    && landed < NativeTurnCurrencyProbe.retryLimit,
                     "The retried checkpoint lands promptly after release")
         try require(store.turnExecutions[turn.id]?.checkpointFailingSince == nil, "The failure window clears")
         store.turnExecutions = [:]
@@ -190,19 +210,20 @@ enum NativeTurnCurrencyFixture {
         store.turnExecutions[turn.id]?.finalization = (.complete, message, location.reply)
         store.suspendsTurnScheduling = false
         let holder = try await hold(url)
-        store.scheduleConversationTurns()
-        try require(store.isSchedulingTurns && store.turnExecutions[turn.id]?.finalization != nil,
+        let scheduled = NativeTurnCurrencyProbe.prompt { store.scheduleConversationTurns() }
+        try require(scheduled && store.isSchedulingTurns && store.turnExecutions[turn.id]?.finalization != nil,
                     "Finalization must not block the main actor while the database is locked")
         await Task.yield()
-        store.setTurnStatus("Working on this answer", turn: turn)
-        try require(store.turnStatuses[turn.assistantMessageID] == "Working on this answer" && store.isSchedulingTurns,
+        let noted = NativeTurnCurrencyProbe.prompt { store.setTurnStatus("Working on this answer", turn: turn) }
+        try require(noted && store.turnStatuses[turn.assistantMessageID] == "Working on this answer" && store.isSchedulingTurns,
                     "Status updates must not wait behind finalization")
         try await NativeSessionFixture.eventually("The locked tick settles") { !store.isSchedulingTurns }
         try require(store.turnExecutions[turn.id]?.finalization != nil, "A finalization that met the lock stays pending")
         try await holder.release()
+        let released = ContinuousClock.now
         store.scheduleConversationTurns()
         try await NativeSessionFixture.eventually("The tick after release settles") { !store.isSchedulingTurns }
-        try require(store.turnExecutions[turn.id] == nil
+        try require(released.duration(to: .now) < NativeTurnCurrencyProbe.tickLimit && store.turnExecutions[turn.id] == nil
                     && (try repository.conversationTurns()).first(where: { $0.id == turn.id })?.state == .complete,
                     "Finalization completes on the first tick after release")
         try require(try repository.messages(conversationID: turn.conversationID)[location.reply].text == "Finished under contention",
@@ -246,19 +267,23 @@ enum NativeTurnCurrencyFixture {
             title: "List reminders", round: 1, request: "{}", result: nil, state: .pending, confirmationRequired: false)
         let holder = try await hold(url)
         let probe = NativeTurnCurrencyProbe()
+        let began = ContinuousClock.now
         let marking = probe.run { await store.markTurnDispatchOffMain(activity, turn: turn) }
         try await probe.untilStarted()
-        try require(!probe.finished, "Marking a dispatch must not block the main actor while the database is locked")
-        store.setTurnStatus("Working on this answer", turn: turn)
-        try require(store.turnStatuses[turn.assistantMessageID] == "Working on this answer" && !probe.finished,
+        try require(probe.responsive, "Marking a dispatch must not block the main actor while the database is locked")
+        let noted = NativeTurnCurrencyProbe.prompt { store.setTurnStatus("Working on this answer", turn: turn) }
+        try require(noted && store.turnStatuses[turn.assistantMessageID] == "Working on this answer" && !probe.finished,
                     "Status updates must not wait behind the dispatch marker")
         let marked = await marking.value
         try require(!marked, "A dispatch marker that cannot land declines the tool call instead of running it unmarked")
+        try require(began.duration(to: .now) >= NativeTurnCurrencyProbe.waitFloor,
+                    "A dispatch marker that meets the lock waits for it before giving up")
         try await holder.release()
+        let released = ContinuousClock.now
         try require(try repository.messages(conversationID: turn.conversationID)[location.reply].toolActivities.isEmpty,
                     "A declined dispatch leaves no marker behind")
         let again = await store.markTurnDispatchOffMain(activity, turn: turn)
-        try require(again, "The marker lands promptly once storage frees")
+        try require(again && released.duration(to: .now) < NativeTurnCurrencyProbe.retryLimit, "The marker lands promptly once storage frees")
         try require(try repository.messages(conversationID: turn.conversationID)[location.reply].toolActivities.contains { $0.id == activity.id },
                     "The dispatch marker is saved before the tool runs")
         store.turnExecutions[turn.id] = nil
@@ -587,10 +612,10 @@ enum NativeTurnCurrencyFixture {
             let probe = NativeTurnCurrencyProbe()
             let check = probe.run { await store.turnCurrency(turn) }
             try await probe.untilStarted()
-            try require(!probe.finished, "The currency check must not block the main actor while the database queue is busy")
+            try require(probe.responsive, "The currency check must not block the main actor while the database queue is busy")
             let status = fenceDuringRead ? "Still working on this answer" : "Working on this answer"
-            store.setTurnStatus(status, turn: turn)
-            try require(store.turnStatuses[turn.assistantMessageID] == status && !probe.finished,
+            let noted = NativeTurnCurrencyProbe.prompt { store.setTurnStatus(status, turn: turn) }
+            try require(noted && store.turnStatuses[turn.assistantMessageID] == status && !probe.finished,
                         "Status updates must not wait on the database queue")
             if fenceDuringRead { store.turnExecutions[turn.id] = nil }
             gate.signal()
@@ -617,7 +642,7 @@ enum NativeTurnCurrencyFixture {
         let probe = NativeTurnCurrencyProbe()
         let check = probe.run { await store.turnCurrency(turn) }
         try await probe.untilStarted()
-        try require(!probe.finished, "The currency check must not block the main actor while another connection holds the lock")
+        try require(probe.responsive, "The currency check must not block the main actor while another connection holds the lock")
         let currency = await check.value
         try require(currency == .unconfirmed, "A locked database is unconfirmed, not a stopped or replaced answer")
         try await holder.release()

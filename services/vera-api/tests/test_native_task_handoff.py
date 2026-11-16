@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[3]
 BINARY = ROOT / 'apps/vera-mac/.build/debug/Vera'
 HANG_CEILING = 300
 SERVER_HOLD = 120
+LATE_SLACK = 2
+HEADER_DELAY = 4
 pytestmark = pytest.mark.skipif(os.environ.get('VERA_NATIVE_TASK_TEST') != '1', reason='Run the build-dependent native-task-test task')
 
 
@@ -193,7 +195,7 @@ async def test_native_provider_transport_deadlines_and_sanitized_diagnostics(sce
             if scenario == 'cancel':
                 await asyncio.sleep(SERVER_HOLD)
             if scenario == 'headers':
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(HEADER_DELAY)
             status = {'auth': 401, 'quota': 429, 'error': 503}.get(scenario, 200)
             body = json.dumps({'choices': [{'message': {'content': 'Synthetic complete answer'}, 'finish_reason': 'stop'}]}).encode()
             if status != 200:
@@ -224,7 +226,7 @@ async def test_native_provider_transport_deadlines_and_sanitized_diagnostics(sce
     patient = 30
     value = {'base': f'{scheme}://127.0.0.1:{port}/v1', 'scenario': scenario,
              'overall': 0.08 if scenario == 'short-overall' else (0.45 if scenario == 'overall' else patient),
-             'setup': 0.15 if scenario == 'setup' else patient,
+             'setup': 0.15 if scenario == 'setup' else (HEADER_DELAY / 2 if scenario == 'headers' else patient),
              'idle': 0.18 if scenario == 'body' else patient}
     try:
         process = await asyncio.create_subprocess_exec(str(BINARY), '--selftest',
@@ -238,12 +240,13 @@ async def test_native_provider_transport_deadlines_and_sanitized_diagnostics(sce
         assert set(timing) <= {'phase', 'outcome', 'status', 'setupSeconds', 'headersSeconds', 'finishSeconds', 'dnsSeconds', 'connectSeconds', 'tlsSeconds'}
         assert timing['phase'] == 'synthesize'
         assert 'synthetic-secret-sentinel' not in stdout.decode()
-        assert timing['finishSeconds'] < SERVER_HOLD
+        tested = {'setup': value['setup'], 'body': value['idle'], 'overall': value['overall'], 'short-overall': value['overall'], 'cancel': 0.1}
+        assert timing['finishSeconds'] < tested.get(scenario, SERVER_HOLD - LATE_SLACK) + LATE_SLACK
         assert result['failure'] == (None if expected == 'completed' else 'canceled' if expected == 'canceled' else 'request_timeout' if expected.endswith('timeout') else expected)
         if scenario == 'headers':
             assert uploaded.is_set() and timing['setupSeconds'] < value['setup']
-            assert timing['headersSeconds'] >= 0.35
-            assert timing['finishSeconds'] > 0.2
+            assert timing['headersSeconds'] > value['setup']
+            assert timing['finishSeconds'] > value['setup']
             assert timing['status'] == 200
         print(json.dumps({'scenario': scenario, **timing}, sort_keys=True))
     finally:
