@@ -142,12 +142,13 @@ enum NativeTaskWorkerFailures {
     static let stepCutShortMessage = "This step's answer was too long to finish in one go. Try this step again?"
     static let stepEmptyMessage = "The answer for this step came back empty. Try this step again?"
     static let stepUnusableMessage = "The answer for this step wasn't something Tandem could use. Try this step again?"
+    static let outlineCutShortMessage = "The plan for this document was cut off before it finished, even after asking for a shorter one. Try this step again?"
     static let modelChangedMessage = "The model this document was using has changed in Settings. Start the document again to use the new one."
     static let shorterSectionNote = "Asking for a shorter section."
     static let credentialUnreadableMessage = "Tandem couldn't read the saved key for this model. Check it in Settings, then try this step again?"
 
     static let replySentences = [sectionCutShortMessage, sectionEmptyMessage, sectionUnusableMessage,
-                                 stepCutShortMessage, stepEmptyMessage, stepUnusableMessage, modelChangedMessage, shorterSectionNote,
+                                 stepCutShortMessage, stepEmptyMessage, stepUnusableMessage, outlineCutShortMessage, modelChangedMessage, shorterSectionNote,
                                  credentialUnreadableMessage]
 
     static func retriesAutomatically(_ code: String) -> Bool {
