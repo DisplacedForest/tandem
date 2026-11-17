@@ -142,7 +142,7 @@ struct NativePreferenceCaptureRecord: Equatable, Sendable {
 }
 
 struct NativePreferenceStoreError: Error, LocalizedError, Equatable {
-    enum Reason: Equatable, Sendable { case empty, tooLong, full, missing, stopped, failed }
+    enum Reason: Equatable, Sendable { case empty, tooLong, full, missing, changed, stopped, failed }
     let reason: Reason
 
     var errorDescription: String? {
@@ -151,6 +151,7 @@ struct NativePreferenceStoreError: Error, LocalizedError, Equatable {
         case .tooLong: return "Keep a preference under \(NativePreferenceStore.maximumStatementCharacters) characters."
         case .full: return "You have \(NativePreferenceStore.maximumActive) preferences. Remove one to add another."
         case .missing: return "That preference is no longer saved."
+        case .changed: return "That preference changed before it could be removed."
         case .stopped: return "The answer stopped before the preference saved."
         case .failed: return "The preference did not save."
         }
@@ -388,13 +389,14 @@ struct NativePreferenceStore: Sendable {
     }
 
     private static func insertCapture(_ db: Database, _ key: NativePreferenceCaptureKey, outcome: NativePreferenceCaptureOutcomeKind,
-                                      preferenceID: String?, createdNew: Bool = false, prior: String? = nil, now: Date) throws {
+                                      preferenceID: String?, createdNew: Bool = false, prior: String? = nil, written: Bool = true,
+                                      now: Date) throws {
         try db.execute(sql: """
             INSERT INTO native_preference_captures(turn_id, conversation_id, user_message_id, outcome, preference_id, created_new, prior_json,
                                                    written_at, created_at)
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [key.turnID, key.conversationID, key.userMessageID, outcome.rawValue, preferenceID, createdNew, prior,
-                             preferenceID == nil ? nil : now.timeIntervalSince1970, now.timeIntervalSince1970])
+                             preferenceID == nil || !written ? nil : now.timeIntervalSince1970, now.timeIntervalSince1970])
     }
 
     @discardableResult
@@ -455,10 +457,17 @@ struct NativePreferenceStore: Sendable {
         }
     }
 
-    func removeCaptured(preferenceID: String, key: NativePreferenceCaptureKey, now: Date = Date(),
+    func removeCaptured(preferenceID: String, statement: String, key: NativePreferenceCaptureKey, now: Date = Date(),
                         stillCurrent: (Database) throws -> Bool = { _ in true }) throws {
         try database.write { db in
             guard try stillCurrent(db) else { throw NativePreferenceStoreError(reason: .stopped) }
+            guard let row = try Row.fetchOne(db, sql: "SELECT statement, status FROM native_preferences WHERE id = ?", arguments: [preferenceID])
+            else { throw NativePreferenceStoreError(reason: .missing) }
+            guard Self.normalized(row["statement"] ?? "") == Self.normalized(statement) else { throw NativePreferenceStoreError(reason: .changed) }
+            if (row["status"] as String?) == NativePreferenceStatus.removed.rawValue {
+                try Self.insertCapture(db, key, outcome: .removed, preferenceID: preferenceID, written: false, now: now)
+                return
+            }
             try db.execute(sql: "UPDATE native_preferences SET status = 'removed', updated_at = ? WHERE id = ? AND status = 'active'",
                            arguments: [now.timeIntervalSince1970, preferenceID])
             guard db.changesCount == 1 else { throw NativePreferenceStoreError(reason: .missing) }
@@ -874,7 +883,7 @@ enum NativePreferenceCapture {
             try? store.recordNoCapture(key)
             return .removalUnclear
         case .remove(let number):
-            return remove(saved[number - 1].id, key: key, store: store, stillCurrent: stillCurrent)
+            return remove(saved[number - 1], key: key, store: store, stillCurrent: stillCurrent)
         case .tooLong:
             return .tooLong
         case .invalid:
@@ -897,23 +906,21 @@ enum NativePreferenceCapture {
         return .saved(stored.statement)
     }
 
-    private static func remove(_ preferenceID: String, key: NativePreferenceCaptureKey, store: NativePreferenceStore,
+    private static func remove(_ target: NativePreferenceClassifier.Saved, key: NativePreferenceCaptureKey, store: NativePreferenceStore,
                                stillCurrent: @escaping @Sendable (Database) throws -> Bool) -> NativePreferenceCaptureOutcome {
         do {
-            try store.removeCaptured(preferenceID: preferenceID, key: key, stillCurrent: stillCurrent)
+            try store.removeCaptured(preferenceID: target.id, statement: target.statement, key: key, stillCurrent: stillCurrent)
         } catch let error as NativePreferenceStoreError where error.reason == .stopped {
             return .none
+        } catch let error as NativePreferenceStoreError where error.reason == .changed {
+            return .removalUnclear
         } catch {
             if let existing = try? store.capture(turnID: key.turnID, userMessageID: key.userMessageID) {
                 return replayed(existing, store: store)
             }
-            if let error = error as? NativePreferenceStoreError, error.reason == .missing,
-               let after = try? store.preference(id: preferenceID), after.status == .removed {
-                return .removed(after.statement)
-            }
             return .removalFailed
         }
-        guard let after = try? store.preference(id: preferenceID), after.status == .removed else { return .removalFailed }
+        guard let after = try? store.preference(id: target.id), after.status == .removed else { return .removalFailed }
         return .removed(after.statement)
     }
 

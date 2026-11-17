@@ -618,12 +618,33 @@ enum NativePreferencesSelftest {
                     && counter.calls == 1, "A replayed removal reports the same removal without classifying again")
         let gone = try store.add(statement: "Answer in metric")
         let raced = NativePreferenceClassifierCounter(#"{"remove": 2}"#)
-        let racedOutcome = await NativePreferenceCapture.run(request("stop the metric thing"), store: store, classify: { body in
+        let racedRequest = request("stop the metric thing", turn: "race", conversation: "race-c")
+        let racedOutcome = await NativePreferenceCapture.run(racedRequest, store: store, classify: { body in
             try? store.remove(id: gone.id)
             return await raced.classify(body)
         })
         try require(racedOutcome == .removed("Answer in metric") && store.active().map(\.statement) == ["Call me Sam"],
                     "A preference removed elsewhere while classifying reads back as removed")
+        let markers = try store.captureMarkers(conversationID: "race-c")
+        try require(markers.values.contains(.preferenceRemoved) && markers.count == 1, "That removal still shows its marker")
+        try require(try !store.revertCapture(turnID: "race") && store.active().map(\.statement) == ["Call me Sam"],
+                    "Stopping that turn never restores what was removed elsewhere")
+        try store.add(statement: "Answer in metric")
+        let replayed = await NativePreferenceCapture.run(racedRequest, store: store, classify: raced.classify)
+        try require(replayed == .removed("Answer in metric") && raced.calls == 1
+                    && store.active().map(\.statement) == ["Call me Sam", "Answer in metric"],
+                    "Replaying that message after the preference is added again removes nothing and doesn't classify again")
+
+        let edited = NativePreferenceStore(database: try tracked().database)
+        let units = try edited.add(statement: "Use metric units")
+        let picked = NativePreferenceClassifierCounter(removeFirst)
+        let editedOutcome = await NativePreferenceCapture.run(request("drop the units one", conversation: "edit-c"), store: edited, classify: { body in
+            _ = try? edited.updateStatement(id: units.id, statement: "Cite sources")
+            return await picked.classify(body)
+        })
+        let editedRows = try await edited.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_preference_captures") ?? 0 }
+        try require(editedOutcome == .removalUnclear && edited.active().map(\.statement) == ["Cite sources"] && editedRows == 0,
+                    "A preference edited while classifying is kept, and the reply asks which one was meant")
     }
 
     private static func permission(_ require: (Bool, String) throws -> Void) async throws {
