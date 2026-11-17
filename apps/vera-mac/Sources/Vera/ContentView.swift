@@ -211,6 +211,8 @@ struct ChatPane: View {
     @StateObject private var transcriptContinuity = CompanionTranscriptContinuity()
     @State private var followBox = TranscriptFollowBox()
     @State private var showsJump = false
+    @State private var unseenReplies = 0
+    @State private var firstUnseenReply: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func cancelTaskReveal() {
@@ -225,7 +227,25 @@ struct ChatPane: View {
         followBox.state.scope(conversationID, sends: store.composerSend.count)
         change(&followBox.state)
         if showsJump != followBox.state.showsJump { showsJump = followBox.state.showsJump }
+        let count = followBox.state.unseenCount(replyIDs)
+        if unseenReplies != count {
+            if unseenReplies == 0, count > 0 {
+                AccessibilityNotification.Announcement(NewReplyMarker.title(count)).post()
+            }
+            unseenReplies = count
+        }
+        let first = count > 0 ? followBox.state.firstUnseen : nil
+        if firstUnseenReply != first { firstUnseenReply = first }
         return followBox.state
+    }
+
+    private var replyIDs: [UUID] {
+        (conversation?.messages ?? []).filter(NewReplyMarker.counts).map(\.id)
+    }
+
+    private func noteReplies(_ conversationID: String) {
+        let ids = replyIDs
+        follow(conversationID) { $0.replies(ids) }
     }
 
     private func followSend(_ conversationID: String) {
@@ -407,10 +427,12 @@ struct ChatPane: View {
                         }
                     }
                     .onChange(of: convo.messages.last?.text ?? "") {
+                        noteReplies(convo.id)
                         if follow(convo.id).following { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
                     .onChange(of: convo.messages.count) {
                         followSend(convo.id)
+                        noteReplies(convo.id)
                         guard follow(convo.id).following else { return }
                         if store.isVeraThread(convo.id) || reduceMotion {
                             proxy.scrollTo("bottom", anchor: .bottom)
@@ -431,7 +453,16 @@ struct ChatPane: View {
                         revealPendingTask(proxy)
                     }
                     .overlay(alignment: .bottom) {
-                        if showsJump {
+                        if unseenReplies > 0, let target = firstUnseenReply {
+                            NewReplyMarker(count: unseenReplies) {
+                                follow(convo.id) { $0.jumpToLatest() }
+                                if store.isVeraThread(convo.id) { transcriptContinuity.follows(true, conversationID: convo.id) }
+                                if reduceMotion { proxy.scrollTo(target, anchor: .top) }
+                                else { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(target, anchor: .top) } }
+                            }
+                            .padding(.bottom, 8)
+                            .transition(reduceMotion ? .identity : .opacity)
+                        } else if showsJump {
                             JumpToLatestButton {
                                 follow(convo.id) { $0.jumpToLatest() }
                                 if store.isVeraThread(convo.id) { transcriptContinuity.follows(true, conversationID: convo.id) }
@@ -443,6 +474,7 @@ struct ChatPane: View {
                         }
                     }
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsJump)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: unseenReplies)
                     .task(id: convo.id) {
                         store.refreshPreferenceMarkers(conversationID: convo.id)
                         let companion = store.isVeraThread(convo.id)
@@ -450,6 +482,7 @@ struct ChatPane: View {
                         follow(convo.id) {
                             if anchor != nil || store.pendingHighlightMessageID != nil || store.pendingTaskReveal != nil { $0.hold() }
                         }
+                        noteReplies(convo.id)
                         await Task.yield()
                         guard !Task.isCancelled else { return }
                         if let anchor { proxy.scrollTo(anchor, anchor: .top) }

@@ -21,10 +21,33 @@ struct TranscriptFollow: Equatable {
     private(set) var atLatest = true
     private(set) var holding = false
     private(set) var readerScrolling = false
+    private(set) var firstUnseen: UUID?
     private var last: TranscriptGeometry?
     private var seenSends = 0
+    private var known: [UUID]?
 
     var showsJump: Bool { !following && !atLatest }
+
+    func unseenCount(_ replies: [UUID]) -> Int {
+        guard !following, let firstUnseen, let start = replies.firstIndex(of: firstUnseen) else { return 0 }
+        return replies.count - start
+    }
+
+    mutating func replies(_ ids: [UUID]) {
+        defer { known = ids }
+        guard let known else { return }
+        let seen = Set(known)
+        let lastKnown = known.last.flatMap { ids.firstIndex(of: $0) } ?? -1
+        guard !following, firstUnseen == nil,
+              let arrived = ids.enumerated().first(where: { $0.offset > lastKnown && !seen.contains($0.element) })?.element else { return }
+        firstUnseen = arrived
+    }
+
+    private mutating func resume() {
+        following = true
+        holding = false
+        firstUnseen = nil
+    }
 
     mutating func scope(_ id: String, sends: Int) {
         guard conversationID != id else { return }
@@ -53,14 +76,13 @@ struct TranscriptFollow: Equatable {
         if up, distance > Self.restMargin {
             following = false
         } else if down, atLatest {
-            following = true
+            resume()
         }
         return false
     }
 
     mutating func jumpToLatest() {
-        following = true
-        holding = false
+        resume()
     }
 
     mutating func hold() {
@@ -72,8 +94,7 @@ struct TranscriptFollow: Equatable {
     mutating func sent(_ sends: Int) -> Bool {
         guard sends != seenSends else { return false }
         seenSends = sends
-        following = true
-        holding = false
+        resume()
         return true
     }
 }
@@ -102,6 +123,41 @@ struct JumpToLatestButton: View {
         .onHover { hovering = $0 }
         .help("Jump to latest")
         .accessibilityLabel("Jump to latest")
+    }
+}
+
+struct NewReplyMarker: View {
+    let count: Int
+    let action: () -> Void
+    @State private var hovering = false
+
+    static func counts(_ message: Message) -> Bool {
+        guard message.role == .assistant, TranscriptVisibility.shows(message) else { return false }
+        return message.state != .streaming || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func title(_ count: Int) -> String { count == 1 ? "New reply" : "\(count) new replies" }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                InterfaceIconView(icon: .latest, size: InterfaceIconSize.regular)
+                Text(Self.title(count)).font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(Theme.textPrimary.opacity(hovering ? 1 : 0.9))
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(.ultraThinMaterial, in: Capsule())
+            .background(Theme.surface.opacity(0.85), in: Capsule())
+            .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+            .contentShape(Capsule().inset(by: -6))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .onHover { hovering = $0 }
+        .help(Self.title(count))
+        .accessibilityLabel(Self.title(count))
     }
 }
 
@@ -164,6 +220,7 @@ extension SelfTest {
         follow.scope("b", sends: 1)
         try require(follow.following && follow.atLatest && !follow.holding && !follow.readerScrolling, "Another conversation starts fresh at its latest message")
         try require(!follow.sent(1), "A send in the conversation left behind does not carry over")
+        try newReplyMarker(require)
         let defaults = AppLocations.scratchPreferences()
         let messages = [UUID(), UUID(), UUID()]
         let saved = CompanionTranscriptContinuity(defaults: defaults)
@@ -182,6 +239,66 @@ extension SelfTest {
         saved.follows(false, conversationID: "other")
         try require(CompanionTranscriptContinuity(defaults: defaults).begin(conversationID: "c", messages: messages) == nil,
                     "A stale callback for another conversation saves nothing")
-        print("  transcript follow OK (follows at the bottom, growth is not scrolling, small and large scrolls away, scroll bar style moves, bounce, resize, updates while away, scroll back, arrow only with content below, reveal hold, explicit send, conversation change, catch up on any growth, saved companion position)")
+        print("  transcript follow OK (follows at the bottom, new reply marker, growth is not scrolling, small and large scrolls away, scroll bar style moves, bounce, resize, updates while away, scroll back, arrow only with content below, reveal hold, explicit send, conversation change, catch up on any growth, saved companion position)")
+    }
+
+    private static func newReplyMarker(_ require: (Bool, String) throws -> Void) throws {
+        func at(_ offset: CGFloat, content: CGFloat = 2000) -> TranscriptGeometry {
+            TranscriptGeometry(offset: offset, contentHeight: content, containerHeight: 600)
+        }
+        let earlier = [UUID(), UUID()]
+        let first = UUID()
+        let second = UUID()
+        var follow = TranscriptFollow()
+        follow.scope("m", sends: 0)
+        follow.geometry(at(1400))
+        follow.replies(earlier)
+        try require(follow.firstUnseen == nil && follow.unseenCount(earlier) == 0, "Replies already there when the chat opens are seen")
+        follow.replies(earlier + [first])
+        try require(follow.firstUnseen == nil && follow.unseenCount(earlier + [first]) == 0, "At the bottom and following, a new reply shows no marker")
+        follow.scrollPhase(reader: true)
+        follow.geometry(at(1000))
+        follow.scrollPhase(reader: false)
+        try require(!follow.following, "Scrolling up stops following")
+        let one = earlier + [first, second]
+        follow.replies(one)
+        try require(follow.firstUnseen == second && follow.unseenCount(one) == 1, "A reply while scrolled up is the first unseen one")
+        let two = one + [UUID()]
+        follow.replies(two)
+        try require(follow.firstUnseen == second && follow.unseenCount(two) == 2, "Two replies count two and still point at the first of them")
+        follow.replies([UUID()] + two)
+        try require(follow.unseenCount([UUID()] + two) == 2, "Older rows filled in above never count")
+        follow.jumpToLatest()
+        try require(follow.firstUnseen == nil && follow.unseenCount(two) == 0, "The marker turns following back on and clears")
+        follow.scrollPhase(reader: true)
+        follow.geometry(at(1200, content: 2400))
+        follow.geometry(at(900, content: 2400))
+        follow.scrollPhase(reader: false)
+        let three = two + [UUID()]
+        follow.replies(three)
+        try require(follow.unseenCount(three) == 1, "Scrolled up again, the next reply shows")
+        follow.scrollPhase(reader: true)
+        follow.geometry(at(1800, content: 2400))
+        follow.scrollPhase(reader: false)
+        try require(follow.following && follow.unseenCount(three) == 0, "Scrolling back to the bottom by hand clears it")
+        follow.hold()
+        let four = three + [UUID()]
+        follow.replies(four)
+        try require(follow.unseenCount(four) == 1, "After a work card holds the view, a later reply shows the marker and is never silent")
+        try require(follow.sent(1) && follow.unseenCount(four) == 0, "Sending a message clears it")
+        follow.hold()
+        follow.replies(four + [UUID()])
+        follow.scope("other", sends: 1)
+        try require(follow.firstUnseen == nil, "Another conversation starts with no marker")
+        follow.replies([UUID()])
+        follow.hold()
+        try require(follow.unseenCount([UUID()]) == 0, "A held view with no new reply shows no marker")
+        let placeholder = Message(role: .assistant, text: "", state: .streaming)
+        var answered = placeholder
+        answered.text = "15"
+        try require(!NewReplyMarker.counts(placeholder) && NewReplyMarker.counts(answered)
+                    && !NewReplyMarker.counts(Message(role: .user, text: "what's 7 plus 8")),
+                    "A reply counts once it has words, never as an empty placeholder or a message the person sent")
+        try require(NewReplyMarker.title(1) == "New reply" && NewReplyMarker.title(2) == "2 new replies", "The marker says New reply, or how many")
     }
 }
