@@ -236,6 +236,8 @@ struct NativeToolDefinition: Sendable {
     var instructionFor: (@Sendable ([String: NativeJSONValue]) -> NativeInstructionPending?)? = nil
     var chatDecision: (@Sendable ([String: NativeJSONValue]) -> NativeChatDecision)? = nil
     var marksEffect = false
+    var outputSchema: NativeJSONValue? = nil
+    var examples: [[String: NativeJSONValue]] = []
 
     var demandsConfirmation: Bool { confirmation == .required && confirmationFor == nil && ruleDecision == nil && !governed }
 
@@ -243,6 +245,13 @@ struct NativeToolDefinition: Sendable {
 
     var schema: NativeToolSchema {
         NativeToolSchema(name: name, description: description, parameters: parameters)
+    }
+
+    private static func acceptsNull(_ property: NativeJSONValue?) -> Bool {
+        guard case .object(let object)? = property else { return false }
+        if object["type"] == .string("null") { return true }
+        if case .array(let names)? = object["type"] { return names.contains(.string("null")) }
+        return object["type"] == nil
     }
 
     func validatedArguments(_ raw: String) throws -> [String: NativeJSONValue] {
@@ -257,22 +266,30 @@ struct NativeToolDefinition: Sendable {
             do { try argumentValidator(values) } catch { throw NativeToolError.invalidArguments("Arguments do not match the connected service schema") }
             return values
         }
-        let values = try object.mapValues { try NativeJSONValue(any: $0) }
-        guard case .object(let schema) = parameters,
-              case .object(let properties)? = schema["properties"] else { return values }
+        var values = try object.mapValues { try NativeJSONValue(any: $0) }
+        guard case .object(let schema) = parameters else { return values }
+        let properties: [String: NativeJSONValue]
+        if case .object(let declared)? = schema["properties"] { properties = declared } else { properties = [:] }
         let required: Set<String>
         if case .array(let names)? = schema["required"] {
             required = Set(names.compactMap { if case .string(let value) = $0 { value } else { nil } })
         } else {
             required = []
         }
-        for name in required where values[name] == nil {
-            throw NativeToolError.invalidArguments("Missing required field '\(name)'")
+        for (name, value) in values where value == .null && !required.contains(name) && properties[name] != nil && !Self.acceptsNull(properties[name]) {
+            values[name] = nil
         }
-        if schema["additionalProperties"] == .bool(false) {
-            let unknown = Set(values.keys).subtracting(properties.keys)
-            if let name = unknown.sorted().first {
-                throw NativeToolError.invalidArguments("Unknown field '\(name)'")
+        if let validator = NativeToolSchemaCache.shared.validator(parameters) {
+            if let message = validator.violation(.object(values)) { throw NativeToolError.invalidArguments(message) }
+        } else {
+            for name in required.sorted() where values[name] == nil {
+                throw NativeToolError.invalidArguments("Missing required field '\(name)'")
+            }
+            if schema["additionalProperties"] == .bool(false) {
+                let unknown = Set(values.keys).subtracting(properties.keys)
+                if let name = unknown.sorted().first {
+                    throw NativeToolError.invalidArguments("Unknown field '\(name)'")
+                }
             }
         }
         for (name, value) in values {
@@ -295,8 +312,56 @@ struct NativeToolDefinition: Sendable {
     }
 }
 
+struct NativeToolIssue: Equatable, Sendable {
+    enum Reason: String, Equatable, Sendable {
+        case invalidName
+        case duplicateName
+        case emptyDescription
+        case unsupportedSchema
+        case unsupportedOutputSchema
+        case invalidExample
+    }
+
+    let name: String
+    let reason: Reason
+}
+
 struct NativeToolRegistry: Sendable {
+    static let maximumNameBytes = 64
+
     let definitions: [NativeToolDefinition]
+    let issues: [NativeToolIssue]
+
+    init(definitions: [NativeToolDefinition]) {
+        var accepted: [NativeToolDefinition] = []
+        var found: [NativeToolIssue] = []
+        var names = Set<String>()
+        for definition in definitions {
+            if let reason = Self.rejection(definition, taken: names) {
+                found.append(NativeToolIssue(name: definition.name, reason: reason))
+                continue
+            }
+            names.insert(definition.name)
+            accepted.append(definition)
+        }
+        self.definitions = accepted
+        issues = found
+    }
+
+    static func rejection(_ definition: NativeToolDefinition, taken: Set<String> = []) -> NativeToolIssue.Reason? {
+        let name = definition.name
+        let allowed = name.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && (CharacterSet.alphanumerics.contains(scalar) || scalar == "_" || scalar == "-")
+        }
+        guard !name.isEmpty, name.utf8.count <= maximumNameBytes, allowed else { return .invalidName }
+        guard !taken.contains(name) else { return .duplicateName }
+        guard !definition.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .emptyDescription }
+        guard case .object(let root) = definition.parameters, root["type"] == .string("object"),
+              let validator = NativeToolSchemaCache.shared.validator(definition.parameters) else { return .unsupportedSchema }
+        if let output = definition.outputSchema, NativeToolSchemaCache.shared.validator(output) == nil { return .unsupportedOutputSchema }
+        for example in definition.examples where validator.violation(.object(example)) != nil { return .invalidExample }
+        return nil
+    }
 
     func active(enabledIDs: Set<String>) -> [NativeToolDefinition] {
         definitions.filter { enabledIDs.contains($0.id) && $0.isAvailable() }

@@ -57,6 +57,80 @@ struct NativeMCPJSONSchema: Sendable {
         }
     }
 
+    func violation(_ value: NativeJSONValue) -> String? {
+        do {
+            try validate(value)
+            return nil
+        } catch Failure.resourceLimit {
+            return "The arguments are too large to check"
+        } catch Failure.unsupportedSchema {
+            return "This tool's argument schema is not supported"
+        } catch {}
+        guard case .object(let schema) = self.schema, case .object(let values) = value else { return "Expected a JSON object" }
+        if let required = schema["required"], let names = try? strings(required) {
+            for name in names where Self.exactValue(name, in: values) == nil { return "Missing required field '\(name)'" }
+        }
+        let declared: [String: NativeJSONValue]
+        if case .object(let properties)? = schema["properties"] { declared = properties } else { declared = [:] }
+        if schema["additionalProperties"] == .bool(false),
+           let name = values.keys.filter({ Self.exactValue($0, in: declared) == nil }).sorted().first {
+            return "Unknown field '\(name)'"
+        }
+        for name in values.keys.sorted() {
+            guard let item = values[name], let property = Self.exactValue(name, in: declared) else { continue }
+            var budget = 50_000
+            if (try? matches(item, schema: property, depth: 1, budget: &budget)) == true { continue }
+            return "Field '\(name)' " + Self.expectation(item, property)
+        }
+        return "The arguments do not match this tool's schema"
+    }
+
+    private static func expectation(_ value: NativeJSONValue, _ schema: NativeJSONValue) -> String {
+        guard case .object(let object) = schema else { return "is not accepted" }
+        if case .string(let type)? = object["type"] {
+            switch (type, value) {
+            case ("string", .string(let text)):
+                if case .number(let minimum)? = object["minLength"], Double(text.unicodeScalars.count) < minimum {
+                    return minimum <= 1 ? "must be a non-empty string" : "must be at least \(Int(minimum)) characters"
+                }
+                if case .number(let maximum)? = object["maxLength"], Double(text.unicodeScalars.count) > maximum {
+                    return "must be at most \(Int(maximum)) characters"
+                }
+            case ("string", _):
+                if case .number(let minimum)? = object["minLength"], minimum == 0 { return "must be a string" }
+                return "must be a non-empty string"
+            case ("boolean", .bool): break
+            case ("boolean", _): return "must be a boolean"
+            case ("integer", .number(let number)), ("number", .number(let number)):
+                if type == "integer", number.rounded(.towardZero) != number { return "must be a whole number" }
+                if case .number(let minimum)? = object["minimum"], number < minimum { return "must be at least \(plain(minimum))" }
+                if case .number(let maximum)? = object["maximum"], number > maximum { return "must be at most \(plain(maximum))" }
+            case ("integer", _): return "must be a whole number"
+            case ("number", _): return "must be a number"
+            case ("array", .array(let items)):
+                if case .number(let minimum)? = object["minItems"], Double(items.count) < minimum { return "must have at least \(Int(minimum)) items" }
+                if case .number(let maximum)? = object["maxItems"], Double(items.count) > maximum { return "must have at most \(Int(maximum)) items" }
+                return "has an item that does not match its schema"
+            case ("array", _): return "must be a list"
+            case ("object", .object): break
+            case ("object", _): return "must be an object"
+            default: break
+            }
+        }
+        if case .array(let choices)? = object["enum"] {
+            let names = choices.compactMap { choice -> String? in
+                if case .string(let text) = choice { return text }
+                return nil
+            }
+            if names.count == choices.count, !names.isEmpty { return "must be one of: " + names.joined(separator: ", ") }
+        }
+        return "does not match its schema"
+    }
+
+    private static func plain(_ number: Double) -> String {
+        number.rounded(.towardZero) == number && abs(number) < 1e15 ? String(Int(number)) : String(number)
+    }
+
     private static func measure(_ value: NativeJSONValue, depth: Int, nodes: inout Int, bytes: inout Int) throws {
         nodes += 1
         guard depth <= 48, nodes <= 8_192, bytes <= 1_048_576 else { throw Failure.resourceLimit }
@@ -299,5 +373,23 @@ struct NativeMCPJSONSchema: Sendable {
         case .bool, .null: break
         }
         return true
+    }
+}
+
+typealias NativeJSONSchema = NativeMCPJSONSchema
+
+final class NativeToolSchemaCache: @unchecked Sendable {
+    static let shared = NativeToolSchemaCache()
+    private let lock = NSLock()
+    private var compiled: [NativeJSONValue: NativeJSONSchema?] = [:]
+
+    func validator(_ schema: NativeJSONValue) -> NativeJSONSchema? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let known = compiled[schema] { return known }
+        if compiled.count >= 1_024 { compiled.removeAll() }
+        let built = try? NativeJSONSchema(schema)
+        compiled[schema] = built
+        return built
     }
 }

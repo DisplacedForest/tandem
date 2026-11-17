@@ -547,7 +547,8 @@ extension SelfTest {
                     hostileFinal = snapshot
                 }
                 guard hostileFinal?.activities.first?.state == .failed,
-                      hostileFinal?.activities.first?.result?.contains("Seed must be") == true else {
+                      let refusal = hostileFinal?.activities.first?.result,
+                      refusal.contains("Seed must be") || refusal.contains("Field 'seed' must be a whole number") else {
                     print("SELFTEST ERROR: image hostile seed \(hostile)"); exit(1)
                 }
             }
