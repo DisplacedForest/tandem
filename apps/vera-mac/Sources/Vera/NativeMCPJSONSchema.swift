@@ -68,19 +68,19 @@ struct NativeMCPJSONSchema: Sendable {
         } catch {}
         guard case .object(let schema) = self.schema, case .object(let values) = value else { return "Expected a JSON object" }
         if let required = schema["required"], let names = try? strings(required) {
-            for name in names where Self.exactValue(name, in: values) == nil { return "Missing required field '\(name)'" }
+            for name in names where Self.exactValue(name, in: values) == nil { return "Missing required field '\(Self.shown(name))'" }
         }
         let declared: [String: NativeJSONValue]
         if case .object(let properties)? = schema["properties"] { declared = properties } else { declared = [:] }
         if schema["additionalProperties"] == .bool(false),
            let name = values.keys.filter({ Self.exactValue($0, in: declared) == nil }).sorted().first {
-            return "Unknown field '\(name)'"
+            return "Unknown field '\(Self.shown(name))'"
         }
         for name in values.keys.sorted() {
             guard let item = values[name], let property = Self.exactValue(name, in: declared) else { continue }
             var budget = 50_000
             if (try? matches(item, schema: property, depth: 1, budget: &budget)) == true { continue }
-            return "Field '\(name)' " + Self.expectation(item, property)
+            return "Field '\(Self.shown(name))' " + Self.expectation(item, property)
         }
         return "The arguments do not match this tool's schema"
     }
@@ -194,8 +194,13 @@ struct NativeMCPJSONSchema: Sendable {
         }
     }
 
+    static func shown(_ name: String) -> String {
+        let clean = NativeToolRepair.plain(name).replacingOccurrences(of: "'", with: " ")
+        return String(String.UnicodeScalarView(clean.unicodeScalars.prefix(64)))
+    }
+
     private static func joined(_ path: String, _ name: String) -> String {
-        let shown = String(name.prefix(64))
+        let shown = Self.shown(name)
         return path.isEmpty ? shown : path + "." + shown
     }
 
@@ -247,7 +252,7 @@ struct NativeMCPJSONSchema: Sendable {
 
     private static func measure(_ value: NativeJSONValue, depth: Int, nodes: inout Int, bytes: inout Int) throws {
         nodes += 1
-        guard depth <= 48, nodes <= 8_192, bytes <= 1_048_576 else { throw Failure.resourceLimit }
+        guard depth <= 48, nodes <= 32_768, bytes <= 1_048_576 else { throw Failure.resourceLimit }
         switch value {
         case .object(let object):
             for (key, item) in object {

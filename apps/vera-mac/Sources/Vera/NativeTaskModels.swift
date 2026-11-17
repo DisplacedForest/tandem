@@ -52,10 +52,11 @@ struct NativeTaskEngineIdentity: Codable, Equatable, Hashable, Sendable {
 enum NativeTaskInputSize {
     static func over(_ texts: [String], characters: Int, bytes: Int) -> (sent: String, allowed: String)? {
         let count = texts.reduce(0) { $0 + $1.count }
-        let size = texts.reduce(0) { $0 + $1.utf8.count }
+        let size = (try? JSONSerialization.data(withJSONObject: texts))?.count ?? texts.reduce(0) { $0 + $1.utf8.count * 2 + 3 }
         guard count > characters || size > bytes else { return nil }
         var allowed = characters
-        if size > bytes, size > 0 { allowed = min(characters, count * bytes / size / 100 * 100) }
+        if size > bytes, size > 0 { allowed = min(characters, max(100, count * bytes / size / 100 * 100)) }
+        allowed = max(1, min(allowed, count - 1))
         return (grouped(count), grouped(allowed))
     }
 
@@ -97,8 +98,20 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
         try self.init(validating: dot.assignment, deliverables: [], workerType: "companion", title: title, dot: dot, scheduleID: dot.scheduleID)
     }
 
+    static func sizeRefusal(objective: String, deliverables: [String], workerType: String) -> String? {
+        guard workerType != "companion" else { return nil }
+        let texts = [objective.trimmingCharacters(in: .whitespacesAndNewlines)]
+            + deliverables.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let document = workerType == "document"
+        guard let room = NativeTaskInputSize.over(texts, characters: document ? documentInputCharacters : researchInputCharacters,
+                                                  bytes: document ? documentInputBytes : researchInputBytes) else { return nil }
+        return document
+            ? "The brief and the things to include are \(room.sent) characters together, and a document can take about \(room.allowed) for now. Nothing was started. Shorten them, or split this into more than one document."
+            : "The question and the things to cover are \(room.sent) characters together, and research can take about \(room.allowed) for now. Nothing was started. Shorten them, or split this into more than one request."
+    }
+
     private init(validating objective: String, deliverables: [String], workerType: String, title: String?,
-                 dot: NativeCompanionTaskPayload?, scheduleID: String?) throws {
+                 dot: NativeCompanionTaskPayload?, scheduleID: String?, admitting: Bool = true) throws {
         let trimmed = objective.trimmingCharacters(in: .whitespacesAndNewlines)
         guard NativeRunOrigin.validSchedule(scheduleID), dot.map({ $0.scheduleID == scheduleID }) ?? true else {
             throw NativeTaskError.invalidRequest("The schedule for this work isn't valid.")
@@ -114,14 +127,8 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
             throw NativeTaskError.invalidRequest("The \(work) is empty. Nothing was started.")
         }
         let items = deliverables.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        if workerType != "companion" {
-            let document = workerType == "document"
-            if let room = NativeTaskInputSize.over([trimmed] + items, characters: document ? Self.documentInputCharacters : Self.researchInputCharacters,
-                                                   bytes: document ? Self.documentInputBytes : Self.researchInputBytes) {
-                throw NativeTaskError.invalidRequest(document
-                    ? "The brief and the things to include are \(room.sent) characters together, and a document can take about \(room.allowed) for now. Nothing was started. Shorten them, or split this into more than one document."
-                    : "The question and the things to cover are \(room.sent) characters together, and research can take about \(room.allowed) for now. Nothing was started. Shorten them, or split this into more than one request.")
-            }
+        if admitting, let refusal = Self.sizeRefusal(objective: trimmed, deliverables: items, workerType: workerType) {
+            throw NativeTaskError.invalidRequest(refusal)
         }
         let cleanTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let cleanTitle, !cleanTitle.isEmpty {
@@ -155,7 +162,7 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
                       workerType: container.decodeIfPresent(String.self, forKey: .workerType) ?? "research",
                       title: container.decodeIfPresent(String.self, forKey: .title),
                       dot: dot,
-                      scheduleID: dot == nil ? container.decodeIfPresent(String.self, forKey: .scheduleID) : dot?.scheduleID)
+                      scheduleID: dot == nil ? container.decodeIfPresent(String.self, forKey: .scheduleID) : dot?.scheduleID, admitting: false)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -195,6 +202,13 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     static let modes: Set<String> = ["manual", "scheduled", "proactive"]
     static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding", "schedule_id", "said", "carried"]
     static let assignmentBytes = 60000
+
+    static func assignmentRefusal(_ assignment: String) -> String? {
+        let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let room = NativeTaskInputSize.over([cleanAssignment], characters: assignmentCharacters, bytes: assignmentBytes) else { return nil }
+        return "The assignment is \(room.sent) characters, and this can take about \(room.allowed) for now. Nothing was started. Shorten it, or split it into more than one request."
+    }
+
     static let assignmentCharacters = 50000
     static let saidLimit = 5000
 
@@ -211,13 +225,13 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     var typedRequest: String { said ?? (mode == "manual" ? assignment : "") }
 
     init(assignment: String, mode: String, connectedToolIDs: [String]? = nil, scheduleID: String? = nil, said: String? = nil,
-         carried: NativeCompanionCarried? = nil) throws {
+         carried: NativeCompanionCarried? = nil, admitting: Bool = true) throws {
         let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanAssignment.isEmpty else {
             throw NativeTaskError.invalidRequest("The assignment is empty. Nothing was started.")
         }
-        if let room = NativeTaskInputSize.over([cleanAssignment], characters: Self.assignmentCharacters, bytes: Self.assignmentBytes) {
-            throw NativeTaskError.invalidRequest("The assignment is \(room.sent) characters, and this can take about \(room.allowed) for now. Nothing was started. Shorten it, or split it into more than one request.")
+        if admitting, let refusal = Self.assignmentRefusal(cleanAssignment) {
+            throw NativeTaskError.invalidRequest(refusal)
         }
         guard Self.modes.contains(mode) else {
             throw NativeTaskError.invalidRequest("This must start manually, on a schedule or on its own.")
@@ -260,7 +274,7 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
                       connectedToolIDs: container.decodeIfPresent([String].self, forKey: .connectedToolIDs),
                       scheduleID: container.decodeIfPresent(String.self, forKey: .scheduleID),
                       said: container.decodeIfPresent(String.self, forKey: .said),
-                      carried: container.decodeIfPresent(NativeCompanionCarried.self, forKey: .carried))
+                      carried: container.decodeIfPresent(NativeCompanionCarried.self, forKey: .carried), admitting: false)
         savedGoal = NativeCarriedJSON.carried(container, .goal)
     }
 

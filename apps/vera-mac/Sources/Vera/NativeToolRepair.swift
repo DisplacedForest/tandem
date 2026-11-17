@@ -21,7 +21,12 @@ struct NativeToolCallProblem: Error, LocalizedError, Equatable, Sendable {
 
     var value: NativeJSONValue {
         var object = fields
-        object["error"] = .string(String(message.prefix(NativeToolRepair.maximumMessage)))
+        let leading = String(message.prefix(NativeToolRepair.maximumMessage))
+        object["error"] = .string(leading)
+        if leading != message {
+            object["truncated"] = .bool(true)
+            object["truncation_reason"] = .string(NativeToolResultBudget.errorCut)
+        }
         return .object(object)
     }
 }
@@ -55,6 +60,17 @@ struct NativeToolRepairs: Codable, Equatable, Sendable {
     }
 }
 
+struct NativeToolNeverRan: Equatable, Sendable {
+    private(set) var any = false
+
+    mutating func record(_ problem: NativeToolCallProblem) {
+        guard problem.fields["not_run"] == .bool(true), problem.fields["outcome"] == nil else { return }
+        any = true
+    }
+
+    var line: String { any ? NativeToolRepair.neverRan : "" }
+}
+
 enum NativeToolRepair {
     static let maximumMessage = 500
     static let maximumProblems = 4
@@ -63,7 +79,7 @@ enum NativeToolRepair {
     static let correct = "Nothing ran. Correct the arguments and send this call again."
     static let choose = "Nothing ran. Use one of the offered names exactly as written."
     static let stop = "Nothing ran, so nothing was started, saved or sent. This call is closed for now. Do not send it again and do not say it was done. Tell the person plainly what could not be done."
-    static let neverRan = " Some calls in this turn were refused and never ran, so nothing they asked for was started, saved or sent. Say that plainly and do not describe any of it as done."
+    static let neverRan = " Some calls in this turn were refused and never ran, so nothing they asked for was started, saved or sent. Their results above say which. Say that plainly and do not describe any of it as done."
     static let unconfirmed = "This may or may not have happened. Do not send it again. Tell the person it could not be confirmed and that they should check."
     static let neverRanOutcome = "never ran"
     static let unknownStep = "A step that isn't available here"
@@ -81,8 +97,22 @@ enum NativeToolRepair {
     static let hidden: Set<String> = ["not_run", "fault", "problems", "offered", "fix", "repairs_left", "closed", "outcome", "action"]
     static let maximumNamed = 80
 
+    static func plain(_ text: String) -> String {
+        let hidden: Set<Unicode.GeneralCategory> = [.control, .format, .lineSeparator, .paragraphSeparator, .privateUse, .surrogate]
+        var scalars = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            let joiner = scalar.value == 0x200C || scalar.value == 0x200D
+            scalars.append(!joiner && hidden.contains(scalar.properties.generalCategory) ? " " : scalar)
+        }
+        return String(scalars).trimmingCharacters(in: .whitespaces)
+    }
+
+    static func titled(_ definition: NativeToolDefinition) -> String {
+        String(String.UnicodeScalarView(plain(definition.title).unicodeScalars.prefix(120)))
+    }
+
     static func quoted(_ text: String) -> String? {
-        let line = text.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
+        let line = plain(text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "")
         guard !line.isEmpty else { return nil }
         let shown = line.unicodeScalars.count > maximumNamed ? String(String.UnicodeScalarView(line.unicodeScalars.prefix(maximumNamed))) + "..." : line
         return "\"" + shown.replacingOccurrences(of: "\"", with: "'") + "\""
@@ -91,10 +121,10 @@ enum NativeToolRepair {
     static func described(_ definition: NativeToolDefinition?, raw: String) -> String {
         guard let definition else { return unknownStep }
         guard let object = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
-              let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return definition.title }
+              let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return titled(definition) }
         if let own = definition.summary?(values) { return own }
-        guard let subject = NativeCompanionWorker.subject(values).flatMap(quoted) else { return definition.title }
-        return definition.title + " " + subject
+        guard let subject = NativeCompanionWorker.subject(values).flatMap(quoted) else { return titled(definition) }
+        return titled(definition) + " " + subject
     }
 
     static func named(_ problem: NativeToolCallProblem, _ definition: NativeToolDefinition?, raw: String) -> NativeToolCallProblem {
@@ -103,18 +133,6 @@ enum NativeToolRepair {
         return named
     }
 
-    static func neverRanLine(_ results: [String?]) -> String {
-        var actions: [String] = []
-        var any = false
-        for result in results {
-            guard let result, let object = try? JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any],
-                  object["not_run"] as? Bool == true else { continue }
-            any = true
-            if let action = object["action"] as? String, !actions.contains(action), actions.count < 3 { actions.append(action) }
-        }
-        guard any else { return "" }
-        return neverRan + (actions.isEmpty ? "" : " What never ran: " + actions.joined(separator: "; ") + ".")
-    }
 
     static func problem(_ definition: NativeToolDefinition, raw: String, error: Error) -> NativeToolCallProblem {
         guard case .invalidArguments(let detail)? = error as? NativeToolError else {
@@ -139,8 +157,11 @@ enum NativeToolRepair {
             return make(message, .unsupportedValue, problems: [NativeSchemaProblem(path: "arguments", expected: "must be smaller")])
         } catch {}
         let problems = validator.problems(values, limit: maximumProblems)
-        guard let first = problems.first, first.path != "arguments", first.expected != NativeMCPJSONSchema.required,
-              first.expected != NativeMCPJSONSchema.undeclared else { return make(message, .invalidArguments, problems: problems) }
+        guard let first = problems.first, first.path != "arguments" else { return make(message, .invalidArguments, problems: problems) }
+        let nested = first.path.contains(".") || first.path.contains("[")
+        if !nested, first.expected == NativeMCPJSONSchema.required || first.expected == NativeMCPJSONSchema.undeclared {
+            return make(message, .invalidArguments, problems: problems)
+        }
         let specific = NativeToolError.invalidArguments("Field '\(first.path.prefix(160))' \(first.expected.prefix(200))").localizedDescription
         return make(specific, .invalidArguments, problems: problems)
     }

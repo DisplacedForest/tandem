@@ -127,6 +127,15 @@ enum NativeTaskTools {
                 return .object(["message": .string(message), "started": .bool(reference.deliveryState == .accepted)])
             })
         built.summary = summary
+        built.check = { arguments in
+            guard case .string(let kind)? = arguments["worker_type"], case .string(let objective)? = arguments["objective"] else { return nil }
+            if kind == generalWorkerType { return NativeCompanionTaskPayload.assignmentRefusal(objective) }
+            var items: [String] = []
+            if case .array(let values)? = arguments["deliverables"] {
+                items = values.compactMap { value -> String? in if case .string(let text) = value { text } else { nil } }
+            }
+            return NativeResearchTaskRequest.sizeRefusal(objective: objective, deliverables: items, workerType: kind)
+        }
         return built
     }
 
