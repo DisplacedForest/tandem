@@ -1099,10 +1099,6 @@ private struct NativeCompanionRun {
         let arguments: [String: NativeJSONValue]
         do {
             arguments = try definition.validatedArguments(call.arguments)
-            if repairs.counts[repairKey] != nil {
-                repairs.settled(repairKey)
-                checkpoint.repairs = repairs
-            }
         } catch {
             checkpoint.calls += 1
             count(NativeToolRepair.named(NativeToolRepair.problem(definition, raw: call.arguments, error: error), definition, raw: call.arguments),
@@ -1114,6 +1110,26 @@ private struct NativeCompanionRun {
             return nil
         }
         return try await write(call, definition, arguments, &checkpoint)
+    }
+
+    func settleRepairs(_ call: NativeTaskGenerationToolCall, _ checkpoint: inout NativeCompanionCheckpoint) {
+        guard var repairs = checkpoint.repairs, repairs.counts[call.name] != nil else { return }
+        repairs.settled(call.name)
+        checkpoint.repairs = repairs
+    }
+
+    func countFault(_ call: NativeTaskGenerationToolCall, _ definition: NativeToolDefinition, _ message: String,
+                    _ checkpoint: inout NativeCompanionCheckpoint) {
+        var repairs = checkpoint.repairs ?? NativeToolRepairs()
+        let fault = NativeToolRepair.named(NativeToolRepair.handlerFault(message), definition, raw: call.arguments)
+        let answer = repairs.answer(fault, key: call.name)
+        if repairs.isClosed(call.name) {
+            checkpoint.note(NativeToolRepair.described(definition, raw: call.arguments), NativeToolRepair.neverRanOutcome,
+                            reason: NativeToolRepair.reason(fault.fault))
+            checkpoint.finishing = true
+        }
+        checkpoint.repairs = repairs
+        checkpoint.answer(call, NativeEffectProposal.canonicalArguments(answer.value))
     }
 
     func read(_ call: NativeTaskGenerationToolCall, _ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue],
@@ -1131,6 +1147,7 @@ private struct NativeCompanionRun {
                 var requested: String?
                 if case .string(let address)? = arguments["url"] { requested = address.trimmingCharacters(in: .whitespacesAndNewlines) }
                 let value = checkpoint.numbered(raw, definition: definition, requested: requested)
+                settleRepairs(call, &checkpoint)
                 checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
                 return
             } catch {
@@ -1138,6 +1155,10 @@ private struct NativeCompanionRun {
                 try Task.checkCancellation()
                 let canRetry = NativeCompanionWorker.transient(error) && attempt < NativeCompanionWorker.readRetryDelays.count
                 guard canRetry else {
+                    if case .invalidArguments? = error as? NativeToolError {
+                        countFault(call, definition, error.localizedDescription, &checkpoint)
+                        return
+                    }
                     let detail = NativeCompanionWorker.transient(error) ? "This lookup kept failing. Try another approach or report it." : error.localizedDescription
                     checkpoint.answer(call, NativeCompanionWorker.message(detail))
                     return
@@ -1265,6 +1286,7 @@ private struct NativeCompanionRun {
                 return try await reconcile(uncertain, call: call, definition: definition, &checkpoint)
             }
             try environment.ledger.settle(digest: record.digest, receipt: value, modelClaim: nil)
+            settleRepairs(call, &checkpoint)
             checkpoint.note(title, NativeCompanionWorker.ranWithFailure(value) ? "failed" : "done")
             checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: limit))
             return nil
@@ -1279,6 +1301,10 @@ private struct NativeCompanionRun {
                 try environment.ledger.markUncertain(digest: record.digest, reason: "refused")
                 try environment.ledger.observe(digest: record.digest, .absent)
                 checkpoint.note(title, "not done")
+                if case .invalidArguments? = error as? NativeToolError {
+                    countFault(call, definition, error.localizedDescription, &checkpoint)
+                    return nil
+                }
                 checkpoint.answer(call, NativeCompanionWorker.message("Not done: \(error.localizedDescription)"))
                 return nil
             }

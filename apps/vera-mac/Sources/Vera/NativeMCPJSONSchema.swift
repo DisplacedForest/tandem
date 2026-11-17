@@ -85,6 +85,14 @@ struct NativeMCPJSONSchema: Sendable {
         return "The arguments do not match this tool's schema"
     }
 
+    static let vague = "does not match its schema"
+    static let itemBlame = "has an item that does not match its schema"
+    static let countedEndings = [" character", " characters", " item", " items", " field", " fields"]
+
+    static func counted(_ number: Double, _ noun: String) -> String {
+        plain(number) + " " + (number == 1 ? noun : noun + "s")
+    }
+
     static let required = "is required"
     static let undeclared = "is not a field this call accepts"
 
@@ -107,8 +115,13 @@ struct NativeMCPJSONSchema: Sendable {
         guard found.count < limit else { return }
         if try matches(value, schema: schema, depth: depth, budget: &budget) { return }
         var target = schema
-        if case .object(let object) = schema, let ref = object["$ref"] { target = try reference(ref).1 }
         let before = found.count
+        if case .object(var object) = schema, let ref = object["$ref"] {
+            try collect(value, schema: reference(ref).1, path: path, depth: depth + 1, limit: limit, into: &found, budget: &budget)
+            guard found.count == before else { return }
+            object["$ref"] = nil
+            target = .object(object)
+        }
         if case .object(let object) = target {
             switch value {
             case .object(let properties):
@@ -161,7 +174,10 @@ struct NativeMCPJSONSchema: Sendable {
             }
         }
         if found.count == before, found.count < limit {
-            found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: Self.expectation(value, target) + Self.measured(value, target)))
+            var expected = Self.expectation(value, target)
+            if expected == Self.itemBlame { expected = Self.vague }
+            if Self.countedEndings.contains(where: { expected.hasSuffix($0) }) { expected += Self.measured(value, target) }
+            found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: expected))
         }
     }
 
@@ -190,6 +206,8 @@ struct NativeMCPJSONSchema: Sendable {
             return ", and this one has \(text.unicodeScalars.count)"
         case .array(let items) where outside(items.count, "minItems", "maxItems"):
             return ", and this one has \(items.count)"
+        case .object(let fields) where outside(fields.count, "minProperties", "maxProperties"):
+            return ", and this one has \(fields.count)"
         default: return ""
         }
     }
@@ -206,44 +224,94 @@ struct NativeMCPJSONSchema: Sendable {
 
     private static func expectation(_ value: NativeJSONValue, _ schema: NativeJSONValue) -> String {
         guard case .object(let object) = schema else { return "is not accepted" }
-        if case .string(let type)? = object["type"] {
-            switch (type, value) {
-            case ("string", .string(let text)):
-                if case .number(let minimum)? = object["minLength"], Double(text.unicodeScalars.count) < minimum {
-                    return minimum <= 1 ? "must be a non-empty string" : "must be at least \(plain(minimum)) characters"
+        var declared: String?
+        if case .string(let name)? = object["type"] { declared = name }
+        if case .array(let names)? = object["type"] {
+            let kinds = names.compactMap { name -> String? in if case .string(let text) = name { text } else { nil } }
+            let fits = kinds.contains { kind in
+                switch (value, kind) {
+                case (.object, "object"), (.array, "array"), (.string, "string"), (.number, "number"), (.bool, "boolean"), (.null, "null"): return true
+                case (.number(let number), "integer"): return number.rounded(.towardZero) == number
+                default: return false
                 }
-                if case .number(let maximum)? = object["maxLength"], Double(text.unicodeScalars.count) > maximum {
-                    return "must be at most \(plain(maximum)) characters"
-                }
-            case ("string", _):
-                if case .number(let minimum)? = object["minLength"], minimum == 0 { return "must be a string" }
-                return "must be a non-empty string"
-            case ("boolean", .bool): break
-            case ("boolean", _): return "must be a boolean"
-            case ("integer", .number(let number)), ("number", .number(let number)):
-                if type == "integer", number.rounded(.towardZero) != number { return "must be a whole number" }
-                if case .number(let minimum)? = object["minimum"], number < minimum { return "must be at least \(plain(minimum))" }
-                if case .number(let maximum)? = object["maximum"], number > maximum { return "must be at most \(plain(maximum))" }
-            case ("integer", _): return "must be a whole number"
-            case ("number", _): return "must be a number"
-            case ("array", .array(let items)):
-                if case .number(let minimum)? = object["minItems"], Double(items.count) < minimum { return "must have at least \(plain(minimum)) items" }
-                if case .number(let maximum)? = object["maxItems"], Double(items.count) > maximum { return "must have at most \(plain(maximum)) items" }
-                return items.isEmpty ? "does not match its schema" : "has an item that does not match its schema"
-            case ("array", _): return "must be a list"
-            case ("object", .object): break
-            case ("object", _): return "must be an object"
-            default: break
+            }
+            if !fits, !kinds.isEmpty { return "must be one of these kinds: " + kinds.joined(separator: ", ") }
+        }
+        let type: String
+        if let declared {
+            type = declared
+        } else {
+            switch value {
+            case .string: type = "string"
+            case .number: type = "number"
+            case .array: type = "array"
+            case .object: type = "object"
+            case .bool: type = "boolean"
+            case .null: type = "null"
             }
         }
-        if case .array(let choices)? = object["enum"] {
+        switch (type, value) {
+        case ("string", .string(let text)):
+            if case .number(let minimum)? = object["minLength"], Double(text.unicodeScalars.count) < minimum {
+                return minimum <= 1 ? "must be a non-empty string" : "must be at least " + counted(minimum, "character")
+            }
+            if case .number(let maximum)? = object["maxLength"], Double(text.unicodeScalars.count) > maximum {
+                return "must be at most " + counted(maximum, "character")
+            }
+        case ("string", _):
+            if case .number(let minimum)? = object["minLength"], minimum >= 1 { return "must be a non-empty string" }
+            return "must be a string"
+        case ("boolean", .bool): break
+        case ("boolean", _): return "must be a boolean"
+        case ("integer", .number(let number)), ("number", .number(let number)):
+            if type == "integer", number.rounded(.towardZero) != number { return "must be a whole number" }
+            if case .number(let minimum)? = object["minimum"], number < minimum { return "must be at least \(plain(minimum))" }
+            if case .number(let maximum)? = object["maximum"], number > maximum { return "must be at most \(plain(maximum))" }
+            if case .number(let bound)? = object["exclusiveMinimum"], number <= bound { return "must be more than \(plain(bound))" }
+            if case .number(let bound)? = object["exclusiveMaximum"], number >= bound { return "must be less than \(plain(bound))" }
+        case ("integer", _): return "must be a whole number"
+        case ("number", _): return "must be a number"
+        case ("array", .array(let items)):
+            if case .number(let minimum)? = object["minItems"], Double(items.count) < minimum { return "must have at least " + counted(minimum, "item") }
+            if case .number(let maximum)? = object["maxItems"], Double(items.count) > maximum { return "must have at most " + counted(maximum, "item") }
+            if case .bool(true)? = object["uniqueItems"], Set(items.map(ExactValue.init)).count != items.count { return "must not repeat an item" }
+            if declared == "array", !items.isEmpty, object["items"] != nil || object["prefixItems"] != nil, object["const"] == nil, object["enum"] == nil {
+                return itemBlame
+            }
+        case ("array", _): return "must be a list"
+        case ("object", .object(let fields)):
+            if case .number(let minimum)? = object["minProperties"], Double(fields.count) < minimum { return "must have at least " + counted(minimum, "field") }
+            if case .number(let maximum)? = object["maxProperties"], Double(fields.count) > maximum { return "must have at most " + counted(maximum, "field") }
+        case ("object", _): return "must be an object"
+        case ("null", .null): break
+        case ("null", _): return "must be null"
+        default: break
+        }
+        if let fixed = object["const"], ExactValue(fixed) != ExactValue(value) {
+            switch fixed {
+            case .string(let text):
+                let simple = text.unicodeScalars.count <= 80 && !text.isEmpty && NativeToolRepair.plain(text) == text && !text.contains("\"")
+                return simple ? "must be exactly \"" + text + "\"" : "must be one fixed value"
+            case .number(let number): return "must be exactly \(plain(number))"
+            case .bool(let flag): return "must be exactly \(flag ? "true" : "false")"
+            case .null: return "must be null"
+            default: return "must be one fixed value"
+            }
+        }
+        if case .array(let choices)? = object["enum"], !choices.contains(where: { ExactValue($0) == ExactValue(value) }) {
             let names = choices.compactMap { choice -> String? in
-                if case .string(let text) = choice { return text }
-                return nil
+                switch choice {
+                case .string(let text): return text
+                case .number(let number): return plain(number)
+                case .bool(let flag): return flag ? "true" : "false"
+                case .null: return "null"
+                default: return nil
+                }
             }
             if names.count == choices.count, !names.isEmpty { return "must be one of: " + names.joined(separator: ", ") }
+            return "must be one of the listed values"
         }
-        return "does not match its schema"
+        return vague
     }
 
     private static func plain(_ number: Double) -> String {

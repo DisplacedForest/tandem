@@ -145,8 +145,8 @@ extension SelfTest {
                     "A tool with its own argument check accepts what that check accepts, even outside the advertised schema")
         var ownRefusal: NativeToolError?
         do { _ = try own.validatedArguments(#"{"probe":"no","title":"Plan"}"#) } catch let error as NativeToolError { ownRefusal = error }
-        try require(ownRefusal == .invalidArguments("Arguments do not match the connected service schema"),
-                    "A tool with its own argument check refuses through that check, not the advertised schema")
+        try require(ownRefusal == .invalidArguments("probe"),
+                    "A tool with its own argument check refuses through that check, in that check's own words, not the advertised schema")
 
         let repository = try LocalChatRepository(inMemory: true)
         let directory = FileManager.default.temporaryDirectory

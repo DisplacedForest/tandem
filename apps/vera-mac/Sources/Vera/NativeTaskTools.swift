@@ -129,12 +129,24 @@ enum NativeTaskTools {
         built.summary = summary
         built.check = { arguments in
             guard case .string(let kind)? = arguments["worker_type"], case .string(let objective)? = arguments["objective"] else { return nil }
-            if kind == generalWorkerType { return NativeCompanionTaskPayload.assignmentRefusal(objective) }
+            if kind == generalWorkerType {
+                guard !objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return NativeCompanionTaskPayload.emptyAssignment }
+                return NativeCompanionTaskPayload.assignmentRefusal(objective)
+            }
             var items: [String] = []
             if case .array(let values)? = arguments["deliverables"] {
                 items = values.compactMap { value -> String? in if case .string(let text) = value { text } else { nil } }
             }
-            return NativeResearchTaskRequest.sizeRefusal(objective: objective, deliverables: items, workerType: kind)
+            var title: String?
+            if case .string(let text)? = arguments["title"] { title = text }
+            do {
+                _ = try NativeResearchTaskRequest(objective: objective, deliverables: items, workerType: kind, title: title)
+                return nil
+            } catch let refusal as NativeTaskError {
+                return refusal.localizedDescription
+            } catch {
+                return nil
+            }
         }
         return built
     }

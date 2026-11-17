@@ -157,7 +157,12 @@ enum NativeToolRepair {
             return make(message, .unsupportedValue, problems: [NativeSchemaProblem(path: "arguments", expected: "must be smaller")])
         } catch {}
         let problems = validator.problems(values, limit: maximumProblems)
-        guard let first = problems.first, first.path != "arguments" else { return make(message, .invalidArguments, problems: problems) }
+        guard let first = problems.first else { return make(message, .invalidArguments, problems: problems) }
+        if first.path == "arguments" {
+            guard first.expected != NativeMCPJSONSchema.vague else { return make(message, .invalidArguments, problems: problems) }
+            let whole = NativeToolError.invalidArguments("The arguments " + String(first.expected.prefix(200))).localizedDescription
+            return make(whole, .invalidArguments, problems: problems)
+        }
         let nested = first.path.contains(".") || first.path.contains("[")
         if !nested, first.expected == NativeMCPJSONSchema.required || first.expected == NativeMCPJSONSchema.undeclared {
             return make(message, .invalidArguments, problems: problems)
@@ -218,6 +223,10 @@ enum NativeToolRepair {
             fields["fix"] = .string(unconfirmed)
         }
         return NativeToolCallProblem(message: message, fields: fields)
+    }
+
+    static func handlerFault(_ message: String) -> NativeToolCallProblem {
+        make(message, .invalidArguments, problems: [])
     }
 
     private static func make(_ message: String, _ fault: NativeToolCallFault, problems: [NativeSchemaProblem]) -> NativeToolCallProblem {

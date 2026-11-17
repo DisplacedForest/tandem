@@ -283,7 +283,12 @@ struct NativeToolDefinition: Sendable {
         if let argumentValidator {
             try NativeMCPWireJSON.validate(data, maximumBytes: 16384)
             guard data.count <= 16384, let values = try NativeJSONValue.piRead(data).piObject else { throw NativeToolError.invalidArguments("Expected a bounded JSON object") }
-            do { try argumentValidator(values) } catch { throw NativeToolError.invalidArguments("Arguments do not match the connected service schema") }
+            do { try argumentValidator(values) } catch NativeToolError.invalidArguments(let detail) {
+                throw NativeToolError.invalidArguments(detail)
+            } catch {
+                throw NativeToolError.invalidArguments("Arguments do not match the connected service schema")
+            }
+            if let refusal = check?(values) { throw NativeToolError.invalidArguments(refusal) }
             return values
         }
         let values = withoutSpareNulls(try object.mapValues { try NativeJSONValue(any: $0) })
@@ -893,7 +898,6 @@ struct NativeToolLoop: Sendable {
                                 let arguments: [String: NativeJSONValue]
                                 do {
                                     arguments = try definition.validatedArguments(call.arguments)
-                                    repairs.settled(repairKey)
                                     askedKey = Data((definition.name + "\u{0}" + (try Self.serializedResult(.object(arguments)))).utf8)
                                 } catch {
                                     if error is CancellationError { throw error }
@@ -1058,6 +1062,7 @@ struct NativeToolLoop: Sendable {
                                     }
                                 }
                                 try Task.checkCancellation()
+                                repairs.settled(repairKey)
                                 result = try NativeToolResultBudget.serialized(value, maximumBytes: resultBudget)
                                 state = Self.resultFailed(value, toolName: call.name) ? .failed : .succeeded
                                 if isSearch && webSearchCount >= maximumWebSearchCalls { stopped = true }
@@ -1074,6 +1079,14 @@ struct NativeToolLoop: Sendable {
                             } catch let problem as NativeToolCallProblem {
                                 neverRan.record(problem)
                                 result = try NativeToolResultBudget.serialized(problem.value, maximumBytes: resultBudget)
+                                state = .failed
+                            } catch NativeToolError.invalidArguments(let detail) {
+                                let key = definitions[call.name] == nil ? NativeToolRepairs.unknownKey : call.name
+                                let fault = NativeToolRepair.handlerFault(NativeToolError.invalidArguments(detail).localizedDescription)
+                                let answer = repairs.answer(NativeToolRepair.named(fault, definitions[call.name], raw: call.arguments), key: key)
+                                repairsSpent = repairsSpent || repairs.isClosed(key)
+                                neverRan.record(answer)
+                                result = try NativeToolResultBudget.serialized(answer.value, maximumBytes: resultBudget)
                                 state = .failed
                             } catch {
                                 result = try NativeToolResultBudget.serializedError(error.localizedDescription, maximumBytes: resultBudget)

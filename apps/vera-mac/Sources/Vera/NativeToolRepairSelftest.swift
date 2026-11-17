@@ -157,6 +157,9 @@ extension SelfTest {
             try await repairDeclined(),
             try await repairStartedWrite(),
             try repairComposition(),
+            try repairBounds(),
+            try repairSchemaShapes(),
+            try await repairHandlerFaults(),
             try await repairUncertainWrite(),
             try await repairReturned(),
             try await repairRequestShape(),
@@ -853,6 +856,63 @@ extension SelfTest {
                     && repairProblems(poem.fields).first?.path == "worker_type",
                     "An unknown kind of work is answered with the kinds there are: \(poem.fields)")
 
+        let emptyBrief = "The document brief is empty. Nothing was started."
+        let titleRule = "The title must be one line of at most 200 characters."
+        let ruleCases: [(label: String, raw: String, sentence: String)] = try [
+            ("A blank brief", arguments("document", "   ", ["Soil"]), emptyBrief),
+            ("A two-line title", arguments("document", brief, ["Soil"], title: "First\nSecond"), titleRule),
+        ]
+        for (label, raw, sentence) in ruleCases {
+            let runsBeforeRule = runs.count
+            let savesBeforeRule = saves.count
+            let ruled = try await run(raw)
+            try require(ruled.fields["error"] == NativeJSONValue.string(lead + sentence) && ruled.fields["fault"] == invalid
+                        && ruled.fields["not_run"] == NativeJSONValue.bool(true) && ruled.fields["repairs_left"] == NativeJSONValue.number(2)
+                        && runs.count == runsBeforeRule && saves.count == savesBeforeRule,
+                        "\(label) is refused before anything runs: \(ruled.fields)")
+        }
+        let blankTool = try tool()
+        let blankRaw = try arguments("document", "   ", ["Soil"])
+        let runsBeforeBlank = runs.count
+        let (_, blankTransport) = try await repairLoop(NativeToolRegistry(definitions: [blankTool]), rounds: [
+            call("e-1", NativeTaskTools.toolName, blankRaw), call("e-2", NativeTaskTools.toolName, blankRaw),
+            call("e-3", NativeTaskTools.toolName, blankRaw), reply("The brief was empty."),
+        ], enabled: [blankTool.id])
+        let blankResults = repairResults(blankTransport)
+        try require(repairFields(blankResults["e-1"])["repairs_left"] == NativeJSONValue.number(2)
+                    && repairFields(blankResults["e-2"])["repairs_left"] == NativeJSONValue.number(1)
+                    && repairFields(blankResults["e-3"])["closed"] == NativeJSONValue.bool(true) && runs.count == runsBeforeBlank,
+                    "Three blank briefs close the name without running anything")
+        let generalTool = NativeTaskTools.definition(service: service, origin: try NativeTaskFixture.origin(repository), profile: nil,
+                                                     general: { _ in throw NativeTaskFixture.Failure.assertion("The general hand-off must not be reached") },
+                                                     didSave: { _ in saves.hit() })
+        var generalRefusal: String?
+        do { _ = try generalTool.validatedArguments(#"{"worker_type":"general","objective":"   "}"#) }
+        catch NativeToolError.invalidArguments(let message) { generalRefusal = message }
+        try require(generalRefusal == NativeCompanionTaskPayload.emptyAssignment, "A blank general objective is refused before the handler: \(generalRefusal ?? "accepted")")
+
+        func admission(_ build: () throws -> Void) -> String? {
+            do { try build() } catch NativeTaskError.invalidRequest(let message) { return message } catch { return "\(error)" }
+            return nil
+        }
+        let agreement: [(label: String, objective: String, items: [String], title: String?, schemaSentence: String?)] = [
+            ("valid", brief, ["Soil"], "Plan", nil),
+            ("blank brief", "   ", ["Soil"], nil, nil),
+            ("two-line title", brief, ["Soil"], "First\nSecond", nil),
+            ("201-character title", brief, ["Soil"], String(repeating: "t", count: 201), "Field 'title' must be at most 200 characters"),
+            ("oversized", "Write a guide.", [String(repeating: "p", count: NativeResearchTaskRequest.documentInputCharacters)], nil, nil),
+            ("blank items only", brief, ["  ", ""], nil, nil),
+            ("title with a CRLF", brief, ["Soil"], "a\r\nb", nil),
+        ]
+        for row in agreement {
+            let initSentence = admission { _ = try NativeResearchTaskRequest(objective: row.objective, deliverables: row.items, workerType: "document", title: row.title) }
+            var checkSentence: String?
+            do { _ = try sample.validatedArguments(try arguments("document", row.objective, row.items, title: row.title)) }
+            catch NativeToolError.invalidArguments(let message) { checkSentence = message }
+            try require((initSentence == nil) == (checkSentence == nil) && checkSentence == (row.schemaSentence ?? initSentence),
+                        "The tool's check and the request agree for \(row.label): \(checkSentence ?? "accepted") | \(initSentence ?? "accepted")")
+        }
+
         let reportedTool = try tool()
         let (reported, reportedTransport) = try await repairLoop(NativeToolRegistry(definitions: [reportedTool]), rounds: [
             call("h-a", NativeTaskTools.toolName, titleRaw),
@@ -1108,6 +1168,232 @@ extension SelfTest {
                     && repairFields(results["c-2"])["outcome"] == nil,
                     "A write that threw without a clear answer is unconfirmed and not sent again: \(thrown)")
         return "a write that started and returned a failure is not run again in that answer, while one that failed before starting can be"
+    }
+
+    private static func repairBounds() throws -> String {
+        let require = NativeTaskFixture.require
+        let parameters: NativeJSONValue = .object(["type": .string("object"), "properties": .object([
+            "amount": .object(["type": .string("number"), "exclusiveMinimum": .number(0)]),
+            "ceiling": .object(["type": .string("number"), "exclusiveMaximum": .number(10)]),
+            "box": .object(["type": .string("object"), "maxProperties": .number(2)]),
+            "crate": .object(["type": .string("object"), "minProperties": .number(2)]),
+            "tags": .object(["type": .string("array"), "uniqueItems": .bool(true), "items": .object(["type": .string("string")])]),
+            "mode": .object(["const": .string("fast")]),
+            "level": .object(["const": .number(3)]),
+            "flag": .object(["const": .bool(true)]),
+            "either": .object(["type": .array([.string("string"), .string("null")])]),
+            "floor": .object(["minimum": .number(5)]),
+            "notlist": .object(["not": .object(["maxItems": .number(0)])]),
+            "words": .object(["type": .string("array"), "items": .object(["type": .string("string")])]),
+        ])])
+        let bounds = NativeToolDefinition(id: "repair-bounds", name: "bounds_check", title: "Check bounds",
+                                          description: "Checks values against their bounds. When to use: never, this is a fixture.",
+                                          parameters: parameters, confirmation: .none, effect: .read, isAvailable: { true }, execute: { _ in .object([:]) })
+        guard let validator = NativeToolSchemaCache.shared.validator(parameters) else {
+            throw NativeTaskFixture.Failure.assertion("The bounds fixture schema compiles")
+        }
+        let lead = NativeToolError.invalidArguments("").localizedDescription
+        let cases: [(raw: String, path: String, expected: String)] = [
+            (#"{"amount":0}"#, "amount", "must be more than 0"),
+            (#"{"ceiling":10}"#, "ceiling", "must be less than 10"),
+            (#"{"box":{"a":1,"b":2,"c":3}}"#, "box", "must have at most 2 fields, and this one has 3"),
+            (#"{"crate":{"a":1}}"#, "crate", "must have at least 2 fields, and this one has 1"),
+            (#"{"tags":["a","a"]}"#, "tags", "must not repeat an item"),
+            (#"{"mode":"slow"}"#, "mode", "must be exactly \"fast\""),
+            (#"{"level":4}"#, "level", "must be exactly 3"),
+            (#"{"flag":false}"#, "flag", "must be exactly true"),
+            (#"{"either":5}"#, "either", "must be one of these kinds: string, null"),
+            (#"{"floor":3}"#, "floor", "must be at least 5"),
+            (#"{"notlist":[]}"#, "notlist", "does not match its schema"),
+            (#"{"words":["a",3]}"#, "words[1]", "must be a string"),
+        ]
+        for item in cases {
+            let value = try NativeJSONValue(any: try JSONSerialization.jsonObject(with: Data(item.raw.utf8)))
+            let listed = validator.problems(value)
+            var thrown: Error?
+            do { _ = try bounds.validatedArguments(item.raw) } catch { thrown = error }
+            let sentence = thrown.map { NativeToolRepair.problem(bounds, raw: item.raw, error: $0).message }
+            try require(listed == [NativeSchemaProblem(path: item.path, expected: item.expected)]
+                        && sentence == lead + "Field '" + item.path + "' " + item.expected && sentence?.contains("has an item") == false,
+                        "\(item.raw) names its bound: \(listed) | \(sentence ?? "accepted")")
+        }
+        let piled = "a" + String(repeating: "\u{0301}", count: 8000)
+        try require(piled.count == 1, "The piled fixture is one character")
+        try require(NativeResearchTaskRequest.sizeRefusal(objective: piled, deliverables: [], workerType: "document")
+                    == "The brief and the things to include, written this way, take more room than a document can carry for now. Nothing was started. Use plainer text, or split this into more than one document.",
+                    "One character too heavy to carry has no smaller amount to offer")
+        return "every supported bound is named in the sentence, typeless bounds use the value's own kind, and a list is blamed on an item only when an item is the problem"
+    }
+
+    private static func repairSchemaShapes() throws -> String {
+        let require = NativeTaskFixture.require
+        let parameters: NativeJSONValue = .object([
+            "type": .string("object"),
+            "$defs": .object(["base": .object(["type": .string("object")])]),
+            "properties": .object([
+                "pair": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "not": .object(["maxItems": .number(1)])]),
+                "spot": .object(["$ref": .string("#/$defs/base"), "required": .array([.string("row")])]),
+                "rows": .object(["type": .string("array"), "minItems": .number(1)]),
+                "same": .object(["const": .string("fast"), "not": .object(["const": .string("fast")])]),
+                "split": .object(["const": .string("a\nb")]),
+                "pick": .object(["enum": .array([.number(1), .number(2), .number(3)])]),
+            ]),
+        ])
+        guard let validator = NativeToolSchemaCache.shared.validator(parameters) else {
+            throw NativeTaskFixture.Failure.assertion("The shapes fixture schema compiles")
+        }
+        let cases: [(raw: String, path: String, expected: String)] = [
+            (#"{"pair":["a"]}"#, "pair", "does not match its schema"),
+            (#"{"spot":{}}"#, "spot.row", "is required"),
+            (#"{"rows":[]}"#, "rows", "must have at least 1 item, and this one has 0"),
+            (#"{"same":"fast"}"#, "same", "does not match its schema"),
+            (#"{"split":"c"}"#, "split", "must be one fixed value"),
+            (#"{"pick":5}"#, "pick", "must be one of: 1, 2, 3"),
+        ]
+        for item in cases {
+            let value = try NativeJSONValue(any: try JSONSerialization.jsonObject(with: Data(item.raw.utf8)))
+            let listed = validator.problems(value)
+            try require(listed == [NativeSchemaProblem(path: item.path, expected: item.expected)]
+                        && !listed.contains { $0.expected.contains("has an item") || $0.expected.contains("must be exactly") },
+                        "\(item.raw) is described by its own shape: \(listed)")
+        }
+        let roomy = NativeToolDefinition(id: "repair-roomy", name: "roomy_check", title: "Check fields",
+                                         description: "Checks how many fields there are. When to use: never, this is a fixture.",
+                                         parameters: .object(["type": .string("object"), "maxProperties": .number(2)]),
+                                         confirmation: .none, effect: .read, isAvailable: { true }, execute: { _ in .object([:]) })
+        let crowded = #"{"a":1,"b":2,"c":3}"#
+        var thrown: Error?
+        do { _ = try roomy.validatedArguments(crowded) } catch { thrown = error }
+        let whole = thrown.map { NativeToolRepair.problem(roomy, raw: crowded, error: $0).message }
+        try require(whole == "The tool arguments are invalid: The arguments must have at most 2 fields, and this one has 3",
+                    "A problem with the arguments as a whole is said about the arguments: \(whole ?? "accepted")")
+        return "an item is never blamed for the list, a reference and its siblings are both checked, counts read in the singular, a matching fixed value is not repeated back, and a problem with the whole call names the arguments"
+    }
+
+    private static func repairHandlerFaults() async throws -> String {
+        let require = NativeTaskFixture.require
+        let call = NativeWebToolsSelftest.call
+        let reply = NativeWebToolsSelftest.reply
+        let invalid = NativeJSONValue.string(NativeToolCallFault.invalidArguments.rawValue)
+        let lead = NativeToolError.invalidArguments("").localizedDescription
+        let bedParameters: NativeJSONValue = .object(["type": .string("object"), "additionalProperties": .bool(false), "required": .array([.string("bed")]),
+                                                      "properties": .object(["bed": .object(["type": .string("string"), "minLength": .number(1),
+                                                                                             "description": .string("The bed to measure.")])])])
+        let measures = NativeChatRulesCounter()
+        let measure = NativeToolDefinition(
+            id: "repair-measure", name: "measure_bed", title: "Measure a bed",
+            description: "Measures one garden bed. When to use: the person asks how big a bed is.",
+            parameters: bedParameters, confirmation: .none, effect: .read, isAvailable: { true },
+            execute: { _ in
+                measures.hit()
+                throw NativeToolError.invalidArguments("Give the size as WxH")
+            })
+        let (measured, measuredTransport) = try await repairLoop(NativeToolRegistry(definitions: [measure]), rounds: [
+            call("ms-1", "measure_bed", #"{"bed":"north"}"#), call("ms-2", "measure_bed", #"{"bed":"north"}"#),
+            call("ms-3", "measure_bed", #"{"bed":"north"}"#), reply("I couldn't measure the bed."),
+        ], enabled: [measure.id])
+        let measuredResults = repairResults(measuredTransport)
+        let firstMeasure = repairFields(measuredResults["ms-1"])
+        try require(firstMeasure["not_run"] == NativeJSONValue.bool(true) && firstMeasure["fault"] == invalid
+                    && firstMeasure["error"] == NativeJSONValue.string(lead + "Give the size as WxH") && firstMeasure["problems"] == nil
+                    && firstMeasure["repairs_left"] == NativeJSONValue.number(2)
+                    && repairFields(measuredResults["ms-2"])["repairs_left"] == NativeJSONValue.number(1)
+                    && repairFields(measuredResults["ms-3"])["closed"] == NativeJSONValue.bool(true),
+                    "A handler refusing its input is answered like any invalid call and closes after three: \(firstMeasure)")
+        try require(measures.count == 3 && measuredTransport.schemas.last?.isEmpty == true
+                    && measured?.activities.allSatisfy({ NativeToolActivityChip.shownResult($0.result ?? "") == NativeToolActivityChip.incomplete }) == true,
+                    "The handler did run each time, and each refusal is counted and shown as incomplete: \(measures.count)")
+
+        let repository = try LocalChatRepository(inMemory: true)
+        let ledger = NativeEffectLedgerStore(database: repository.database)
+        let (_, turn) = try chatLedgerTurn(repository)
+        let rules = chatLedgerRules([.otherChanges: .act])
+        let ledgerLog = NativeChatLedgerLog()
+        let seal = ChatStore.ruled(chatLedgerFixture(id: "capability-garden_seal", name: "seal_bed", action: .otherChanges, log: ledgerLog) {
+            NativeToolCallContext.effectStarts()
+            throw NativeToolError.invalidArguments("The seal size is missing")
+        }, rules: rules, store: nil, conversationID: turn.conversationID, requestText: "Look after the garden")
+        let hook = chatLedgerHook(ledger, turn: turn, rules: rules, grants: NativeFolderGrantSource(), log: ledgerLog) { _ in
+            NativeCardAnswer(kind: .allowOnce, byPerson: true)
+        }
+        let sealed = try await chatLedgerLoop([seal], calls: [[NativeChatToolCall(id: "seal-1", name: "seal_bed", arguments: #"{"path":"north"}"#)],
+                                                              [NativeChatToolCall(id: "seal-2", name: "seal_bed", arguments: #"{"path":"north"}"#)]], hook: hook)
+        let sealRows = try chatLedgerRows(ledger, turn, "seal_bed")
+        let absent: NativeJSONValue = .object(["observed": .string("absent")])
+        let sealResults = (sealed?.activities ?? []).map { repairFields($0.result) }
+        try require(seal.governed && ledgerLog.count("ran:seal_bed") == 2 && sealRows.count == 2
+                    && sealRows.allSatisfy { $0.state == .uncertain && $0.receipt == absent }
+                    && sealResults.count == 2 && sealResults.allSatisfy { $0["outcome"] == nil && $0["fault"] == invalid },
+                    "A write that refused its input after starting is a clear no and can be sent again: \(sealRows.map(\.state))")
+
+        let named = NativeToolDefinition(
+            id: "repair-named", name: "name_shelf", title: "Name a shelf",
+            description: "Names a greenhouse shelf. When to use: the person wants a shelf named.",
+            parameters: .object(["type": .string("object"), "properties": .object(["name": .object(["type": .string("string"), "minLength": .number(1),
+                                                                                                    "description": .string("The new name.")])])]),
+            confirmation: .none, effect: .read, isAvailable: { true }, execute: { _ in .object(["named": .bool(true)]) },
+            argumentValidator: { values in
+                if case .string(let text)? = values["name"], text.count > 80 { throw NativeToolError.invalidArguments("Names can be up to 80 characters.") }
+            })
+        let longName = "{\"name\":\"" + String(repeating: "Bean row ", count: 10) + "\"}"
+        let (_, namedTransport) = try await repairLoop(NativeToolRegistry(definitions: [named]), rounds: [
+            call("nm-1", "name_shelf", longName), reply("The name was too long."),
+        ], enabled: [named.id])
+        let namedFields = repairFields(repairResults(namedTransport)["nm-1"])
+        try require(namedFields["error"] == NativeJSONValue.string(lead + "Names can be up to 80 characters.") && namedFields["fault"] == invalid,
+                    "A tool's own argument rule reaches the result in its own words: \(namedFields)")
+
+        let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_803_000_000))
+        let utc = TimeZone(identifier: "UTC") ?? .current
+        let schedule = NativeScheduleTools.definition(searchAvailable: { true }, now: { clock.now }, timeZone: { utc }, save: { _ in
+            throw NativeTaskFixture.Failure.assertion("A refused schedule must not be saved")
+        })
+        let asked = NativeChatRulesCounter()
+        let base: [String: Any] = ["title": "Garden brief", "worker_type": "document", "instruction": "Write the garden brief"]
+        func scheduleArguments(_ extra: [String: Any]) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: base.merging(extra) { _, new in new }, options: [.sortedKeys]), as: UTF8.self)
+        }
+        let drafts: [(label: String, raw: String, sentence: String)] = try [
+            ("A daily schedule with no time", scheduleArguments(["repeat": "daily"]), "Give the time as HH:MM."),
+            ("A time past the end of the day", scheduleArguments(["repeat": "daily", "time": "25:00"]), "Give the time as HH:MM in 24-hour form."),
+            ("A one-time schedule in the past", scheduleArguments(["repeat": "once", "at": "2020-01-01T09:00"]), "Pick a time that is still ahead."),
+        ]
+        for item in drafts {
+            var refused: String?
+            do { _ = try schedule.validatedArguments(item.raw) } catch NativeToolError.invalidArguments(let message) { refused = message }
+            let transport = ScriptedNativeToolTransport(rounds: [call("sc-1", NativeScheduleTools.toolName, item.raw), reply("It wasn't scheduled.")])
+            let loop = NativeToolLoop(transport: transport, registry: NativeToolRegistry(definitions: [schedule]), confirm: { _ in
+                asked.hit()
+                return true
+            })
+            for try await _ in loop.stream(messages: [NativeChatMessage(role: "user", content: "Schedule the garden brief")], model: "local-model",
+                                           enabledToolIDs: [schedule.id]) {}
+            let fields = repairFields(repairResults(transport)["sc-1"])
+            try require(refused == item.sentence && fields["error"] == NativeJSONValue.string(lead + item.sentence) && fields["not_run"] == NativeJSONValue.bool(true)
+                        && asked.count == 0,
+                        "\(item.label) is refused in the tool's own words before any card: \(fields)")
+        }
+
+        let readCount = NativeChatRulesCounter()
+        let reader = NativeToolDefinition(
+            id: "repair-measure", name: "measure_bed", title: "Measure a bed",
+            description: "Measures one garden bed. When to use: the person asks how big a bed is.",
+            parameters: bedParameters, confirmation: .none, effect: .read, isAvailable: { true },
+            execute: { _ in
+                readCount.hit()
+                throw NativeToolError.invalidArguments("Give the size as WxH")
+            })
+        let work = { (id: String) in NativeTaskGenerationToolCall(id: id, name: "measure_bed", arguments: #"{"bed":"north"}"#) }
+        let rig = try NativeCompanionFinishRig(tools: [reader], model: repairWorkModel([[work("hw-1")], [work("hw-2")], [work("hw-3")], [work("hw-4")]]))
+        _ = try rig.create("Measure the north bed")
+        let (record, saved) = try await repairWorkRun(rig)
+        let report = try rig.report(record)["report"] as? String ?? ""
+        let notes = saved.last?.effects.filter { $0.outcome == NativeToolRepair.neverRanOutcome } ?? []
+        let line = "Not run: Measure a bed. " + NativeToolRepair.notCorrected
+        try require(record.state == .completed && readCount.count == 3 && notes.count == 1 && report == repairClosingReply + "\n\n" + line
+                    && repairFields(repairWorkResults(saved.last)["hw-3"])["closed"] == NativeJSONValue.bool(true),
+                    "In handed-off work a read refusing its input three times closes the name and the report says it never ran: \(report)")
+        return "a handler refusing its input is counted and closes the name in both loops, a started write that refused its input is a clear no, a tool's own rule keeps its words, and schedule rules refuse before any card"
     }
 
     private static func repairComposition() throws -> String {
