@@ -27,6 +27,7 @@ enum NativeChatEffects {
 
     static func settlement(for error: Error, boundary: NativeEffectBoundary, marks: Bool) -> NativeChatEffectOutcome {
         if error is CancellationError { return .uncertain("stopped") }
+        if case .invalidArguments? = error as? NativeToolError { return .absent("refused") }
         if case .failed(let detail)? = error as? NativeToolError, detail == NativeToolLoop.timedOutMessage { return .uncertain("timeout") }
         if boundary.reached { return .uncertain("no_receipt") }
         if marks || NativeCompanionWorker.definite(error) || error is NativeRuleRefusal { return .absent("refused") }

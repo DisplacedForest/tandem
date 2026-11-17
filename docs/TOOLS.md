@@ -42,9 +42,59 @@ Before anything is offered, the registry (`NativeToolRegistry`) checks each defi
 
 ## How arguments are checked
 
-Every call is parsed as a JSON object and checked against `parameters` before the handler runs. A call that doesn't fit gets a short message back, such as `Missing required field 'packet'`, and nothing runs. A `null` for an optional field that doesn't accept null is dropped rather than refused.
+Every call is parsed as a JSON object and checked against `parameters` before the handler runs. A call that doesn't fit runs nothing and gets a corrective result back that says what was wrong and where, such as `Missing required field 'packet'` (see [When a call is wrong](#when-a-call-is-wrong)). A `null` for an optional field that doesn't accept null is dropped rather than refused.
 
 The validator supports these keywords: `type`, `properties`, `required`, `additionalProperties`, `items`, `prefixItems`, `enum`, `const`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `minLength`, `maxLength`, `minItems`, `maxItems`, `minProperties`, `maxProperties`, `uniqueItems`, `allOf`, `anyOf`, `oneOf`, `not`, `$ref`, `$defs` and `$schema` (the 2020-12 or draft-07 identifier). It ignores the annotations `title`, `description`, `$comment`, `default`, `examples`, `deprecated`, `readOnly` and `writeOnly`. Any other keyword, `pattern` and `format` included, means the tool isn't offered and is reported instead. Put a check like that in the handler.
+
+## When a call is wrong
+
+The shared policy lives in `NativeToolRepair.swift` and both transports use it. When a call can't run, the model gets a JSON object instead of a result. `error` is one plain sentence about what went wrong, and the other fields tell it how to recover. When a field has the wrong value, the sentence names that field's path and what it must be, and for a length or a count it also says how many were sent. Every supported bound is named this way: lengths, item and field counts, minimums and maximums (inclusive or exclusive), repeated items, a fixed value, a list of choices and the allowed kinds of value. When an item inside a list is the problem, the item's own path is named, such as `notes[1]`; otherwise the list itself is named. Counts read naturally (`1 item`, `2 items`). A problem with the arguments as a whole reads like `The arguments must have at most 2 fields, and this one has 3`. A missing or undeclared field at the top level keeps the short form shown below; one inside an object or list is named by its full path, such as `Field 'items[1].name' is required`. The result also names the action in plain words from the call's own values, such as `Write the document "Week's plans"`, so the final answer can say what never ran; a tool can supply its own wording by setting `summary` on its definition. For a rule the schema can't express, set `check`: it gets the checked arguments and runs before the handler and before any card is shown, and a sentence it returns is answered like any other invalid call, so it counts toward the same repairs. A handler that throws `NativeToolError.invalidArguments` for bad input is answered and counted the same way, though by then it has run. Each object names a `fault`:
+
+- `malformed_arguments`: the arguments aren't valid JSON, for example a call cut off mid-stream.
+- `unknown_tool`: the name isn't one of the tools offered for this request. `offered` lists the names it can use.
+- `invalid_arguments`: the arguments are JSON but don't fit `parameters`. `problems` lists up to four, each with `at` (a path such as `filters.shelf` or `items[1].name`) and `expected`.
+- `unsupported_value`: the arguments hold something the app can't check or carry, such as arguments too large to check (more than about 32,000 values in one call), or they were refused outright by a connected service's own check, for example a name repeated in one object or arguments over 16 KB.
+- `invalid_result`: the handler ran but returned `null`, blank text, or a result that doesn't fit the tool's declared `outputSchema`.
+
+For a call to `shelf_lookup` (titled "Look up a shelf") that leaves out its required `packet`, the model gets:
+
+```json
+{
+  "action": "Look up a shelf",
+  "error": "The tool arguments are invalid: Missing required field 'packet'",
+  "fault": "invalid_arguments",
+  "fix": "Nothing ran. Correct the arguments and send this call again.",
+  "not_run": true,
+  "problems": [{"at": "packet", "expected": "is required"}],
+  "repairs_left": 2
+}
+```
+
+For a call to `create_background_task` whose `title` runs to 231 characters, the sentence names the field, its limit and what was sent:
+
+```json
+{
+  "action": "Write the document \"Plans for the week, day by day, with everything that has to be bought, booked or...\"",
+  "error": "The tool arguments are invalid: Field 'title' must be at most 200 characters, and this one has 231",
+  "fault": "invalid_arguments",
+  "fix": "Nothing ran. Correct the arguments and send this call again.",
+  "not_run": true,
+  "problems": [{"at": "title", "expected": "must be at most 200 characters, and this one has 231"}],
+  "repairs_left": 2
+}
+```
+
+Inside a list the path names the item, such as `notes[1]`.
+
+Each tool name gets two repairs, counted per answer in chat and per run in handed-off work (unknown names share one count). The first failure says `repairs_left: 2`, the second `1`. A third failure closes that name: the result has `closed: true`, `repairs_left: 0` and a `fix` saying that nothing was started, saved or sent, telling the model not to send it again and to say plainly what couldn't be done. In chat the rest of that round still runs, then the answer is written without tools. When the answer is written without tools, because a name closed or the round or call limits were reached, and the app refused any call in that turn, the request for that answer is also told that some calls never ran and that their results say which. It doesn't list them, and nothing from a call's arguments or a tool's result goes into that instruction. In handed-off work the run goes to its closing write-up, and the counts are saved with the work so a restart doesn't reset them. The report then ends with a line such as `Not run: Write a file "notes/plan.md".` followed by why: the request couldn't be corrected, or the step isn't available in that work. A name's count resets when a call to it returns from its handler, unless the name is already closed.
+
+Repairs aren't free. Every attempt spends the same rounds and calls as any other call, so the chat limits of four rounds and eight calls still hold.
+
+In chat, a write whose outcome isn't known comes back with `outcome: "uncertain"` and a `fix` telling the model to say it couldn't be confirmed. That covers a write that timed out, one that threw an error the app can't read as a clear no, and one that returned a failure after it had started its change. A write that refused its input with `invalidArguments`, even after it started, or a governed tool that stopped before it started, is a clear no and can be called again. The same tool with the same arguments isn't run again for the rest of that answer; the model gets `not_run: true` instead. Different arguments still run, and a read that fails or times out can always be called again. A call the person declined is treated the same way: sent again unchanged in the same answer, it isn't asked about or run, and the model is told it wasn't approved. A card answer that the app records as not coming from the person, such as a card closed when the answer was stopped, doesn't count as a decline, so the call is asked again.
+
+A result of `null`, blank text, or one that doesn't match a declared `outputSchema` counts as an error, not a success. For a write it means the outcome is uncertain, and handed-off work checks what happened before going on. Set `checksOwnResult` on a definition whose handler already checks its own results, as connected services do.
+
+Repairing a call never retries its handler. The app only tells the model what went wrong; any second attempt is a new call the model chooses to send, checked like the first one. Separately, handed-off work retries a read that failed for a passing reason, such as a dropped connection or a timeout, up to twice with short pauses, and it never retries a write.
 
 ## Transports
 

@@ -453,7 +453,7 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                 isAvailable: { self.access.allowed(record, scope: scope, revision: revision) },
                 execute: { arguments in try await self.execute(record, arguments: .object(arguments), scope: scope, subject: "focused", expectedRevision: revision) },
                 argumentValidator: { try record.validator?.validate(.object($0)) },
-                outputSchema: record.outputSchema)
+                outputSchema: record.outputSchema, checksOwnResult: true)
         }
     }
     func revision(scope: PiModelScope) async throws -> String {
