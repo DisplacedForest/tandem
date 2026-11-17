@@ -47,6 +47,7 @@ enum RulesCopy {
 struct SharedFolderRowView: View {
     let row: SharedFolderRow
     var onStop: () -> Void
+    var onChoose: () -> Void = {}
     @Environment(\.companionName) private var name
 
     var body: some View {
@@ -58,6 +59,10 @@ struct SharedFolderRowView: View {
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if row.state.canChooseAgain {
+                Button(SharedFolderRows.chooseAgain, action: onChoose)
+                    .accessibilityLabel(row.chooseLabel(name: name))
+            }
             Button(SharedFolderRows.stop, action: onStop)
                 .accessibilityLabel(row.stopLabel(name: name))
         }
@@ -157,6 +162,16 @@ struct RulesSettingsTab: View {
 
     private func refresh() { rows = store.ruleRows() }
 
+    private func chooseAgain(_ row: SharedFolderRow) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = SharedFolderRows.choosePrompt
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.chooseAgain(row, url: url)
+    }
+
     private func infoShown(_ action: NativeActionClass) -> Binding<Bool> {
         Binding(get: { infoFor == action }, set: { infoFor = $0 ? action : nil })
     }
@@ -234,7 +249,7 @@ struct RulesSettingsTab: View {
             if !shared.isEmpty {
                 Section {
                     ForEach(shared) { row in
-                        SharedFolderRowView(row: row, onStop: { store.stopSharing(row) })
+                        SharedFolderRowView(row: row, onStop: { store.stopSharing(row) }, onChoose: { chooseAgain(row) })
                     }
                 } header: {
                     HStack {
@@ -267,7 +282,9 @@ struct RulesSettingsTab: View {
             if startsClosed { advanced.leave() }
             store.sweepRuleRecords()
             refresh()
+            store.checkSharedFolders()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.checkSharedFolders() }
         .onReceive(NotificationCenter.default.publisher(for: .ruleRecordsChanged).receive(on: RunLoop.main)) { _ in refresh() }
         .onChange(of: store.conversations.map(\.title)) { _, _ in refresh() }
         .onChange(of: config.nativeSettings.rules) { _, _ in refresh() }

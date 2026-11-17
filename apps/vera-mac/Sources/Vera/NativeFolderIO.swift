@@ -63,14 +63,26 @@ enum NativeFolderIO {
         if case .failed(let code) = lookup(directory, name) { throw failure(code, "Couldn't use \(display)") }
     }
 
+    static func reachesTrash(_ descriptor: Int32) -> Bool {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard fcntl(descriptor, F_GETPATH, &buffer) == 0 else { return false }
+        return FolderGrant.inTrash(String(cString: buffer))
+    }
+
     static func openRoot(_ grant: FolderGrant) throws -> NativeFolderDescriptor {
         AppLocations.refuseRealFolder(URL(fileURLWithPath: grant.path, isDirectory: true))
         let fd = open(grant.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard fd >= 0 else { throw NativeFolderAccessError.notFound(grant.path) }
+        guard fd >= 0 else {
+            let code = Darwin.errno
+            let state = grant.resolved().state
+            if state != .usable { throw NativeFolderAccessError.gone(grant, state) }
+            throw NativeFolderAccessError.gone(grant, code == EACCES || code == EPERM ? .denied : .missing)
+        }
         let descriptor = NativeFolderDescriptor(fd)
         if let identity = grant.identity {
-            guard NativeFolderIdentity.of(descriptor: fd) == identity else { throw NativeFolderAccessError.outsideGrants(grant.path) }
+            guard NativeFolderIdentity.of(descriptor: fd) == identity else { throw NativeFolderAccessError.gone(grant, .missing) }
         }
+        if reachesTrash(fd) { throw NativeFolderAccessError.gone(grant, .missing) }
         return descriptor
     }
 
@@ -85,7 +97,9 @@ enum NativeFolderIO {
             default: throw errno("Couldn't open \(display)")
             }
         }
-        return NativeFolderDescriptor(fd)
+        let opened = NativeFolderDescriptor(fd)
+        if reachesTrash(fd) { throw NativeFolderAccessError.inTrash(display) }
+        return opened
     }
 
     static func walk(_ location: NativeFolderLocation, components: [String]) throws -> NativeFolderDescriptor {

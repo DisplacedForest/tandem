@@ -177,6 +177,8 @@ final class ChatStore: ObservableObject {
     private(set) var nativeMemorySettings: NativeMemorySettings
     private(set) var nativeRules: NativeRules
     @Published var rulesNotice: String?
+    @Published var folderStates: [String: FolderAvailability] = [:]
+    var folderRefreshGeneration = 0
     let turnCommandReasonSource = NativeCommandReasonSource()
     var turnInstructionUseSources: [UUID: NativeInstructionUses] = [:]
     var chatStaleAnswers = NativeChatEffects.staleAnswers

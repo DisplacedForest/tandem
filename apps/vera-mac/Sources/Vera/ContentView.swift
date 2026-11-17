@@ -1426,7 +1426,9 @@ struct ComposerField: View {
             }
             if !store.selectedGrants.isEmpty {
                 FolderGrantChips(grants: store.selectedGrants, unsupported: store.folderToolsUnsupportedReason,
-                                 onRemove: { store.revokeGrant($0) })
+                                 onRemove: { store.revokeGrant($0) }, availability: { store.folderState($0) })
+                    .task(id: store.selectedGrants) { store.checkSharedFolders() }
+                    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.checkSharedFolders() }
             }
             ComposerReplyBar()
             if !store.attachments.isEmpty {

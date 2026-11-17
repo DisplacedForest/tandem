@@ -459,6 +459,8 @@ enum SelfTest {
         do { try await runRuleRowsStore() } catch { print("SELFTEST ERROR: rule rows store \(error)"); exit(1) }
         do { try runSharedFolderRows() } catch { print("SELFTEST ERROR: shared folder rows \(error)"); exit(1) }
         do { try runSharedFolderRowsStore() } catch { print("SELFTEST ERROR: shared folder rows store \(error)"); exit(1) }
+        do { try await runSharedFolderAvailability() } catch { print("SELFTEST ERROR: shared folder availability \(error)"); exit(1) }
+        do { try runSharedFolderAvailabilityStore() } catch { print("SELFTEST ERROR: shared folder availability store \(error)"); exit(1) }
         do { try runCardQuestions() } catch { print("SELFTEST ERROR: card questions \(error)"); exit(1) }
         do { try runTypedWords() } catch { print("SELFTEST ERROR: typed words \(error)"); exit(1) }
         do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }

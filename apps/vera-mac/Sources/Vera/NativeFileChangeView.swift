@@ -16,12 +16,13 @@ struct FolderGrantChips: View {
     let grants: [FolderGrant]
     var unsupported: String? = nil
     var onRemove: (String) -> Void
+    var availability: (FolderGrant) -> FolderAvailability = { _ in .usable }
     @Environment(\.renderSafe) private var renderSafe
 
     private var chips: some View {
         HStack(spacing: 8) {
             ForEach(grants) { grant in
-                FolderGrantChip(grant: grant, onRemove: { onRemove(grant.id) })
+                FolderGrantChip(grant: grant, state: availability(grant), onRemove: { onRemove(grant.id) })
             }
             if !renderSafe { ConversationRulesButton() }
         }
@@ -45,12 +46,14 @@ struct FolderGrantChips: View {
 
 struct FolderGrantChip: View {
     let grant: FolderGrant
+    var state: FolderAvailability = .usable
     var onRemove: () -> Void
     @State private var hover = false
 
     var body: some View {
         HStack(spacing: 6) {
-            InterfaceIconView(icon: .folder, size: InterfaceIconSize.small).foregroundStyle(Theme.accent)
+            InterfaceIconView(icon: state == .usable ? .folder : .warning, size: InterfaceIconSize.small)
+                .foregroundStyle(state == .usable ? Theme.accent : Theme.textSecondary)
             Text(grant.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
             Button(action: onRemove) {
                 InterfaceIconView(icon: .close, size: InterfaceIconSize.mark)
@@ -64,8 +67,9 @@ struct FolderGrantChip: View {
         .clipShape(Capsule())
         .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
         .onHover { hover = $0 }
-        .help(grant.path)
+        .help(state.chipNote(grant.name) ?? grant.path)
         .accessibilityElement(children: .combine)
+        .accessibilityValue(state.chipNote(grant.name) ?? "")
     }
 }
 
