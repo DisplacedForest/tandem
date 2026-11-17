@@ -282,6 +282,19 @@ extension SelfTest {
         try require(try NativeTaskProjection.display(reference: chosen, snapshot: chosen.snapshot).card.milestone == ordinary
                     && NativeTaskProjection.display(reference: prefixedCard, snapshot: prefixedCard.snapshot).card.milestone == prefixed,
                     "Cards show any other saved question exactly as saved")
+        let scheduled = ChatStore()
+        func waitingNote(_ question: String) -> String {
+            scheduled.scheduleRunNote(NativeScheduleRun(id: "waiting-" + String(question.count), scheduleID: "credential-words", scheduledFor: Date(),
+                                                        outcome: .waiting, detail: question)).plain(name: scheduled.companionName)
+        }
+        try require(waitingNote(prefixed) == prefixed && waitingNote(ordinary) == ordinary
+                    && waitingNote(Words.credentialUnreadableMessage) == Words.credentialUnreadableMessage
+                    && waitingNote("The saved model credential is unavailable. Retry this step?") == Words.credentialUnreadableMessage,
+                    "A scheduled run waiting on a question shows it as saved, and only a whole earlier question in the new words")
+        let finishedNote = scheduled.scheduleRunNote(NativeScheduleRun(id: "finished-note", scheduleID: "credential-words", scheduledFor: Date(),
+                                                                         outcome: .failed, detail: NativeScheduler.retiredMissedNote))
+        try require(finishedNote.plain(name: scheduled.companionName) == NativeScheduler.missedNote,
+                    "A run that isn't waiting keeps the saved-note wording it had")
         for old in ["The saved model credential is unavailable.", "The saved model credential is unavailable. Retry this step?"] {
             try require(SavedWording.current(old) == Words.credentialUnreadableMessage && SavedWording.question(old) == Words.credentialUnreadableMessage,
                         "A saved credential line reads with the current words: \(old)")
