@@ -108,7 +108,11 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     static func isTrashEntry(directory: String, name: String) -> Bool {
         guard let found = entryIdentity(directory + "/" + name) else { return false }
-        return [".Trash", ".Trashes"].contains { NativeFolderIdentity.of(path: directory + "/" + $0) == found }
+        return [".Trash", ".Trashes"].contains {
+            var info = stat()
+            guard lstat(directory + "/" + $0, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR else { return false }
+            return NativeFolderIdentity(device: Int64(info.st_dev), inode: UInt64(info.st_ino)) == found
+        }
     }
 
     static func throughTrash(root: String, components: [String]) -> Bool {
@@ -295,8 +299,9 @@ struct NativeFolderAccess: Sendable {
             guard roots.count + unavailable.count == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(requested) }
             absolute = try only().path + "/" + requested
         }
-        let candidates = [URL(fileURLWithPath: absolute).standardizedFileURL.path,
-                          URL(fileURLWithPath: absolute).standardizedFileURL.resolvingSymlinksInPath().path]
+        let standardized = URL(fileURLWithPath: absolute).standardizedFileURL
+        if let index = lost.firstIndex(where: { Self.contains(root: $0, path: standardized.path) }) { throw unavailable[index] }
+        let candidates = [standardized.path, standardized.resolvingSymlinksInPath().path]
         let matches = candidates.flatMap { candidate in
             roots.filter { Self.contains(root: $0.path, path: candidate) }.map { (root: $0, path: candidate) }
         }

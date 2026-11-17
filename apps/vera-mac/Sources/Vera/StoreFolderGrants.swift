@@ -482,7 +482,10 @@ extension ChatStore {
                                      availability: { known[Self.folderStateKey($0)] ?? .usable })
     }
 
-    nonisolated static func folderStateKey(_ grant: FolderGrant) -> String { grant.id + "|" + grant.path }
+    nonisolated static func folderStateKey(_ grant: FolderGrant) -> String {
+        let identity = grant.identity.map { "\($0.device)|\($0.inode)" } ?? ""
+        return grant.id + "|" + grant.path + "|" + identity
+    }
 
     nonisolated static func folderStates(_ grants: [FolderGrant]) -> [String: FolderAvailability] {
         var states: [String: FolderAvailability] = [:]
@@ -494,18 +497,28 @@ extension ChatStore {
 
     func folderState(_ grant: FolderGrant) -> FolderAvailability { folderStates[Self.folderStateKey(grant)] ?? .usable }
 
-    func checkSharedFoldersNow() {
-        let next = Self.folderStates(everySharedFolder)
+    func beginSharedFolderCheck() -> Int {
+        folderRefreshGeneration += 1
+        return folderRefreshGeneration
+    }
+
+    func applySharedFolderStates(_ next: [String: FolderAvailability], generation: Int) {
+        guard generation == folderRefreshGeneration else { return }
         if next != folderStates { folderStates = next }
     }
 
+    func checkSharedFoldersNow() {
+        let generation = beginSharedFolderCheck()
+        applySharedFolderStates(Self.folderStates(everySharedFolder), generation: generation)
+    }
+
     func checkSharedFolders() {
+        let generation = beginSharedFolderCheck()
         let grants = everySharedFolder
-        Task.detached(priority: .utility) { [weak self] in
+        Task.detached(priority: .utility) { [weak self, grants, generation] in
             let next = ChatStore.folderStates(grants)
             await MainActor.run { [weak self] in
-                guard let self, next != self.folderStates else { return }
-                self.folderStates = next
+                self?.applySharedFolderStates(next, generation: generation)
             }
         }
     }

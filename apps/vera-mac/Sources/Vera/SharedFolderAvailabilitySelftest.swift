@@ -130,6 +130,15 @@ extension SelfTest {
         try require(note.contains("- Seedlings: \(kept.path)\n") && note.contains("- Invoices: \(lost.path) (can't be found right now)")
                     && note.contains("(its drive isn't connected right now)"), "The folder note marks the ones that aren't there: \(note)")
 
+        try manager.createSymbolicLink(atPath: lost.path, withDestinationPath: kept.path)
+        let redirectedWrite = try await failure(NativeFolderTools.writeName, [kept, lost], ["path": .string(lost.path + "/a.txt"), "content": .string("redirected")])
+        try require(redirectedWrite == NativeFolderAccessError.unavailable(name: "Invoices", path: lost.path, state: .missing).errorDescription
+                    && (try manager.contentsOfDirectory(atPath: kept.path)).isEmpty,
+                    "A missing share linked to another share names the missing folder and writes nothing")
+        _ = try await tool(NativeFolderTools.writeName, [kept, lost]).execute(["path": .string(kept.path + "/a.txt"), "content": .string("direct")])
+        try require(try String(contentsOfFile: kept.path + "/a.txt", encoding: .utf8) == "direct",
+                    "The other share still accepts the same file through its own path")
+
         let racing = try FolderGrant.make(url: try folder("Racing"))
         let racingAccess = NativeFolderAccess(grants: [racing])
         let place = try racingAccess.locate(racing.path + "/late.txt")
@@ -249,6 +258,15 @@ extension SelfTest {
         try require(!FolderGrant.isTrashEntry(directory: shared.path, name: "notes.txt") && !FolderGrant.throughTrash(root: shared.path, components: ["notes.txt"]),
                     "Only a folder counts as the Trash folder in the on-disk comparison")
 
+        let trashLinkShare = try FolderGrant.make(url: try folder("Trash link"))
+        let notesPath = try folder("Trash link/Notes").path
+        try manager.createSymbolicLink(atPath: trashLinkShare.path + "/.Trash", withDestinationPath: notesPath)
+        _ = try await tool(NativeFolderTools.writeName, [trashLinkShare]).execute(["path": .string(notesPath + "/file.txt"), "content": .string("notes")])
+        try require(try String(contentsOfFile: notesPath + "/file.txt", encoding: .utf8) == "notes",
+                    "A Trash-named symlink does not prevent writing to its ordinary target folder")
+        try require(!FolderGrant.isTrashEntry(directory: trashLinkShare.path, name: "Notes"),
+                    "A Trash-named symlink does not make Notes a Trash entry")
+
         try require(FolderGrant.inTrash("/home/.TRASH/Plans") && FolderGrant.inTrash("/home/.trashes/501/Plans") && FolderGrant.inTrash("/home/.Tra\u{17F}h/Plans")
                     && !FolderGrant.inTrash("/home/.Trash-notes/Plans") && !FolderGrant.inTrash("/home/Trash/Plans"),
                     "The Trash name is matched whatever its capitals or letter forms, and nothing else is")
@@ -320,6 +338,27 @@ extension SelfTest {
         let rowID = "chat|a-check|\(scratch.id)"
         try require(row(rowID)?.state == .usable && row(rowID)?.spoken(name: nil) == "Shared with the chat Folder check" && refused("a-check", "a.txt") == nil,
                     "A usable folder reads the same in the row and to the file tools")
+        let scratchKey = ChatStore.folderStateKey(scratch)
+        let olderGeneration = store.beginSharedFolderCheck()
+        let newerGeneration = store.beginSharedFolderCheck()
+        store.applySharedFolderStates([scratchKey: .missing], generation: olderGeneration)
+        try require(newerGeneration > olderGeneration && store.folderState(scratch) == .usable,
+                    "Starting a newer check prevents an older result from being applied")
+        store.applySharedFolderStates([scratchKey: .denied], generation: newerGeneration)
+        store.applySharedFolderStates([scratchKey: .missing], generation: olderGeneration)
+        try require(store.folderState(scratch) == .denied,
+                    "An older check finishing last leaves the newer state in place")
+        let pendingGeneration = store.beginSharedFolderCheck()
+        store.checkSharedFoldersNow()
+        store.applySharedFolderStates([scratchKey: .missing], generation: pendingGeneration)
+        try require(store.folderState(scratch) == .usable,
+                    "An immediate check prevents a pending older result from being applied")
+        var replacementIdentity = scratch
+        replacementIdentity.identity = NativeFolderIdentity(device: 0, inode: 1)
+        let firstIdentityKey = ChatStore.folderStateKey(replacementIdentity)
+        replacementIdentity.identity = NativeFolderIdentity(device: 0, inode: 2)
+        try require(ChatStore.folderStateKey(replacementIdentity) != firstIdentityKey,
+                    "Different saved identities at the same path have different cache keys")
         try manager.removeItem(atPath: scratch.path)
         try require(store.sharedFolderRows.first { $0.id == rowID }?.state == .usable && store.folderState(scratch) == .usable
                     && refused("a-check", "a.txt") == .unavailable(name: "tandem-scratch", path: scratch.path, state: .missing),
