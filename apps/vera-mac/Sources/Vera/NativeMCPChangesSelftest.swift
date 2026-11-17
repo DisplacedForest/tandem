@@ -643,19 +643,28 @@ enum NativeMCPChangesSelftest {
         try require(lookup?.title == "Look up a ticket", "The title a service declares is kept")
         try require(lookup?.outputSchema == output && lookup?.outputValidator != nil, "The result shape a service declares is kept and checked")
         let history = records.first { $0.remoteName == "history" }
-        try require(history?.outputSchema == uncheckable && history?.outputValidator == nil && history?.callable == true,
-                    "A result shape Tandem cannot check is kept, not used, and the tool stays callable")
-        try require(records.first { $0.remoteName == "plain" }.map { $0.title == nil && $0.outputSchema == nil } == true, "A tool that declares nothing keeps nothing")
-        guard let checked = definition(manager, server, "lookup"), let unchecked = definition(manager, server, "history"), let plain = definition(manager, server, "plain") else {
-            throw NativeToolError.failed("Every approved read is offered, whatever result shape it declares")
+        try require(history?.outputSchema == uncheckable && history?.outputValidator == nil && history?.callable == false
+                    && history?.reason == "This tool declares a result shape Tandem can't check.",
+                    "A tool whose declared result shape Tandem cannot check is shown with the reason and never offered")
+        try require(records.first { $0.remoteName == "plain" }.map { $0.title == nil && $0.outputSchema == nil && $0.callable } == true, "A tool that declares nothing keeps nothing")
+        try require(definition(manager, server, "history") == nil, "A tool whose result shape cannot be checked is not offered")
+        guard let checked = definition(manager, server, "lookup"), let plain = definition(manager, server, "plain") else {
+            throw NativeToolError.failed("Every approved read with a checkable result shape is offered")
         }
-        try require(checked.outputSchema == output && unchecked.outputSchema == nil && plain.outputSchema == nil, "Only a result shape Tandem can check reaches the definition")
+        try require(checked.outputSchema == output && plain.outputSchema == nil, "A checkable result shape reaches the definition")
         try require(checked.title == "Synthetic tracker: lookup" && checked.name == server.toolID("lookup") && checked.id == server.toolID("lookup"),
                     "A declared title does not change the tool's name, id or title")
         try require(checked.description == "Read from Synthetic tracker at fixture.invalid. Service-provided description (untrusted): Synthetic lookup",
                     "A declared title does not change the description")
-        let registry = NativeToolRegistry(definitions: [checked, unchecked, plain])
-        try require(registry.issues.isEmpty && registry.definitions.count == 3, "Every connected tool passes the shared tool check")
+        let registry = NativeToolRegistry(definitions: [checked, plain])
+        try require(registry.issues.isEmpty && registry.definitions.count == 2, "Every offered connected tool passes the shared tool check")
+        var dropped = declaring("oversized")
+        dropped.declaresOutput = true
+        let (bigManager, _, bigServer) = try await connected([dropped], reads: ["oversized"], acts: [])
+        let oversized = bigManager.servers.first?.tools.first { $0.remoteName == "oversized" }
+        try require(oversized?.callable == false && oversized?.reason == "This tool declares a result shape Tandem can't check."
+                    && definition(bigManager, bigServer, "oversized") == nil,
+                    "A declared result shape that could not be kept is treated as one Tandem cannot check")
     }
 
     static func results() async throws {

@@ -91,10 +91,10 @@ struct NativeMCPJSONSchema: Sendable {
             switch (type, value) {
             case ("string", .string(let text)):
                 if case .number(let minimum)? = object["minLength"], Double(text.unicodeScalars.count) < minimum {
-                    return minimum <= 1 ? "must be a non-empty string" : "must be at least \(Int(minimum)) characters"
+                    return minimum <= 1 ? "must be a non-empty string" : "must be at least \(plain(minimum)) characters"
                 }
                 if case .number(let maximum)? = object["maxLength"], Double(text.unicodeScalars.count) > maximum {
-                    return "must be at most \(Int(maximum)) characters"
+                    return "must be at most \(plain(maximum)) characters"
                 }
             case ("string", _):
                 if case .number(let minimum)? = object["minLength"], minimum == 0 { return "must be a string" }
@@ -108,8 +108,8 @@ struct NativeMCPJSONSchema: Sendable {
             case ("integer", _): return "must be a whole number"
             case ("number", _): return "must be a number"
             case ("array", .array(let items)):
-                if case .number(let minimum)? = object["minItems"], Double(items.count) < minimum { return "must have at least \(Int(minimum)) items" }
-                if case .number(let maximum)? = object["maxItems"], Double(items.count) > maximum { return "must have at most \(Int(maximum)) items" }
+                if case .number(let minimum)? = object["minItems"], Double(items.count) < minimum { return "must have at least \(plain(minimum)) items" }
+                if case .number(let maximum)? = object["maxItems"], Double(items.count) > maximum { return "must have at most \(plain(maximum)) items" }
                 return "has an item that does not match its schema"
             case ("array", _): return "must be a list"
             case ("object", .object): break
@@ -381,15 +381,55 @@ typealias NativeJSONSchema = NativeMCPJSONSchema
 final class NativeToolSchemaCache: @unchecked Sendable {
     static let shared = NativeToolSchemaCache()
     private let lock = NSLock()
-    private var compiled: [NativeJSONValue: NativeJSONSchema?] = [:]
+    private var compiled: [[UInt8]: NativeJSONSchema?] = [:]
 
     func validator(_ schema: NativeJSONValue) -> NativeJSONSchema? {
+        let key = Self.exactKey(schema)
         lock.lock()
         defer { lock.unlock() }
-        if let known = compiled[schema] { return known }
+        if let known = compiled[key] { return known }
         if compiled.count >= 1_024 { compiled.removeAll() }
         let built = try? NativeJSONSchema(schema)
-        compiled[schema] = built
+        compiled[key] = built
         return built
+    }
+
+    static func exactKey(_ value: NativeJSONValue) -> [UInt8] {
+        var bytes: [UInt8] = []
+        append(value, to: &bytes)
+        return bytes
+    }
+
+    private static func append(_ text: String, to bytes: inout [UInt8]) {
+        let utf8 = Array(text.utf8)
+        bytes.append(contentsOf: String(utf8.count).utf8)
+        bytes.append(0x3A)
+        bytes.append(contentsOf: utf8)
+    }
+
+    private static func append(_ value: NativeJSONValue, to bytes: inout [UInt8]) {
+        switch value {
+        case .null: bytes.append(0x6E)
+        case .bool(let flag): bytes.append(flag ? 0x74 : 0x66)
+        case .number(let number):
+            bytes.append(0x23)
+            withUnsafeBytes(of: number.bitPattern.bigEndian) { bytes.append(contentsOf: $0) }
+        case .string(let text):
+            bytes.append(0x73)
+            append(text, to: &bytes)
+        case .array(let items):
+            bytes.append(0x5B)
+            bytes.append(contentsOf: String(items.count).utf8)
+            for item in items { append(item, to: &bytes) }
+            bytes.append(0x5D)
+        case .object(let object):
+            bytes.append(0x7B)
+            bytes.append(contentsOf: String(object.count).utf8)
+            for (key, item) in object.sorted(by: { $0.key.utf8.lexicographicallyPrecedes($1.key.utf8) }) {
+                append(key, to: &bytes)
+                append(item, to: &bytes)
+            }
+            bytes.append(0x7D)
+        }
     }
 }

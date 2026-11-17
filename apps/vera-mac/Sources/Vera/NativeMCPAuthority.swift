@@ -366,9 +366,12 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                             let reason = server.state(of: tool.name, hints: tool.hints) == .unapproved ? "This action has not been approved as a read tool." : validator == nil || tool.inputSchema.pi("type") != .string("object") ? "This tool uses an unsupported argument schema." : nil
                             let title = tool.title.flatMap { $0.isEmpty || $0.utf8.count > 256 || $0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) ? nil : $0 }
                             let output = tool.outputSchema.flatMap { schema in ((try? schema.piData())?.count ?? .max) <= 32768 ? schema : nil }
+                            let outputValidator = output.flatMap { try? NativeMCPJSONSchema($0) }
+                            let declared = tool.declaresOutput || tool.outputSchema != nil
+                            let outputReason = declared && outputValidator == nil ? "This tool declares a result shape Tandem can't check." : nil
                             tools.append(NativeMCPToolRecord(id: server.toolID(tool.name), server: server, generation: generation, remoteName: tool.name,
-                                description: tool.description, schema: tool.inputSchema, validator: validator, reason: reason, hints: tool.hints,
-                                title: title, outputSchema: output, outputValidator: output.flatMap { try? NativeMCPJSONSchema($0) }))
+                                description: tool.description, schema: tool.inputSchema, validator: validator, reason: reason ?? outputReason, hints: tool.hints,
+                                title: title, outputSchema: output, outputValidator: outputValidator))
                         }
                         guard let next = page.nextCursor else { return tools }
                         guard !next.isEmpty, next.utf8.count <= 2048, cursors.insert(next).inserted else { throw NativeToolError.unavailable }
@@ -450,7 +453,7 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                 isAvailable: { self.access.allowed(record, scope: scope, revision: revision) },
                 execute: { arguments in try await self.execute(record, arguments: .object(arguments), scope: scope, subject: "focused", expectedRevision: revision) },
                 argumentValidator: { try record.validator?.validate(.object($0)) },
-                outputSchema: record.outputValidator == nil ? nil : record.outputSchema)
+                outputSchema: record.outputSchema)
         }
     }
     func revision(scope: PiModelScope) async throws -> String {

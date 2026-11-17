@@ -2704,6 +2704,22 @@ enum SelfTest {
             try? Data(contents.utf8).write(to: folder.appendingPathComponent("garden.json"))
             return NativeCapabilityTools.catalog(directory: folder, reservedNames: reserved)
         }
+        let accented = load(file("caf\u{E9}_log", parameters: #"{"type": "object", "properties": {}, "required": [], "additionalProperties": false}"#))
+        try require(accented.declarations.allSatisfy { $0.name != "caf\u{E9}_log" } && accented.failures.first?.problem == .badName,
+                    "A tool name with a letter outside plain ASCII is refused when the file loads, so Settings says why")
+        let repeated = load(file("water_twice", parameters: #"{"type": "object", "properties": {"bed": {"type": "string"}}, "required": ["bed", "bed"], "additionalProperties": false}"#))
+        try require(repeated.declarations.allSatisfy { $0.name != "water_twice" } && repeated.failures.first?.problem == .repeatedRequired,
+                    "A field listed twice as required is refused when the file loads, so Settings says why")
+        let huge = load(file("water_huge", parameters: #"{"type": "object", "properties": {"bed": {"type": "string", "minLength": 1e20}, "count": {"type": "integer", "maximum": 1e20}}, "required": ["bed"], "additionalProperties": false}"#))
+        if let hugeTool = huge.declarations.first(where: { $0.name == "water_huge" }) {
+            let definition = NativeCapabilityTools.plainDefinition(hugeTool, base: { nil }, client: NativeHTTPToolClient { _, _, _, _ in (Data(), 500) })
+            var refusal = ""
+            do { _ = try definition.validatedArguments(#"{"bed":"north"}"#) } catch NativeToolError.invalidArguments(let message) { refusal = message }
+            try require(refusal == "Field 'bed' must be at least 100000000000000000000 characters" || refusal.hasPrefix("Field 'bed' must be at least 1e+20"),
+                        "A huge length limit is refused in words, without stopping the app: \(refusal)")
+        } else {
+            try require(huge.failures.first.map { _ in true } == true, "A huge length limit either loads and is enforced in words, or the file is refused")
+        }
         let watering = load(file("water_bed", parameters: """
             {"type": "object", "properties": {
                "bed": {"type": "string", "enum": ["north", "south"], "description": "Which bed"},

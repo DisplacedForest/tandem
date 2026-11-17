@@ -55,6 +55,7 @@ enum NativeToolDeclarationProblem: Equatable, Hashable, Sendable {
     case unsupportedKeyword(String)
     case badValue(field: String, keyword: String)
     case badRequired
+    case repeatedRequired
     case badEndpoint
     case badMethod
     case badConfirmation
@@ -192,6 +193,11 @@ enum NativeCapabilityTools {
                             ? "The name '\(declaration.name)' is reserved by a built-in tool"
                             : "A tool named '\(declaration.name)' is already loaded",
                         problem: reserved ? .reservedName(declaration.name) : .duplicateName(declaration.name)))
+                    continue
+                }
+                guard NativeToolSchemaCache.shared.validator(declaration.parameters) != nil else {
+                    failures.append(NativeToolDeclarationFailure(
+                        file: label, reason: "The parameters can't be checked as written", problem: .badParameters))
                     continue
                 }
                 taken.insert(declaration.name)
@@ -538,6 +544,10 @@ enum NativeCapabilityTools {
                 throw NativeToolDeclarationError(
                     reason: "'parameters.required' must be an array of strings", problem: .badRequired)
             }
+            guard Set(names.map { Array($0.utf8) }).count == names.count else {
+                throw NativeToolDeclarationError(
+                    reason: "'required' lists a field more than once", problem: .repeatedRequired)
+            }
             for entry in names {
                 guard properties.contains(where: { $0.name == entry }) else {
                     throw NativeToolDeclarationError(
@@ -678,10 +688,11 @@ enum NativeCapabilityTools {
     }
 
     private static func isFunctionName(_ value: String) -> Bool {
-        guard value.count <= 64, let first = value.first, first.isLetter || first == "_" else {
+        guard value.utf8.count <= 64, let first = value.unicodeScalars.first,
+              first.isASCII, CharacterSet.letters.contains(first) || first == "_" else {
             return false
         }
-        return value.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
+        return value.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "_") }
     }
 
     static let bundledSource = "bundled"

@@ -262,6 +262,14 @@ extension SelfTest {
         }
         try require(section.count < NativeContextAssembler.Caps.tools,
                     "The prompt's tool list for every shipped tool fits under its cap: \(section.count) characters")
+        let composedKey = NativeToolSchemaCache.exactKey(.object(["enum": .array([.string("\u{E9}")])]))
+        let decomposedKey = NativeToolSchemaCache.exactKey(.object(["enum": .array([.string("e\u{301}")])]))
+        try require(composedKey != decomposedKey, "Two schemas that differ only in how an accented letter is written never share a validator")
+        let composed = NativeToolSchemaCache.shared.validator(.object(["type": .string("string"), "enum": .array([.string("\u{E9}")])]))
+        let decomposed = NativeToolSchemaCache.shared.validator(.object(["type": .string("string"), "enum": .array([.string("e\u{301}")])]))
+        try require(composed?.violation(.string("\u{E9}")) == nil && decomposed?.violation(.string("e\u{301}")) == nil
+                    && composed?.violation(.string("e\u{301}")) != nil && decomposed?.violation(.string("\u{E9}")) != nil,
+                    "Each schema accepts exactly its own spelling of an accented value")
         print("  native tool contract OK (registry rules, schema-declared validation messages, \(shipped.count) shipped tools and \(variants.count) variants pass the registry, every shipped description says when to use it in plain words within 4096 bytes, every field is explained and says whether it may be empty, and the prompt lists tools by name only within its cap)")
     }
 }

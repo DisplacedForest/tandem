@@ -24,6 +24,7 @@ struct NativeMCPDiscoveredTool: Sendable, Equatable {
     var hints = NativeMCPToolHints()
     var title: String? = nil
     var outputSchema: NativeJSONValue? = nil
+    var declaresOutput = false
 }
 
 enum NativeMCPProtocolVersions {
@@ -119,7 +120,8 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
                 NativeMCPDiscoveredTool(name: $0.name, description: $0.description ?? "", inputSchema: try Self.native($0.inputSchema),
                                         hints: NativeMCPToolHints(readOnly: $0.annotations.readOnlyHint, destructive: $0.annotations.destructiveHint,
                                                                   idempotent: $0.annotations.idempotentHint, openWorld: $0.annotations.openWorldHint),
-                                        title: $0.title ?? $0.annotations.title, outputSchema: try? $0.outputSchema.map(Self.native))
+                                        title: $0.title ?? $0.annotations.title, outputSchema: try? $0.outputSchema.map(Self.native),
+                                        declaresOutput: $0.outputSchema != nil)
             }, nextCursor: page.nextCursor)
         }
     }
