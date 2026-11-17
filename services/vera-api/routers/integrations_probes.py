@@ -38,17 +38,6 @@ async def probe(iid: str, v: dict) -> dict:
                     body = await r.json(content_type=None)
                     ok = r.status == 200 and isinstance(body, dict) and "message" in body
                     return {"ok": ok, "detail": body.get("message", f"HTTP {r.status}") if isinstance(body, dict) else f"HTTP {r.status}"}
-            if iid == "grocy":
-                async with s.get(f"{url}/api/system/info", headers={"GROCY-API-KEY": v.get("api_key", "")}) as r:
-                    body = await r.json(content_type=None)
-                    ver = (body or {}).get("grocy_version", {})
-                    ok = r.status == 200 and bool(ver)
-                    return {"ok": ok, "detail": f"Grocy {ver.get('Version', '?')}" if ok else f"HTTP {r.status}"}
-            if iid == "mealie":
-                async with s.get(f"{url}/api/app/about", headers={"Authorization": f"Bearer {v.get('api_key', '')}"}) as r:
-                    body = await r.json(content_type=None)
-                    ok = r.status == 200 and isinstance(body, dict) and "version" in body
-                    return {"ok": ok, "detail": f"Mealie {body.get('version', '?')}" if ok else f"HTTP {r.status}"}
             if iid == "overseerr":
                 async with s.get(f"{url}/api/v1/status", headers={"X-Api-Key": v.get("api_key", "")}) as r:
                     body = await r.json(content_type=None)

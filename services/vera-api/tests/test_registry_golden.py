@@ -22,8 +22,7 @@ _load_built_in_blocks()
 
 VERBS = [
     "authoring.skill_upsert", "ha.service", "knowledge.set", "knowledge.delete",
-    "knowledge.reverify", "knowledge.promote", "kitchen.grocy_adjust", "kitchen.mealie_import",
-    "health.check", "overseerr_request", "docker.update",
+    "knowledge.reverify", "knowledge.promote", "health.check", "overseerr_request", "docker.update",
 ]
 
 JOBS = [
@@ -51,12 +50,6 @@ REGISTRY_RESPONSE: dict[str, Any] = {
         {"verb": "knowledge.promote", "risk": "low", "reversible": True, "autonomous": False,
          "summary": "codify a knowledge type's schema",
          "args": '{"type": "...", "schema": {...}}'},
-        {"verb": "kitchen.grocy_adjust", "risk": "low", "reversible": True, "autonomous": False,
-         "summary": "adjust kitchen stock (op is add or consume)",
-         "args": '{"product_id": N, "op": "add|consume", "amount": N}'},
-        {"verb": "kitchen.mealie_import", "risk": "low", "reversible": True, "autonomous": True,
-         "summary": "import a recipe by URL",
-         "args": '{"url": "..."}'},
         {"verb": "health.check", "risk": "none", "reversible": True, "autonomous": False,
          "summary": "run a service health check now",
          "args": "{}"},
@@ -104,17 +97,6 @@ CASES: dict[str, list[tuple[dict[str, Any], str | None]]] = {
         ({"type": "appliance"}, "knowledge.promote needs type and schema"),
         ({"schema": {"required": []}}, "knowledge.promote needs type and schema"),
     ],
-    "kitchen.grocy_adjust": [
-        ({"product_id": 3, "op": "consume", "amount": 2}, None),
-        ({"product_id": 3, "op": "nope", "amount": 1}, "op must be add or consume"),
-        ({"op": "add", "amount": 1}, "kitchen.grocy_adjust needs product_id"),
-        ({"product_id": 3, "op": "add"}, "kitchen.grocy_adjust needs amount"),
-    ],
-    "kitchen.mealie_import": [
-        ({"url": "https://recipes.example/pasta"}, None),
-        ({}, "kitchen.mealie_import needs url"),
-        ({"url": ""}, "kitchen.mealie_import needs url"),
-    ],
     "health.check": [
         ({}, None),
         ({"anything": 1}, None),
@@ -139,8 +121,6 @@ PREVIEWS: dict[str, str] = {
     "knowledge.delete": "Delete appliance:heater",
     "knowledge.reverify": "Re-verify appliance:heater (stamp last_verified = now)",
     "knowledge.promote": "Codify the 'appliance' type's schema (required: brand, model)",
-    "kitchen.grocy_adjust": "Grocy consume 2 of product 3",
-    "kitchen.mealie_import": "Import the recipe at https://recipes.example/pasta into Mealie (structured)",
     "health.check": "Run a read-only server/home health check",
     "overseerr_request": "Request The Matrix (movie) to the media library",
     "docker.update": "Update container radarr (x/radarr:latest). Pull the new image and recreate it",
@@ -149,7 +129,7 @@ PREVIEWS: dict[str, str] = {
 AUTONOMOUS: dict[str, bool] = {
     "authoring.skill_upsert": False, "ha.service": False, "knowledge.set": False,
     "knowledge.delete": False, "knowledge.reverify": False, "knowledge.promote": False,
-    "kitchen.grocy_adjust": False, "kitchen.mealie_import": True, "health.check": False,
+    "health.check": False,
     "overseerr_request": False, "docker.update": False,
 }
 

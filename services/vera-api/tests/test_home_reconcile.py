@@ -63,7 +63,7 @@ def test_classify_index_episodic_idle_not_fault():
 
 def test_find_successor():
     # a pinned sensor renamed to a _2 collision -> single obvious successor
-    states = [st("sensor.dishwasher_power_2", "Dishwasher Power"), st("light.kitchen", "Kitchen")]
+    states = [st("sensor.dishwasher_power_2", "Dishwasher Power"), st("light.hallway", "Hallway")]
     assert mm.find_successor("sensor.dishwasher_power", states) == "sensor.dishwasher_power_2"
     # ambiguity -> no auto-resolve
     states2 = [st("sensor.dishwasher_power_2"), st("sensor.dishwasher_power_3")]

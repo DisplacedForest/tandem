@@ -37,7 +37,6 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("identity",      ["VERA_OWNER_ID", "VERA_OWNER_NAME", "HOME_LOCATION_NAME", "HOME_TZ"]),
     ("location",      ["WEATHER_LAT", "WEATHER_LON", "HOME_STATE"]),
     ("home assistant", ["HOME_ASSISTANT_BASE", "HOME_ASSISTANT_KEY"]),
-    ("kitchen",       ["GROCY_BASE", "GROCY_KEY", "MEALIE_BASE", "MEALIE_KEY"]),
     ("media",         ["OVERSEERR_BASE", "OVERSEERR_KEY"]),
     ("weather",       ["TEMPERATURE_UNIT", "WEATHER_FORECAST_URL"]),
     ("toggles",       ["KNOWLEDGE_GROOM_ENABLED"]),

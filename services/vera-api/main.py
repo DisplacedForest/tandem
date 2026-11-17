@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_gateway, household_runtime, inference_admission, integrations, kitchen, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, research, scheduler, tasks, vein_builder, vein_engine
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, household_gateway, household_runtime, inference_admission, integrations, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, research, scheduler, tasks, vein_builder, vein_engine
 from routers import native_generation, task_document, task_research
 from routers import builtin_capabilities
 
@@ -79,7 +79,6 @@ CAPABILITIES = {
     "pulse_media": pulse_media.router,
     "pulse_veins": pulse_veins.router,
     "vein_builder": vein_builder.router,
-    "kitchen": kitchen.router,
     "knowledge_restore": knowledge_restore.router,
     "household": household.router,
     "conversation_ingest": conversation_ingest.router,

@@ -50,7 +50,7 @@ def test_get_unknown():
 
 def test_log_auto_and_recent():
     # free-lane rows: auto-tagged, tokenless, visible in the main log
-    a.log_auto("kitchen.mealie_import", {"url": "https://x.test/r/1"}, {"ok": True, "slug": "r1"})
+    a.log_auto("sample.import_link", {"url": "https://x.test/r/1"}, {"ok": True, "slug": "r1"})
     row = next(r for r in a.recent_log() if r["args"].get("url") == "https://x.test/r/1")
     assert row["auto"] is True
     assert row["token"] is None
@@ -63,15 +63,15 @@ def test_log_auto_and_recent():
 
 def test_auto_recent_filters():
     import time
-    a.log_auto("kitchen.mealie_import", {"url": "https://x.test/r/2"}, {"ok": True})
-    a.log_auto("kitchen.mealie_import", {"url": "https://x.test/r/3"}, {"ok": False}, status="failed")
+    a.log_auto("sample.import_link", {"url": "https://x.test/r/2"}, {"ok": True})
+    a.log_auto("sample.import_link", {"url": "https://x.test/r/3"}, {"ok": False}, status="failed")
     a.log_auto("other.verb", {"url": "https://x.test/r/4"}, {"ok": True})
-    rows = a.auto_recent("kitchen.mealie_import", time.time() - 60)
+    rows = a.auto_recent("sample.import_link", time.time() - 60)
     urls = [r["args"]["url"] for r in rows]
     assert "https://x.test/r/2" in urls       # successful auto row counts
     assert "https://x.test/r/3" not in urls   # failed attempts don't
     assert "https://x.test/r/4" not in urls   # other verbs don't
-    assert a.auto_recent("kitchen.mealie_import", time.time() + 60) == []  # window respected
+    assert a.auto_recent("sample.import_link", time.time() + 60) == []
 
 
 if __name__ == "__main__":
