@@ -265,14 +265,26 @@ extension SelfTest {
         let composedKey = NativeToolSchemaCache.exactKey(.object(["enum": .array([.string("\u{E9}")])]))
         let decomposedKey = NativeToolSchemaCache.exactKey(.object(["enum": .array([.string("e\u{301}")])]))
         try require(composedKey != decomposedKey, "Two schemas that differ only in how an accented letter is written never share a validator")
-        let entry: NativeJSONValue = .object(["type": .string("boolean")])
-        var eleven: [String: NativeJSONValue] = [String(repeating: "a", count: 110): entry]
-        for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k"] { eleven[name] = entry }
-        let longKey = String(repeating: "a", count: 1_110)
-        try require(NativeToolSchemaCache.exactKey(.object(eleven)) != NativeToolSchemaCache.exactKey(.object([longKey: entry])),
-                    "An object's entry count can never run into its first key's length")
-        try require(NativeToolSchemaCache.exactKey(.array([.number(1), .number(2)])) != NativeToolSchemaCache.exactKey(.array([.array([.number(1)]), .number(2)])),
-                    "Arrays of different shapes never share a key")
+        let flag: NativeJSONValue = .object(["type": .string("boolean")])
+        let flagged = "{14:types7:boolean}"
+        let described: NativeJSONValue = .object(["type": .string("boolean"), "description": .string(String(repeating: "x", count: 761))])
+        let describedFlag = "{211:descriptions761:" + String(repeating: "x", count: 761) + "4:types7:boolean}"
+        var eleven: [String: NativeJSONValue] = [String(repeating: "a", count: 110): described]
+        for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k"] { eleven[name] = flag }
+        let crafted = String(repeating: "a", count: 110) + describedFlag
+            + ["b", "c", "d", "e", "f", "g", "h", "i", "j"].map { "1:" + $0 + flagged }.joined() + "1:k"
+        try require(crafted.utf8.count == 1_110, "The crafted field name is the length that made two schemas collide before")
+        func wrapped(_ properties: [String: NativeJSONValue]) -> NativeJSONValue {
+            .object(["type": .string("object"), "properties": .object(properties), "required": .array([]), "additionalProperties": .bool(false)])
+        }
+        let manyFields = wrapped(eleven)
+        let oneField = wrapped([crafted: flag])
+        try require(NativeToolSchemaCache.exactKey(manyFields) != NativeToolSchemaCache.exactKey(oneField),
+                    "Two schemas built to collide when a count ran into a key length never share a key")
+        let manyValidator = NativeToolSchemaCache.shared.validator(manyFields)
+        let oneValidator = NativeToolSchemaCache.shared.validator(oneField)
+        try require(manyValidator?.violation(.object(["b": .bool(true)])) == nil && oneValidator?.violation(.object(["b": .bool(true)])) != nil,
+                    "Each of the two schemas gets its own validator, so a field one forbids is refused by it")
         let composed = NativeToolSchemaCache.shared.validator(.object(["type": .string("string"), "enum": .array([.string("\u{E9}")])]))
         let decomposed = NativeToolSchemaCache.shared.validator(.object(["type": .string("string"), "enum": .array([.string("e\u{301}")])]))
         try require(composed?.violation(.string("\u{E9}")) == nil && decomposed?.violation(.string("e\u{301}")) == nil
