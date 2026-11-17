@@ -157,8 +157,8 @@ extension SelfTest {
                     "A folder in the Trash can't be found, and nothing is written into the Trash: \(binnedWrite)")
         try manager.moveItem(at: binned, to: renamed)
         try require(wandering.availability == .usable && NativeFolderAccess(grants: [wandering]).roots.count == 1, "Putting the folder back restores the share")
-        try require(FolderGrant.inTrash("/Users/someone/.Trash/Plans") && FolderGrant.inTrash("/Volumes/Storage/.Trashes/501/Plans")
-                    && !FolderGrant.inTrash("/Users/someone/Trash/Plans") && !FolderGrant.inTrash("/Users/someone/.Trash-notes/Plans"),
+        try require(FolderGrant.inTrash("/home/.Trash/Plans") && FolderGrant.inTrash("/Volumes/Storage/.Trashes/501/Plans")
+                    && !FolderGrant.inTrash("/home/Trash/Plans") && !FolderGrant.inTrash("/home/.Trash-notes/Plans"),
                     "Only a real Trash folder counts")
 
         try require(FolderAvailability.missing.rowNote == "Can't be found." && FolderAvailability.offline("x").rowNote == "On a drive that isn't connected."
