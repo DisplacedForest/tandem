@@ -102,6 +102,13 @@ extension ChatStore {
     }
 
     @discardableResult
+    func replaceProjectFolders(_ id: String, grants: [FolderGrant]) -> Bool {
+        let saved = updateProject(id, failure: "The folder couldn't be changed") { $0.grants = grants }
+        refreshProjectGrants(id)
+        return saved
+    }
+
+    @discardableResult
     func removeProjectFolder(_ id: String, grantID: String) -> Bool {
         let saved = updateProject(id, failure: "The folder couldn't be removed") { $0.grants.removeAll { $0.id == grantID } }
         refreshProjectGrants(id)

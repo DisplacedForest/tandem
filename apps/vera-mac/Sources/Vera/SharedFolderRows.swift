@@ -14,6 +14,12 @@ struct SharedFolderRow: Identifiable, Equatable, Sendable {
     let kind: Kind
     let folder: String
     let place: String
+    var state: FolderAvailability = .usable
+
+    func chooseLabel(name: String?) -> String {
+        let place = spoken(name: name)
+        return "\(SharedFolderRows.chooseAgain) where \(title) is, \(place.prefix(1).lowercased() + place.dropFirst())"
+    }
 
     func spoken(name: String?) -> String { sentence.plain(name: name) }
 
@@ -30,6 +36,18 @@ enum SharedFolderRows {
     static let stop = "Stop sharing"
     static let readOnlyNote = " Read only."
     static let failed = "That folder is still shared. The change couldn't be saved."
+    static let chooseAgain = "Choose again"
+    static let choosePrompt = "Choose"
+    static let notMoved = "That folder is where it was. The new place couldn't be saved."
+
+    static func alreadyShared(_ name: String) -> String { "\(name) is already shared there." }
+
+    static func noted(_ line: CompanionLine, state: FolderAvailability) -> CompanionLine {
+        guard let note = state.rowNote else { return line }
+        let lead = line.plain(name: nil).hasSuffix(".") ? " " : ". "
+        if case .literal(let text) = line { return .literal(text + lead + note) }
+        return .parts(line.parts + [.text(lead + note)])
+    }
 
     static func folderName(_ grant: FolderGrant) -> String {
         let last = URL(fileURLWithPath: grant.path).lastPathComponent
@@ -84,7 +102,8 @@ enum SharedFolderRows {
         return .parts(line.parts + [.text("." + readOnlyNote)])
     }
 
-    static func rows(conversations: [Conversation], projects: [ProjectRecord], companionThreadID: String?, name: String?) -> [SharedFolderRow] {
+    static func rows(conversations: [Conversation], projects: [ProjectRecord], companionThreadID: String?, name: String?,
+                     availability: (FolderGrant) -> FolderAvailability = { $0.availability }) -> [SharedFolderRow] {
         var pending: [(grant: FolderGrant, sentence: CompanionLine, kind: SharedFolderRow.Kind, id: String, place: String)] = []
         for conversation in conversations {
             let companion = conversation.id == companionThreadID
@@ -107,9 +126,10 @@ enum SharedFolderRows {
         for entry in pending { names[entry.grant.path] = folderName(entry.grant) }
         let titles = titles(for: names)
         let rows = pending.map { entry in
-            SharedFolderRow(id: entry.id, title: titles[entry.grant.path] ?? folderName(entry.grant), path: entry.grant.path,
-                            sentence: entry.sentence, readOnly: entry.grant.readOnly, kind: entry.kind,
-                            folder: folderName(entry.grant), place: entry.place)
+            let state = availability(entry.grant)
+            return SharedFolderRow(id: entry.id, title: titles[entry.grant.path] ?? folderName(entry.grant), path: entry.grant.path,
+                                   sentence: noted(entry.sentence, state: state), readOnly: entry.grant.readOnly, kind: entry.kind,
+                                   folder: folderName(entry.grant), place: entry.place, state: state)
         }
         return rows.sorted { first, second in
             let byFolder = first.folder.localizedStandardCompare(second.folder)
@@ -123,8 +143,10 @@ enum SharedFolderRows {
     }
 
     static func screenStrings(_ rows: [SharedFolderRow], name: String?) -> [String] {
-        var strings = [sectionTitle, info, infoLabel, stop, failed]
+        var strings = [sectionTitle, info, infoLabel, stop, failed, chooseAgain, choosePrompt, notMoved, alreadyShared("Seedlings")]
+        strings += FolderAvailability.notes.compactMap(\.rowNote) + FolderAvailability.notes.compactMap { $0.chipNote("Seedlings") }
         for row in rows {
+            if row.state.canChooseAgain { strings.append(row.chooseLabel(name: name)) }
             strings.append(row.title)
             strings.append(row.spoken(name: name))
             strings.append(row.stopLabel(name: name))

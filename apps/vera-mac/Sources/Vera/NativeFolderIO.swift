@@ -66,10 +66,15 @@ enum NativeFolderIO {
     static func openRoot(_ grant: FolderGrant) throws -> NativeFolderDescriptor {
         AppLocations.refuseRealFolder(URL(fileURLWithPath: grant.path, isDirectory: true))
         let fd = open(grant.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard fd >= 0 else { throw NativeFolderAccessError.notFound(grant.path) }
+        guard fd >= 0 else {
+            let code = Darwin.errno
+            let state = grant.resolved().state
+            if state != .usable { throw NativeFolderAccessError.gone(grant, state) }
+            throw NativeFolderAccessError.gone(grant, code == EACCES || code == EPERM ? .denied : .missing)
+        }
         let descriptor = NativeFolderDescriptor(fd)
         if let identity = grant.identity {
-            guard NativeFolderIdentity.of(descriptor: fd) == identity else { throw NativeFolderAccessError.outsideGrants(grant.path) }
+            guard NativeFolderIdentity.of(descriptor: fd) == identity else { throw NativeFolderAccessError.gone(grant, .missing) }
         }
         return descriptor
     }

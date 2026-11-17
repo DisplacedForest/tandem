@@ -1,4 +1,43 @@
 import Foundation
+import Darwin
+
+enum FolderAvailability: Equatable, Hashable, Sendable {
+    case usable
+    case missing
+    case offline(String)
+    case denied
+
+    var rowNote: String? {
+        switch self {
+        case .usable: return nil
+        case .missing: return "Can't be found."
+        case .offline: return "On a drive that isn't connected."
+        case .denied: return "Can't be opened."
+        }
+    }
+
+    func chipNote(_ name: String) -> String? {
+        switch self {
+        case .usable: return nil
+        case .missing: return "\(name) can't be found"
+        case .offline: return "\(name) is on a drive that isn't connected"
+        case .denied: return "\(name) can't be opened"
+        }
+    }
+
+    var modelNote: String? {
+        switch self {
+        case .usable: return nil
+        case .missing: return "can't be found right now"
+        case .offline: return "its drive isn't connected right now"
+        case .denied: return "can't be opened right now"
+        }
+    }
+
+    var canChooseAgain: Bool { self == .missing || self == .denied }
+
+    static let notes: [FolderAvailability] = [.missing, .offline("Storage"), .denied]
+}
 
 struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
     let id: String
@@ -43,16 +82,45 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
         return FolderGrant(path: real, name: standardized.lastPathComponent, bookmark: bookmark, identity: identity)
     }
 
-    func current() -> FolderGrant? {
-        if let found = NativeFolderIdentity.of(path: path), identity == nil || found == identity { return self }
-        guard let bookmark else { return nil }
-        var stale = false
-        guard let url = try? URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
-        let real = url.resolvingSymlinksInPath().path
-        guard let found = NativeFolderIdentity.of(path: real), identity == nil || found == identity else { return nil }
-        var moved = self
-        moved.path = real
-        return moved
+    func current() -> FolderGrant? { resolved().grant }
+
+    var availability: FolderAvailability { resolved().state }
+
+    static func volume(of path: String) -> String? {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard path.hasPrefix("/Volumes/"), parts.count >= 2 else { return nil }
+        return String(parts[1])
+    }
+
+    private static func reachable(_ grant: FolderGrant) -> (grant: FolderGrant?, state: FolderAvailability) {
+        access(grant.path, R_OK | X_OK) == 0 ? (grant, .usable) : (nil, .denied)
+    }
+
+    func resolved() -> (grant: FolderGrant?, state: FolderAvailability) {
+        var info = stat()
+        if stat(path, &info) == 0 {
+            if (info.st_mode & S_IFMT) == S_IFDIR {
+                let found = NativeFolderIdentity(device: Int64(info.st_dev), inode: UInt64(info.st_ino))
+                if identity == nil || found == identity { return Self.reachable(self) }
+            }
+        } else if Darwin.errno == EACCES {
+            return (nil, .denied)
+        }
+        if let bookmark {
+            var stale = false
+            if let url = try? URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) {
+                let real = url.resolvingSymlinksInPath().path
+                if let found = NativeFolderIdentity.of(path: real), identity == nil || found == identity {
+                    var moved = self
+                    moved.path = real
+                    return Self.reachable(moved)
+                }
+            }
+        }
+        if let volume = Self.volume(of: path), !FileManager.default.fileExists(atPath: "/Volumes/" + volume) {
+            return (nil, .offline(volume))
+        }
+        return (nil, .missing)
     }
 
     static func encode(_ grants: [FolderGrant]) -> String? {
@@ -78,6 +146,12 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
     case tooLarge(String, Int)
     case invalidPath(String)
     case readOnly(String)
+    case unavailable(name: String, path: String, state: FolderAvailability)
+    case unchangeable(String)
+
+    static func gone(_ grant: FolderGrant, _ state: FolderAvailability) -> NativeFolderAccessError {
+        .unavailable(name: grant.name, path: grant.path, state: state)
+    }
 
     var errorDescription: String? {
         switch self {
@@ -92,15 +166,57 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
         case .tooLarge(let path, let limit): return "\(path) is larger than the \(limit / 1024) KB limit."
         case .invalidPath(let path): return "\(path) is not a valid path."
         case .readOnly(let path): return "\(path) is read-only in this chat."
+        case .unavailable(let name, let path, let state):
+            switch state {
+            case .offline(let volume): return "The shared folder \(name) is on the drive \(volume), which isn't connected. Connect the drive and try again."
+            case .denied: return "macOS won't let Tandem open the shared folder \(name). Choose it again in Settings, Rules to give access."
+            case .missing, .usable:
+                return "The shared folder \(name) can't be found. It was at \(path) and may have been moved, renamed or deleted. It's still shared with this chat. Put it back, or choose it again in Settings, Rules."
+            }
+        case .unchangeable(let name): return "\(name) can be read but not changed. The folder or its drive doesn't allow changes."
         }
     }
 }
 
 struct NativeFolderAccess: Sendable {
     let roots: [FolderGrant]
+    let unavailable: [NativeFolderAccessError]
+    private let lost: [String]
 
     init(grants: [FolderGrant]) {
-        roots = grants.compactMap { $0.current() }
+        var usable: [FolderGrant] = []
+        var failures: [NativeFolderAccessError] = []
+        var paths: [String] = []
+        for grant in grants {
+            let result = grant.resolved()
+            if let found = result.grant {
+                usable.append(found)
+            } else {
+                failures.append(.gone(grant, result.state))
+                paths.append(grant.path)
+            }
+        }
+        roots = usable
+        unavailable = failures
+        lost = paths
+    }
+
+    func only() throws -> FolderGrant {
+        let total = roots.count + unavailable.count
+        guard total > 0 else { throw NativeFolderAccessError.noGrants }
+        guard total == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(".") }
+        if let failure = unavailable.first { throw failure }
+        return roots[0]
+    }
+
+    static func changeable(_ location: NativeFolderLocation) -> Bool {
+        let root = location.root.path
+        var path = location.components.isEmpty ? root : (location.path as NSString).deletingLastPathComponent
+        while path != root, contains(root: root, path: path), !FileManager.default.fileExists(atPath: path) {
+            path = (path as NSString).deletingLastPathComponent
+        }
+        guard FileManager.default.fileExists(atPath: path) else { return true }
+        return access(path, W_OK) == 0
     }
 
     static func reserved(_ component: Substring) -> Bool {
@@ -128,15 +244,15 @@ struct NativeFolderAccess: Sendable {
               !requested.split(separator: "/", omittingEmptySubsequences: true).contains(where: Self.reserved) else {
             throw NativeFolderAccessError.invalidPath(requested)
         }
-        guard !roots.isEmpty else { throw NativeFolderAccessError.noGrants }
+        guard !roots.isEmpty || !unavailable.isEmpty else { throw NativeFolderAccessError.noGrants }
         let absolute: String
         if requested.hasPrefix("/") {
             absolute = requested
         } else if requested.hasPrefix("~") {
             throw NativeFolderAccessError.outsideGrants(requested)
         } else {
-            guard roots.count == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(requested) }
-            absolute = roots[0].path + "/" + requested
+            guard roots.count + unavailable.count == 1 else { throw NativeFolderAccessError.relativeWithoutAnchor(requested) }
+            absolute = try only().path + "/" + requested
         }
         let candidates = [URL(fileURLWithPath: absolute).standardizedFileURL.path,
                           URL(fileURLWithPath: absolute).standardizedFileURL.resolvingSymlinksInPath().path]
@@ -147,6 +263,9 @@ struct NativeFolderAccess: Sendable {
             let relative = String(best.path.dropFirst(best.root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
             guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
             return NativeFolderLocation(root: best.root, components: relative)
+        }
+        for candidate in candidates {
+            if let index = lost.firstIndex(where: { Self.contains(root: $0, path: candidate) }) { throw unavailable[index] }
         }
         throw NativeFolderAccessError.outsideGrants(requested)
     }

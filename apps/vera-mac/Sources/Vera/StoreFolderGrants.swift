@@ -500,6 +500,54 @@ extension ChatStore {
     }
 
     @discardableResult
+    func chooseAgain(_ row: SharedFolderRow, url: URL) -> Bool {
+        let chosen: FolderGrant
+        do { chosen = try FolderGrant.make(url: url) } catch {
+            rulesNotice = error.localizedDescription
+            return false
+        }
+        func placed(_ grants: [FolderGrant], _ grantID: String) -> [FolderGrant]? {
+            guard let index = grants.firstIndex(where: { $0.id == grantID }) else { return nil }
+            let others = grants.filter { $0.id != grantID }
+            guard !others.contains(where: { NativeFolderAccess.contains(root: $0.path, path: chosen.path) || NativeFolderAccess.contains(root: chosen.path, path: $0.path) }) else {
+                rulesNotice = SharedFolderRows.alreadyShared(chosen.name)
+                return nil
+            }
+            var next = grants
+            next[index] = FolderGrant(id: grantID, path: chosen.path, name: chosen.name, bookmark: chosen.bookmark, identity: chosen.identity,
+                                      readOnly: grants[index].readOnly)
+            return next
+        }
+        let saved: Bool
+        switch row.kind {
+        case .chat(let conversationID, let grantID):
+            guard let index = conversations.firstIndex(where: { $0.id == conversationID }),
+                  let next = placed(conversations[index].grants, grantID) else { return false }
+            let before = conversations[index]
+            let chatLine = grantError
+            conversations[index].grants = next
+            saved = persistGrants(index)
+            if !saved, let current = conversations.firstIndex(where: { $0.id == conversationID }) {
+                conversations[current].grants = before.grants
+                conversations[current].isPersisted = before.isPersisted
+                refreshConversationGrants(conversationID)
+                grantError = chatLine
+            }
+        case .project(let projectID, let grantID):
+            guard let record = project(projectID), let next = placed(record.grants, grantID) else { return false }
+            let projectLine = projectError
+            saved = replaceProjectFolders(projectID, grants: next)
+            if !saved { projectError = projectLine }
+        }
+        if saved {
+            if rulesNotice == SharedFolderRows.notMoved || rulesNotice == SharedFolderRows.failed { rulesNotice = nil }
+        } else {
+            rulesNotice = SharedFolderRows.notMoved
+        }
+        return saved
+    }
+
+    @discardableResult
     private func persistGrants(_ index: Int) -> Bool {
         let conversation = conversations[index]
         refreshConversationGrants(conversation.id)
