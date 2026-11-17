@@ -93,8 +93,29 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
     }
 
     static func isTrashName(_ component: Substring) -> Bool {
-        let name = component.lowercased()
+        let name = String(component).decomposedStringWithCompatibilityMapping
+            .folding(options: [.caseInsensitive, .widthInsensitive], locale: nil).lowercased()
         return name == ".trash" || name == ".trashes"
+    }
+
+    static func entryIdentity(_ path: String) -> NativeFolderIdentity? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        return NativeFolderIdentity(device: Int64(info.st_dev), inode: UInt64(info.st_ino))
+    }
+
+    static func isTrashEntry(directory: String, name: String) -> Bool {
+        guard let found = entryIdentity(directory + "/" + name) else { return false }
+        return [".Trash", ".Trashes"].contains { entryIdentity(directory + "/" + $0) == found }
+    }
+
+    static func throughTrash(root: String, components: [String]) -> Bool {
+        var directory = root
+        for component in components {
+            if isTrashEntry(directory: directory, name: component) { return true }
+            directory += "/" + component
+        }
+        return false
     }
 
     static func inTrash(_ path: String) -> Bool {
@@ -280,7 +301,8 @@ struct NativeFolderAccess: Sendable {
         if let best = matches.max(by: { $0.root.path.count < $1.root.path.count }) {
             let relative = String(best.path.dropFirst(best.root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
             guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
-            guard !relative.contains(where: { FolderGrant.isTrashName(Substring($0)) }) else { throw NativeFolderAccessError.inTrash(requested) }
+            guard !relative.contains(where: { FolderGrant.isTrashName(Substring($0)) }),
+                  !FolderGrant.throughTrash(root: best.root.path, components: relative) else { throw NativeFolderAccessError.inTrash(requested) }
             return NativeFolderLocation(root: best.root, components: relative)
         }
         for candidate in candidates {
