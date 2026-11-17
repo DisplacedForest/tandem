@@ -26,9 +26,9 @@ def test_vera_identity_fallback_when_soul_missing(monkeypatch):
 
 
 def test_voiced_carries_identity_and_task():
-    out = persona.voiced("Summarize the kitchen.")
-    assert out.endswith("Summarize the kitchen.")
-    assert len(out) > len("Summarize the kitchen.")
+    out = persona.voiced("Summarize the hallway.")
+    assert out.endswith("Summarize the hallway.")
+    assert len(out) > len("Summarize the hallway.")
 
 
 def test_personalize_defaults_when_unconfigured(monkeypatch):

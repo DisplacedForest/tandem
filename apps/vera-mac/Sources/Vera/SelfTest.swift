@@ -1834,7 +1834,7 @@ enum SelfTest {
             guard defaults.suppliedAssistantName == nil, chosen.suppliedAssistantName == "Ada" else {
                 print("SELFTEST ERROR: shell assistant name config has a default or lost its trimming"); exit(1)
             }
-            guard ToolCallGroup(name: "kitchen_status", calls: []).label == "kitchen status",
+            guard ToolCallGroup(name: "notes_search", calls: []).label == "notes search",
                   ToolCallGroup(name: "web-search", calls: []).label == "web search" else {
                 print("SELFTEST ERROR: shell tool chip label still shows an identifier"); exit(1)
             }

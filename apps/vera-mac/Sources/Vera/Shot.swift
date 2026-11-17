@@ -253,7 +253,7 @@ enum Shot {
                 return true
             }
             let sent = MessageAttachment(
-                name: "kitchen-shelf.png", ext: "PNG", isImage: true,
+                name: "bookshelf.png", ext: "PNG", isImage: true,
                 thumbnailData: swatch.pngData, fileName: "demo.png", mime: "image/png")
             let missing = MessageAttachment(
                 name: "missing.heic", ext: "HEIC", isImage: true, fileName: "gone.heic", mime: "image/heic")
@@ -722,18 +722,18 @@ private struct ShotPluginSheetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                PluginLogo(id: "grocy", size: 28)
-                Text("Add Grocy").font(.system(size: 16, weight: .semibold))
+                PluginLogo(id: "example_notes", size: 28)
+                Text("Add Example Notes").font(.system(size: 16, weight: .semibold))
             }
             .padding(16)
             Divider().overlay(Theme.hairline)
             VStack(alignment: .leading, spacing: 14) {
-                fieldBox("Base URL", value: "http://192.0.2.10:9283", secret: false)
+                fieldBox("Base URL", value: "http://192.0.2.10:8080", secret: false)
                 fieldBox("API key", value: "•••• (set, leave blank to keep)", secret: true)
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Color(red: 0.36, green: 0.78, blue: 0.5))
-                    Text("Grocy 4.6.0").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    Text("Example Notes 4.6.0").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
             }
             .padding(16)

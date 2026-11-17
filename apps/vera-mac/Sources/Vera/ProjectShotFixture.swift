@@ -33,7 +33,7 @@ enum ProjectShotFixture {
             grants: [FolderGrant(path: "~/Documents/Garden", name: "Garden")],
             files: [], createdAt: now.addingTimeInterval(-12 * day), updatedAt: now)
         let other = ProjectRecord(
-            id: "shot-project-kitchen", name: "Kitchen remodel", instructions: "", grants: [], files: [],
+            id: "shot-project-move", name: "Office move", instructions: "", grants: [], files: [],
             createdAt: now.addingTimeInterval(-40 * day), updatedAt: now.addingTimeInterval(-6 * day))
         try? repository.saveProject(other)
         try? repository.saveProject(project)

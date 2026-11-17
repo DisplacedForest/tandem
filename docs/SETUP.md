@@ -8,8 +8,8 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 |---|---|---|
 | An OpenAI-compatible LLM server | llama.cpp / llama-swap / vLLM / Ollama / a hosted API: anything serving `/v1` | Yes |
 | **Tandem.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
-| **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, knowledge collections, scheduler, actions) | Optional |
-| Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
+| **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, research, knowledge collections, scheduler, actions) | Optional |
+| Integrations (Home Assistant, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
 | Satellite services (image, vision, coder) | Reference implementations of documented HTTP contracts | No |
 
 > **Fastest path on a Mac.** Install the Mac app and point onboarding at an OpenAI-compatible endpoint ending in `/v1`. Text chat needs nothing else. For the optional ambient tier, open Settings, Services, Engine and choose **On this Mac**. The app downloads the packaged engine for its own version, verifies it, and runs it as a background service on `127.0.0.1`.
@@ -629,8 +629,6 @@ Each integration unlocks its capability when its test passes; each degrades to "
 | Integration | Unlocks | Notes |
 |---|---|---|
 | Home Assistant | Live home state in chat and Pulse, confirm-gated device actuation, the `ha_state` vein block | Use an IP for the URL, not `.local` (containers can't resolve mDNS). Long-lived access token. |
-| Grocy | Kitchen inventory + expiry awareness, shopping list | Pairs with Mealie: recipe suggestions from expiring inventory unlock when both are on |
-| Mealie | Recipe import, browse, classification | See Grocy pairing |
 | Overseerr | Media requests from chat, availability checks; the media-curation blocks for a weekly digest vein (experimental, consent-gated) | |
 | Unraid | Confirm-gated container updates, host actuation, update digests | Official Unraid API (GraphQL) with an API key |
 | SearXNG | Web search for the Mac app (set in Settings, Search), plus vera-api research, Pulse, watcher veins | Strongly recommended; run it next to vera-api |

@@ -260,7 +260,7 @@ struct ShotView: View {
                             .foregroundStyle(Theme.textSecondary)
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
-                            Text("Needs Grocy").font(.system(size: 12))
+                            Text("Needs Example Notes").font(.system(size: 12))
                             Text("Open Plugins").font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(Theme.accent)
                         }.foregroundStyle(.orange)
@@ -355,14 +355,14 @@ struct ShotView: View {
         if folder { return folderMessages }
         var m = store.selected?.messages ?? []
         m.append(Message(role: .assistant, text: """
-        <details type="tool_calls" done="true" name="kitchen_status"><summary>Tool Executed</summary>"low: spaghetti, chicken nuggets, pork sausage"</details>
-        You're low on a few **staples**:
+        <details type="tool_calls" done="true" name="notes_search"><summary>Tool Executed</summary>"3 notes: packing list, train times, hotel address"</details>
+        Three notes mention the **trip**:
 
-        - Spaghetti
-        - Chicken nuggets
-        - Pork sausage
+        - Packing list
+        - Train times
+        - Hotel address
 
-        With those back you could do a quick `Bolognese`. Want me to add them to the list?
+        The train times note has the `09:40` departure. Want me to pull them into one note?
         """))
         m.append(Message(role: .user, text: "What moves lumber prices the most?"))
         m.append(Message(role: .assistant, text: """

@@ -23,7 +23,6 @@ struct PluginFeature: Identifiable, Hashable, Sendable {
     var acked: Bool
 }
 
-/// The grocy⇄mealie style pairing hint — rendered only from API data, never hardcoded.
 struct PluginPairing: Hashable, Sendable {
     var otherID: String
     var label: String
@@ -119,21 +118,21 @@ struct PluginEntry: Identifiable, Hashable, Sendable {
                                                  ramifications: "Captures every Home Assistant state change house-wide (roughly 5,000–15,000 events per day on a 30-day rolling window) and models the household's rhythm from 10–90 days of accumulation. Experimental: unvalidated at scale.",
                                                  enabled: false, acked: false)],
                         pairing: nil, lastTestOK: true, lastTestDetail: "API running."),
-            PluginEntry(id: "grocy", displayName: "Grocy", status: "enabled",
+            PluginEntry(id: "example_notes", displayName: "Example Notes", status: "enabled",
                         enabled: true, configured: true,
-                        unlocks: ["kitchen inventory and expiry tracking", "shopping list"],
-                        fields: [field("url", "Base URL", value: "http://192.0.2.10:9283"),
+                        unlocks: ["notes search from chat", "new notes from chat"],
+                        fields: [field("url", "Base URL", value: "http://192.0.2.10:8080"),
                                  field("api_key", "API key", secret: true, isSet: true)],
                         features: [],
-                        pairing: PluginPairing(otherID: "mealie", label: "recipe suggestions from expiring inventory", active: true),
-                        lastTestOK: true, lastTestDetail: "Grocy 4.6.0"),
-            PluginEntry(id: "mealie", displayName: "Mealie", status: "enabled",
+                        pairing: PluginPairing(otherID: "example_calendar", label: "notes attached to upcoming events", active: true),
+                        lastTestOK: true, lastTestDetail: "Example Notes 4.6.0"),
+            PluginEntry(id: "example_calendar", displayName: "Example Calendar", status: "enabled",
                         enabled: true, configured: true,
-                        unlocks: ["recipe import and browse", "recipe classification"],
-                        fields: [field("url", "Base URL", value: "http://192.0.2.10:9925"),
+                        unlocks: ["upcoming events in chat", "event lookups by date"],
+                        fields: [field("url", "Base URL", value: "http://192.0.2.10:8081"),
                                  field("api_key", "API token", secret: true, isSet: true)],
                         features: [],
-                        pairing: PluginPairing(otherID: "grocy", label: "recipe suggestions from expiring inventory", active: true),
+                        pairing: PluginPairing(otherID: "example_notes", label: "notes attached to upcoming events", active: true),
                         lastTestOK: nil, lastTestDetail: ""),
             PluginEntry(id: "overseerr", displayName: "Overseerr", status: "error",
                         enabled: true, configured: true,
