@@ -24,6 +24,8 @@ enum SavedWording {
         ("The assignment and its notes are too large for this task.", "The assignment and its notes are too large."),
         ("The brief, inputs or outline are too large for this task.", "The brief, inputs or outline are too large."),
         ("The research input is too large for this task.", "The research input is too large."),
+        ("The saved model credential is unavailable.", NativeTaskWorkerFailures.credentialUnreadableMessage),
+        ("The saved model credential is unavailable. Retry this step?", NativeTaskWorkerFailures.credentialUnreadableMessage),
     ]
 
     static let argumentsLead = "The tool arguments are invalid: "

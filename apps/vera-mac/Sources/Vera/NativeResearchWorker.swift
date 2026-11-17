@@ -144,9 +144,11 @@ enum NativeTaskWorkerFailures {
     static let stepUnusableMessage = "The answer for this step wasn't something Tandem could use. Try this step again?"
     static let modelChangedMessage = "The model this document was using has changed in Settings. Start the document again to use the new one."
     static let shorterSectionNote = "Asking for a shorter section."
+    static let credentialUnreadableMessage = "Tandem couldn't read the saved key for this model. Check it in Settings, then try this step again?"
 
     static let replySentences = [sectionCutShortMessage, sectionEmptyMessage, sectionUnusableMessage,
-                                 stepCutShortMessage, stepEmptyMessage, stepUnusableMessage, modelChangedMessage, shorterSectionNote]
+                                 stepCutShortMessage, stepEmptyMessage, stepUnusableMessage, modelChangedMessage, shorterSectionNote,
+                                 credentialUnreadableMessage]
 
     static func retriesAutomatically(_ code: String) -> Bool {
         !terminalCodes.contains(code) && !unsafeToRetryCodes.contains(code) && code != "response_cut_short"
@@ -165,7 +167,7 @@ enum NativeTaskWorkerFailures {
         case "request_timeout": return "The model request took too long."
         case "provider_auth": return "The saved model credential was not accepted."
         case "provider_quota": return "The model provider has no usage left."
-        case "credential_unavailable": return "The saved model credential is unavailable."
+        case "credential_unavailable": return credentialUnreadableMessage
         case "previous_request_uncertain": return "The previous model request ended without a saved response."
         default: return "The model request did not complete."
         }

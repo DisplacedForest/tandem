@@ -96,7 +96,7 @@ struct NativeTaskProvider {
                     observer.receivedByte()
                     data.append(byte)
                 }
-                return try completed(snapshot(from: data), job: job)
+                return try completed(snapshot(from: data, text: job.tools == nil), job: job)
             } onCancel: {
                 observer.finish(.canceled)
                 session.invalidateAndCancel()
@@ -136,11 +136,17 @@ struct NativeTaskProvider {
         }
     }
 
-    static func snapshot(from data: Data) throws -> NativeChatStreamSnapshot {
+    static func snapshot(from data: Data, text: Bool) throws -> NativeChatStreamSnapshot {
         do {
             return try NativeChatClient.completeSnapshot(from: data)
         } catch let error as NativeChatClient.ClientError {
             if case .provider = error { throw NativeTaskGenerationFailure(code: "provider_error") }
+            if text, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let choice = (object["choices"] as? [[String: Any]])?.first,
+               choice["finish_reason"] as? String == "length" {
+                throw NativeTaskGenerationFailure(code: "response_cut_short",
+                                                  detail: NativeTaskGenerationFailureDetail(phase: nil, finishReason: "length"))
+            }
             throw NativeTaskGenerationFailure(code: "response_unreadable")
         }
     }

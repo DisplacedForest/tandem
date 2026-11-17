@@ -106,7 +106,7 @@ extension ChatStore {
             guard run.checkInKey != key, let schedule = schedules.first(where: { $0.id == run.scheduleID }) else { continue }
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot) else { continue }
             var message = Message(role: .assistant,
-                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(CompanionSavedText.plain(decision.prompt, name: companionName, appWritten: reference.request.workerType == "companion"))",
+                                  text: "The scheduled \(schedule.workTitle.lowercased()) \"\(schedule.title)\" stopped to ask: \(CompanionSavedText.plain(SavedWording.current(decision.prompt), name: companionName, appWritten: reference.request.workerType == "companion"))",
                                   state: .complete)
             message.displayBlocks = [.taskCard(display.card)]
             guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid,
@@ -153,7 +153,7 @@ extension ChatStore {
             case .failed: status = .failed
             case .canceled: status = .stopped
             case .needsDecision:
-                let prompt = snapshot?.decision?.prompt ?? NativeScheduler.waitingNote
+                let prompt = snapshot?.decision.map { SavedWording.current($0.prompt) } ?? NativeScheduler.waitingNote
                 status = .waiting(reference.request.workerType == "companion" ? prompt : CompanionSavedText.sanitized(prompt))
             case .blocked: status = .blocked(NativeScheduler.blockedNote)
             default: status = .active

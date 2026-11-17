@@ -53,16 +53,20 @@ final class NativeTaskConfiguration {
             profile: capability, savedTemplateKwargs: savedTemplate(), environmentTemplateKwargs: nil)
     }
 
-    func isAvailable(_ binding: NativeTaskProfileBinding) -> Bool {
+    func matches(_ binding: NativeTaskProfileBinding) -> Bool {
         guard let profile = settings().profiles.first(where: { $0.id == binding.profileID }),
               let url = URL(string: profile.baseURL),
-              (try? NativeTaskEngineIdentity(url)) == binding.provider,
-              profile.selectedModel == binding.savedModel else { return false }
+              (try? NativeTaskEngineIdentity(url)) == binding.provider else { return false }
+        return profile.selectedModel == binding.savedModel
+    }
+
+    func isAvailable(_ binding: NativeTaskProfileBinding) -> Bool {
+        guard matches(binding) else { return false }
         return !binding.requiresCredential || credential(binding.profileID)?.isEmpty == false
     }
 
     func load(_ binding: NativeTaskProfileBinding) throws -> NativeChatConfig {
-        guard isAvailable(binding) else { throw NativeTaskGenerationFailure(code: "profile_changed") }
+        guard matches(binding) else { throw NativeTaskGenerationFailure(code: "profile_changed") }
         let key = credential(binding.profileID)
         guard !binding.requiresCredential || key?.isEmpty == false else {
             throw NativeTaskGenerationFailure(code: "credential_unavailable")

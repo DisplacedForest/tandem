@@ -37,9 +37,9 @@ struct NativeTaskGenerationFailureDetail: Codable, Equatable, Sendable {
     let finishReason: String?
 
     init(phase: String?, httpStatus: Int? = nil, finishReason: String? = nil) {
-        self.phase = Self.bounded(phase)
+        self.phase = phase.flatMap { NativeTaskGenerationJob.validPhase($0) ? $0 : nil }
         self.httpStatus = httpStatus.flatMap { (100...599).contains($0) ? $0 : nil }
-        self.finishReason = Self.bounded(finishReason)
+        self.finishReason = finishReason.map { Self.knownFinishReasons.contains($0) ? $0 : "other" }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -55,12 +55,8 @@ struct NativeTaskGenerationFailureDetail: Codable, Equatable, Sendable {
                   finishReason: try container.decodeIfPresent(String.self, forKey: .finishReason))
     }
 
-    static func bounded(_ value: String?) -> String? {
-        guard let value, (1...32).contains(value.utf8.count),
-              value.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 })
-        else { return nil }
-        return value
-    }
+    static let knownFinishReasons: Set<String> = ["stop", "length", "tool_calls", "function_call", "content_filter",
+                                                  "end_turn", "max_tokens", "stop_sequence", "error", "other"]
 
     func stored() -> String? {
         let encoder = JSONEncoder()

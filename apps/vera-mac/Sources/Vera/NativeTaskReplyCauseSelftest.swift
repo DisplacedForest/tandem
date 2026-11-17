@@ -21,6 +21,8 @@ final class TaskReplyCauseWire: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 
     static let partial = "Partial section that ran out of ro"
+    static let privateWord = "private-project-name"
+    static let shortKey = "sk-a1B2c3D4e5F6g7H8"
 
     static func choice(_ content: String, finish: String?, calls: [[String: Any]]? = nil) -> Data {
         var message: [String: Any] = ["role": "assistant", "content": content]
@@ -34,6 +36,10 @@ final class TaskReplyCauseWire: URLProtocol, @unchecked Sendable {
         switch scenario {
         case "stop": return (200, choice("{\"text\":\"A complete section.\"}", finish: "stop"))
         case "length": return (200, choice(partial, finish: "length"))
+        case "lengthtools": return (200, choice(partial, finish: "length",
+                                                calls: [["id": "call-1", "type": "function", "function": ["name": "lookup", "arguments": "{\"q\":"]]]))
+        case "secret": return (200, choice("A complete section.", finish: privateWord))
+        case "key": return (200, choice("A complete section.", finish: shortKey))
         case "missing": return (200, choice("A complete section.", finish: nil))
         case "filter": return (200, choice("A complete section.", finish: "content_filter"))
         case "odd": return (200, choice("A complete section.", finish: "stopped because of several reasons"))
@@ -63,6 +69,79 @@ final class TaskReplyCauseWire: URLProtocol, @unchecked Sendable {
     }
 }
 
+final class TaskReasoningWire: URLProtocol, @unchecked Sendable {
+    static let host = "live.reasoning.test"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var bodies: [Data] = []
+    nonisolated(unsafe) private static var cutFirst = false
+
+    static func reset(cutFirst cut: Bool) { lock.withLock { bodies = []; cutFirst = cut } }
+    static var seen: [Data] { lock.withLock { bodies } }
+
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == host }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        let body = Self.read(request)
+        let cut = Self.lock.withLock { () -> Bool in
+            Self.bodies.append(body)
+            return Self.cutFirst && Self.bodies.count == 1
+        }
+        let data = cut ? TaskReplyCauseWire.choice(TaskReplyCauseWire.partial, finish: "length")
+            : TaskReplyCauseWire.choice("{\"text\":\"Section from the wire.\"}", finish: "stop")
+        let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    static func read(_ request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
+
+    static func complete(job: NativeTaskGenerationJob, liveReasoning: Bool) async throws -> NativeTaskGenerationCompletion {
+        let binding = NativeTaskProfileBinding(id: "live-binding", profileID: "live-profile",
+            provider: try NativeTaskEngineIdentity(URL(string: "https://\(host)/v1")!),
+            savedModel: "live-model", executionModel: "live-model", limits: try NativeTaskGenerationLimits())
+        var options = NativeChatRequestOptions.none
+        if liveReasoning { options.topLevel.append(.init(key: "reasoning", value: .object(["enabled": .bool(true)]), source: .saved)) }
+        let config = NativeChatConfig(baseURL: binding.provider.base, apiKey: "live-key", model: binding.executionModel,
+                                      chatTemplateKwargs: nil, streaming: false, options: options)
+        return try await NativeTaskProvider.completion(config: config, binding: binding, job: job,
+                                                       protocolClasses: [TaskReasoningWire.self], diagnostics: { _ in })
+    }
+
+    static func request(_ index: Int) -> (reasoning: Bool?, system: String) {
+        let all = seen
+        guard index < all.count, let object = try? JSONSerialization.jsonObject(with: all[index]) as? [String: Any] else { return (nil, "") }
+        let reasoning = (object["reasoning"] as? [String: Any])?["enabled"] as? Bool
+        let system = ((object["messages"] as? [[String: Any]])?.first?["content"] as? String) ?? ""
+        return (reasoning, system)
+    }
+}
+
+final class TaskCredentialBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: String?
+    init(_ value: String?) { self.value = value }
+    var current: String? { lock.withLock { value } }
+    func set(_ next: String?) { lock.withLock { value = next } }
+}
+
 @MainActor
 extension SelfTest {
     static func taskReplyCauses() async throws {
@@ -77,6 +156,101 @@ extension SelfTest {
         try await documentCutShortPause()
         try await documentUnusableAnswer()
         try await documentModelChanged()
+        try await documentCredentialLost()
+        try await documentReasoningTurnedOn()
+        try await documentReasoningTurnedOff()
+    }
+
+    private static func documentCredentialLost() async throws {
+        let require = NativeTaskFixture.require
+        let saved = NativeEndpointProfile(id: "fixture-profile", name: "Fixture", baseURL: "https://provider.test/v1",
+            discoveredModels: ["fixture-model"], selectedModel: "fixture-model", selectionBasis: .user, lastDiscoveryAt: nil)
+        var settings = NativeChatSettings.fresh
+        settings.profiles = [saved]
+        settings.activeProfileID = saved.id
+        let box = TaskCredentialBox(nil)
+        let configuration = NativeTaskConfiguration(settings: { settings }, credential: { _ in box.current })
+        let binding = NativeTaskProfileBinding(id: UUID().uuidString, profileID: saved.id,
+            provider: try NativeTaskEngineIdentity(URL(string: saved.baseURL)!), savedModel: saved.selectedModel,
+            executionModel: saved.selectedModel, limits: try NativeTaskGenerationLimits(), requiresCredential: true)
+        func loadCode() -> String? {
+            do { _ = try configuration.load(binding); return nil }
+            catch let failure as NativeTaskGenerationFailure { return failure.code }
+            catch { return "other" }
+        }
+        try require(loadCode() == "credential_unavailable" && !configuration.isAvailable(binding) && configuration.matches(binding),
+                    "An unreadable credential with the same model is a credential problem, not a model change")
+        box.set("synthetic-key")
+        try require(loadCode() == nil && configuration.isAvailable(binding), "The credential coming back makes the profile usable again")
+        settings.profiles[0].selectedModel = "another-model"
+        try require(loadCode() == "profile_changed" && !configuration.isAvailable(binding), "A different model is a model change")
+        settings.profiles[0].selectedModel = saved.selectedModel
+        box.set(nil)
+
+        let repository = try LocalChatRepository(inMemory: true)
+        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter()) { job in
+            if job.phase == "outline" { return sectionOutline() }
+            try await MainActor.run { _ = try configuration.load(binding) }
+            return job.phase.hasPrefix("draft") ? .text("{\"text\":\"Draft for \(job.phase).\"}") : .text("Revised \(job.phase).")
+        }
+        try await harness.start()
+        let reference = try await harness.submitDocument(title: "Bench plan", brief: "Workshop notes for the bench", inputs: ["Bench along the wall"])
+        try require(try await harness.wait(seconds: 20) { try harness.state(reference) == .needsDecision }, "A lost credential pauses the document")
+        let snapshot = try repository.taskProjection(id: reference.id)!.snapshot!
+        let card = try NativeTaskProjection.display(reference: try repository.taskReference(id: reference.id)!, snapshot: snapshot).card
+        try require(card.canRetry && card.milestone == NativeTaskWorkerFailures.credentialUnreadableMessage
+                    && card.milestone != NativeTaskWorkerFailures.modelChangedMessage && snapshot.checkpoint.failureReason == nil,
+                    "The pause names the credential and offers Retry: \(card.milestone)")
+        box.set("synthetic-key")
+        await harness.tracker.retry(reference.id)
+        try require(try await harness.wait(seconds: 20) { try harness.state(reference) == .completed }, "Retry finishes once the credential is back")
+        await harness.stop()
+    }
+
+    private static func documentReasoningTurnedOn() async throws {
+        let require = NativeTaskFixture.require
+        TaskReasoningWire.reset(cutFirst: true)
+        let repository = try LocalChatRepository(inMemory: true)
+        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter()) { job in
+            if job.phase == "outline" { return sectionOutline() }
+            if job.phase.hasPrefix("draft") { return try await TaskReasoningWire.complete(job: job, liveReasoning: true) }
+            return .text("Revised \(job.phase).")
+        }
+        try await harness.start()
+        let reference = try await harness.submitDocument(title: "Bench plan", brief: "Workshop notes for the bench", inputs: ["Bench along the wall"])
+        try require(try await harness.wait(seconds: 20) { try harness.state(reference) == .completed }, "Reasoning turned on part way still finishes")
+        try require(reference.createRequest.payload.nativeBinding?.reasoning == false, "The document was started with reasoning off")
+        let first = TaskReasoningWire.request(0)
+        let second = TaskReasoningWire.request(1)
+        let next = TaskReasoningWire.request(2)
+        try require(TaskReasoningWire.seen.count == 3 && first.reasoning == true && second.reasoning == true && next.reasoning == true,
+                    "Every request carried the live reasoning setting")
+        try require(first.system.contains("at most 2496 characters") && second.system.contains("at most 1248 characters")
+                    && next.system.contains("at most 2496 characters"), "The cut-short section was asked for again at half the size")
+        let checkpoint = try JSONDecoder().decode(NativeDocumentCheckpoint.self, from: try harness.engine.store.get(reference.remoteTaskID!).checkpoint)
+        let report = try repository.taskProjection(id: reference.id)?.snapshot?.result?.report ?? ""
+        try require(checkpoint.drafts == ["Section from the wire.", "Section from the wire."]
+                    && !checkpoint.drafts.joined().contains(TaskReplyCauseWire.partial) && !report.contains(TaskReplyCauseWire.partial),
+                    "No cut-short text was kept")
+        await harness.stop()
+    }
+
+    private static func documentReasoningTurnedOff() async throws {
+        let require = NativeTaskFixture.require
+        TaskReasoningWire.reset(cutFirst: false)
+        let repository = try LocalChatRepository(inMemory: true)
+        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter(), profileReasoning: true) { job in
+            if job.phase == "outline" { return sectionOutline() }
+            if job.phase.hasPrefix("draft") { return try await TaskReasoningWire.complete(job: job, liveReasoning: false) }
+            return .text("Revised \(job.phase).")
+        }
+        try await harness.start()
+        let reference = try await harness.submitDocument(title: "Bench plan", brief: "Workshop notes for the bench", inputs: ["Bench along the wall"])
+        try require(try await harness.wait(seconds: 20) { try harness.state(reference) == .completed }, "Reasoning turned off part way still finishes")
+        let first = TaskReasoningWire.request(0)
+        try require(reference.createRequest.payload.nativeBinding?.reasoning == true && first.reasoning == nil
+                    && first.system.contains("at most 1248 characters"), "The request completes at the size saved when the document started")
+        await harness.stop()
     }
 
     private static func replyCauseWords() throws {
@@ -89,7 +263,24 @@ extension SelfTest {
                     && Words.stepEmptyMessage == "The answer for this step came back empty. Try this step again?"
                     && Words.stepUnusableMessage == "The answer for this step wasn't something Tandem could use. Try this step again?"
                     && Words.modelChangedMessage == "The model this document was using has changed in Settings. Start the document again to use the new one."
-                    && Words.shorterSectionNote == "Asking for a shorter section.", "The new sentences read exactly as written")
+                    && Words.shorterSectionNote == "Asking for a shorter section."
+                    && Words.credentialUnreadableMessage == "Tandem couldn't read the saved key for this model. Check it in Settings, then try this step again?",
+                    "The new sentences read exactly as written")
+        try require(Words.pauseMessage("credential_unavailable") == Words.credentialUnreadableMessage
+                    && Words.pauseMessage("credential_unavailable", sections: true) == Words.credentialUnreadableMessage
+                    && Words.retryPrompt(Words.pauseMessage("credential_unavailable")) == Words.credentialUnreadableMessage
+                    && Words.pauseMessage("provider_auth") == "The saved model credential was not accepted.",
+                    "An unreadable key has its own question, asked once, and a refused key keeps its line")
+        for old in ["The saved model credential is unavailable.", "The saved model credential is unavailable. Retry this step?"] {
+            try require(SavedWording.current(old) == Words.credentialUnreadableMessage, "A saved credential line reads with the current words: \(old)")
+            for workerType in ["document", "research"] {
+                let waiting = try OngoingWorkFixture.reference(conversationID: "credential-words", title: "Workshop plan", workerType: workerType,
+                                                               state: "needs_decision", decision: ["id": "saved", "prompt": old, "choices": ["retry"]])
+                let card = try NativeTaskProjection.display(reference: waiting, snapshot: waiting.snapshot).card
+                try require(card.milestone == Words.credentialUnreadableMessage && card.canRetry,
+                            "A card paused with the earlier credential line shows the current one once: \(card.milestone)")
+            }
+        }
         let forbidden = ["provider_", "response_", "finish_reason", "finish reason", "model request", "\u{2014}"] + CompanionTalkControlFixture.banned
         for sentence in Words.replySentences {
             let lowered = sentence.lowercased()
@@ -220,8 +411,12 @@ extension SelfTest {
         try require(NativeTaskGenerationFailureDetail.restored(detail.stored()) == detail
                     && detail.stored() == "{\"finish_reason\":\"length\",\"http_status\":200,\"phase\":\"draft-1\"}"
                     && NativeTaskGenerationFailureDetail.restored(nil) == nil
-                    && NativeTaskGenerationFailureDetail(phase: "draft-1", finishReason: "a reason with spaces").finishReason == nil
-                    && NativeTaskGenerationFailureDetail(phase: "draft-1", finishReason: String(repeating: "a", count: 33)).finishReason == nil
+                    && NativeTaskGenerationFailureDetail(phase: "draft-1", finishReason: "a reason with spaces").finishReason == "other"
+                    && NativeTaskGenerationFailureDetail(phase: "draft-1", finishReason: TaskReplyCauseWire.privateWord).finishReason == "other"
+                    && NativeTaskGenerationFailureDetail(phase: "draft-1", finishReason: TaskReplyCauseWire.shortKey).finishReason == "other"
+                    && NativeTaskGenerationFailureDetail(phase: "draft-1").finishReason == nil
+                    && NativeTaskGenerationFailureDetail(phase: "not a phase").phase == nil
+                    && NativeTaskGenerationFailureDetail.restored("{\"finish_reason\":\"\(TaskReplyCauseWire.privateWord)\"}")?.finishReason == "other"
                     && NativeTaskGenerationFailureDetail(phase: "draft-1", httpStatus: 9000).httpStatus == nil, "The saved detail is small and bounded")
     }
 
@@ -265,7 +460,10 @@ extension SelfTest {
         ("length", "response_cut_short", 200, "length"),
         ("missing", "response_finish", 200, nil),
         ("filter", "response_finish", 200, "content_filter"),
-        ("odd", "response_finish", 200, nil),
+        ("odd", "response_finish", 200, "other"),
+        ("secret", "response_finish", 200, "other"),
+        ("key", "response_finish", 200, "other"),
+        ("lengthtools", "response_cut_short", 200, "length"),
         ("tools", "response_tool_calls", 200, "tool_calls"),
         ("empty", "response_empty", 200, "stop"),
         ("unreadable", "response_unreadable", 200, nil),
@@ -318,6 +516,14 @@ extension SelfTest {
             let detail = NativeTaskGenerationFailureDetail(phase: "outline", httpStatus: expected.status, finishReason: expected.finish)
             try require(!rows.isEmpty && rows.allSatisfy { $0.0 == expected.code && $0.1 == detail },
                         "The \(scenario) cause and its detail are saved: \(rows)")
+            let raw = try await repository.database.read { db in
+                try String.fetchAll(db, sql: """
+                    SELECT request_id || generation_key || messages_digest || state || IFNULL(response, '') || IFNULL(failure, '') || IFNULL(failure_detail, '')
+                    FROM native_task_generations WHERE request_id = ?
+                    """, arguments: [reference.id.uuidString]).joined()
+            }
+            try require(!raw.contains(TaskReplyCauseWire.privateWord) && !raw.contains(TaskReplyCauseWire.shortKey)
+                        && !raw.contains(TaskReplyCauseWire.partial), "No reply text reaches the saved rows for \(scenario)")
             let snapshot = try repository.taskProjection(id: reference.id)?.snapshot
             let events = try harness.engine.store.events(taskID: reference.remoteTaskID!).map { String(decoding: $0.data, as: UTF8.self) }.joined()
             let shown = (snapshot?.decision?.prompt ?? "") + events
@@ -336,6 +542,10 @@ extension SelfTest {
     }
 
     private static func documentShorterSection() async throws {
+        for scenario in ["length", "lengthtools"] { try await documentShorterSection(scenario) }
+    }
+
+    private static func documentShorterSection(_ scenario: String) async throws {
         let require = NativeTaskFixture.require
         let repository = try LocalChatRepository(inMemory: true)
         let counter = NativeTaskEngineCounter()
@@ -344,7 +554,7 @@ extension SelfTest {
             await recorder.record(job)
             if job.phase == "outline" { return sectionOutline() }
             if job.phase == "draft-0", await counter.count("generate:draft-0") == 1 {
-                return try await TaskReplyCauseWire.complete("length", job: job)
+                return try await TaskReplyCauseWire.complete(scenario, job: job)
             }
             if job.phase.hasPrefix("draft") { return .text("{\"text\":\"Draft for \(job.phase).\"}") }
             return .text("Revised \(job.phase).")
