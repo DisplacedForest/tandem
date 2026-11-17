@@ -423,9 +423,11 @@ struct NativeTaskProfileBinding: Codable, Equatable, Hashable, Sendable {
     let limits: NativeTaskGenerationLimits
     let requiresCredential: Bool
     var reasoning: Bool? = nil
+    var outputLimit: Int? = nil
 
     init(id: String, profileID: String, provider: NativeTaskEngineIdentity, savedModel: String,
-         executionModel: String, limits: NativeTaskGenerationLimits, requiresCredential: Bool = false, reasoning: Bool? = nil) {
+         executionModel: String, limits: NativeTaskGenerationLimits, requiresCredential: Bool = false, reasoning: Bool? = nil,
+         outputLimit: Int? = nil) {
         self.id = id
         self.profileID = profileID
         self.provider = provider
@@ -434,6 +436,7 @@ struct NativeTaskProfileBinding: Codable, Equatable, Hashable, Sendable {
         self.limits = limits
         self.requiresCredential = requiresCredential
         self.reasoning = reasoning
+        self.outputLimit = outputLimit
     }
 }
 
