@@ -240,13 +240,13 @@ extension SelfTest {
         _ = try await tool(NativeFolderTools.writeName, [outer, inner]).execute(["path": .string(inner.path + "/note.txt"), "content": .string("direct")])
         try require(try String(contentsOfFile: inner.path + "/note.txt", encoding: .utf8) == "direct", "The same file asked for directly is written")
 
-        let linked = try FolderGrant.make(url: try folder("Linked"))
-        try "plain".write(toFile: linked.path + "/notes.txt", atomically: true, encoding: .utf8)
-        try manager.linkItem(atPath: linked.path + "/notes.txt", toPath: linked.path + "/.Trash")
-        guard case .object = try await tool(NativeFolderTools.readName, [linked]).execute(["path": .string(linked.path + "/notes.txt")]) else {
+        let shared = try FolderGrant.make(url: try folder("Linked"))
+        try "plain".write(toFile: shared.path + "/notes.txt", atomically: true, encoding: .utf8)
+        try manager.linkItem(atPath: shared.path + "/notes.txt", toPath: shared.path + "/.Trash")
+        guard case .object = try await tool(NativeFolderTools.readName, [shared]).execute(["path": .string(shared.path + "/notes.txt")]) else {
             throw NativeTaskFixture.Failure.assertion("An ordinary file is read even when a file named like the Trash shares its contents")
         }
-        try require(!FolderGrant.isTrashEntry(directory: linked.path, name: "notes.txt") && !FolderGrant.throughTrash(root: linked.path, components: ["notes.txt"]),
+        try require(!FolderGrant.isTrashEntry(directory: shared.path, name: "notes.txt") && !FolderGrant.throughTrash(root: shared.path, components: ["notes.txt"]),
                     "Only a folder counts as the Trash folder in the on-disk comparison")
 
         try require(FolderGrant.inTrash("/home/.TRASH/Plans") && FolderGrant.inTrash("/home/.trashes/501/Plans") && FolderGrant.inTrash("/home/.Tra\u{17F}h/Plans")
