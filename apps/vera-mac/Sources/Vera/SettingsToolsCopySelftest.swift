@@ -87,7 +87,7 @@ extension SelfTest {
         ]
         let internals = ["parameters.", "'", "property '", "json schema", "pointer", "#/", "nativetool", "problem", "reason", "\u{2014}"]
         for problem in problems {
-            let failure = NativeToolDeclarationFailure(file: "/Users/someone/.config/tools/garden.json", reason: "Property 'count' uses 'format', which is not supported", problem: problem)
+            let failure = NativeToolDeclarationFailure(file: "/private/var/tmp/tools/garden.json", reason: "Property 'count' uses 'format', which is not supported", problem: problem)
             let line = SettingsToolsCopy.failureLine(failure)
             try require(line.hasPrefix("garden.json wasn't loaded. ") && !line.contains("/") && !line.contains("\\"), "A refused file is named without its folder: \(line)")
             try require(!line.contains(failure.reason), "A refused file never shows the loader's own wording: \(line)")
