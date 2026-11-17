@@ -692,10 +692,14 @@ extension SelfTest {
         let checkpoint = try JSONDecoder().decode(NativeDocumentCheckpoint.self, from: try harness.engine.store.get(reference.remoteTaskID!).checkpoint)
         try require(checkpoint.failureReason == nil && checkpoint.pauseCause == "response_cut_short", "The cause is saved and nothing blames the brief")
         let tries = await recorder.all().filter { $0.phase == "outline" }
-        try require(tries.count == 3 && !(tries[0].messages.first?.content.contains("under") ?? true)
-                    && tries[1].messages.first?.content.contains("under \(NativeDocumentWorker.sectionCharacters) characters") == true
-                    && tries[2].messages.first?.content.contains("under \(NativeDocumentWorker.sectionCharacters / 2) characters") == true,
-                    "The plan is asked for again shorter twice before pausing")
+        let systems: [String] = tries.map { $0.messages.first?.content ?? "" }
+        let full: String = "under \(NativeDocumentWorker.sectionCharacters) characters"
+        let half: String = "under \(NativeDocumentWorker.sectionCharacters / 2) characters"
+        try require(systems.count == 3, "The plan was asked for three times")
+        let firstOpen: Bool = !systems[0].contains("under")
+        let secondFull: Bool = systems[1].contains(full)
+        let thirdHalf: Bool = systems[2].contains(half)
+        try require(firstOpen && secondFull && thirdHalf, "The plan is asked for again shorter twice before pausing")
         await release.bump("retry")
         await harness.tracker.retry(reference.id)
         try require(try await harness.wait(seconds: 20) { try harness.state(reference) == .completed }, "Retry after the plan pause finishes the document")
