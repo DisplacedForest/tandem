@@ -1,6 +1,3 @@
-"""Free-lane endpoint discipline: POST /actions/auto accepts only verbs enrolled as
-autonomous, validates, dedups by normalized URL, executes the shared executor, and audits
-with auto=true. Run: python3 -m pytest tests/test_actions_auto.py"""
 import asyncio
 
 import pytest

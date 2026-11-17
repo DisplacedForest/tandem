@@ -1,7 +1,3 @@
-"""Worldview/taste/region config — the judgment knobs are config, not code.
-
-Covers sentinel gating, temperature-unit threshold semantics, US-region detection,
-and the neutral fallbacks. Run under pytest."""
 import pytest
 
 from routers import persona, units, weather

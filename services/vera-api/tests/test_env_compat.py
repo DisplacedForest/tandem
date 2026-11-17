@@ -50,8 +50,8 @@ def test_deprecated_name_falls_back(monkeypatch):
 
 
 def test_deprecated_in_use_flags_only_unmigrated(monkeypatch):
-    monkeypatch.setenv("SAMPLE_SERVICE_API_KEY", "k")        # old only -> flagged
-    monkeypatch.setenv("SAMPLE_SERVICE_BASE", "http://s")    # new only -> not flagged
+    monkeypatch.setenv("SAMPLE_SERVICE_API_KEY", "k")
+    monkeypatch.setenv("SAMPLE_SERVICE_BASE", "http://s")
     monkeypatch.setenv("OVERSEERR_BASE", "http://o")         # both set -> migrated, not flagged
     monkeypatch.setenv("OVERSEERR_URL", "http://o-old")
     flagged = dict(ec.deprecated_in_use())

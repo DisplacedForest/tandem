@@ -71,7 +71,7 @@ def test_auto_recent_filters():
     assert "https://x.test/r/2" in urls       # successful auto row counts
     assert "https://x.test/r/3" not in urls   # failed attempts don't
     assert "https://x.test/r/4" not in urls   # other verbs don't
-    assert a.auto_recent("sample.import_link", time.time() + 60) == []  # window respected
+    assert a.auto_recent("sample.import_link", time.time() + 60) == []
 
 
 if __name__ == "__main__":

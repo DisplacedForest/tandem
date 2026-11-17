@@ -25,8 +25,8 @@ def test_accumulate_and_prob():
     for d in ["2026-06-08", "2026-06-15", "2026-06-22", "2026-06-29", "2026-07-06",
               "2026-07-13", "2026-07-20", "2026-07-27", "2026-08-03", "2026-08-10", "2026-08-17"]:
         rs.record_day(d, {"light.hallway": {7}}, META)
-    assert rs.prob("light.hallway", 0, 7) == (1.0, 12.0)   # active every Monday at 7
-    assert rs.prob("light.hallway", 0, 9) == (0.0, 12.0)   # never at 9
+    assert rs.prob("light.hallway", 0, 7) == (1.0, 12.0)
+    assert rs.prob("light.hallway", 0, 9) == (0.0, 12.0)
     # unseen bucket (different dow)
     assert rs.prob("light.hallway", 3, 7) == (0.0, 0.0)
 

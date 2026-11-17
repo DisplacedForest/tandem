@@ -211,7 +211,7 @@ This is the Settings, Plugins store for the optional server-side integrations, s
 
 ### Memory and home control
 
-Tandem maintains an inspectable, editable memory store and grooms it nightly: every change reversible and surfaced as an audit card. With Home Assistant connected, Tandem answers from live home state and acts through a typed, confirmation-gated action system; nothing in the home actuates without an explicit confirmation. Trust is graduated per verb: an action explicitly enrolled as autonomous: which the registry permits only for low-risk, trivially reversible verbs: executes without a confirmation and surfaces afterward as a System card. Exactly one verb is enrolled: recipe import, so Tandem can save a recipe it finds worth keeping into the household cookbook on its own, capped, deduplicated, and announced after the fact.
+Tandem maintains an inspectable, editable memory store and grooms it nightly: every change reversible and surfaced as an audit card. With Home Assistant connected, Tandem answers from live home state and acts through a typed, confirmation-gated action system; nothing in the home actuates without an explicit confirmation. Trust is graduated per verb: an action explicitly enrolled as autonomous: which the registry permits only for low-risk, trivially reversible verbs: executes without a confirmation and surfaces afterward as a System card. No built-in verb is enrolled.
 
 ## The endpoint matrix
 

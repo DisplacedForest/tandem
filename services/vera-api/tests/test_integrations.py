@@ -12,7 +12,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from routers import env_compat as ec  # noqa: E402
+from routers import env_compat as ec
 from routers import integrations as ig  # noqa: E402
 from routers import integrations_store as ist  # noqa: E402
 from routers import conversation_extract, home, home_model, home_reconcile, knowledge_groom, learn, pulse
@@ -75,7 +75,7 @@ def test_env_beats_store(monkeypatch):
     ist.update("sample_service", fields={"url": "http://from-store", "api_key": "store-key"})
     monkeypatch.setenv("SAMPLE_SERVICE_URL", "http://from-env")
     assert ig.integration("sample_service")["url"] == "http://from-env"
-    assert ig.integration("sample_service")["api_key"] == "store-key"  # unset env falls through
+    assert ig.integration("sample_service")["api_key"] == "store-key"
 
 
 def test_store_configured_works_without_env():

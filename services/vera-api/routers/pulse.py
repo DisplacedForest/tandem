@@ -103,11 +103,6 @@ async def _inject(title, body, *, user_id, image_url=None, tint=None, sources=No
                   summary=None, inline_images=None, action=None, kind="research", severity=None,
                   provenance="scheduled", category=None, change_set=None, items=None,
                   situation_key=None):
-    """Store a Pulse card. Compat shim for the helper routers (health/weather)
-    that surface cards.
-    `kind`/`severity` place the card in an ambient vein; default is the research feed.
-    `user_id` is the person the card is FOR; defaults to the household owner.
-    `items` carries a multi-item digest's per-row actions. Returns the new card id."""
     src = [{"n": s["n"], "title": s["title"], "url": s["url"]} for s in (sources or [])]
     imgs = [{"n": i, "url": im["url"], "caption": im.get("caption", ""), "sourceN": im.get("srcN", 0)}
             for i, im in enumerate(inline_images or [], start=1)]

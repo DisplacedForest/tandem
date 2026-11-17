@@ -3,7 +3,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from routers import action_registry  # noqa: E402
+from routers import action_registry
 from routers import action_spec as sp  # noqa: E402
 from routers import home as ha
 from routers import knowledge_actions, updates
