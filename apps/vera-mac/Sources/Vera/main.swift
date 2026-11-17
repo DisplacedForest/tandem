@@ -143,6 +143,8 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         do { try await NativePreferencesSelftest.run() }
         catch { print("native-preferences: FAIL \(error)"); exit(1) }
     }
+} else if arguments.contains("--preferences-live") {
+    NativeApplicationEntry.runAsync { exit(await NativePreferenceEval.run(arguments: arguments)) }
 } else if arguments.contains("--selftest") {
     NativeApplicationEntry.runAsync { await SelfTest.run() }
 } else if arguments.contains("--dump-context") {

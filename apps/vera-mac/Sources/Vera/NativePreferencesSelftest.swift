@@ -5,6 +5,7 @@ final class NativePreferenceStubTransport: NativeChatTransport, @unchecked Senda
     private let lock = NSLock()
     private var classifierReply: String
     private var classifierCount = 0
+    private var bodies: [String] = []
     private var replySystems: [String] = []
     private var failing = false
     private var hold: NativeSessionGate?
@@ -14,6 +15,7 @@ final class NativePreferenceStubTransport: NativeChatTransport, @unchecked Senda
     }
 
     var classifierRequests: Int { lock.withLock { classifierCount } }
+    var classifierBodies: [String] { lock.withLock { bodies } }
     var systemPrompts: [String] { lock.withLock { replySystems } }
     func dropFirst(_ count: Int) {
         lock.withLock { replySystems.removeFirst(min(count, replySystems.count)) }
@@ -40,8 +42,10 @@ final class NativePreferenceStubTransport: NativeChatTransport, @unchecked Senda
         let system = messages.first(where: { $0.role == "system" })?.content ?? ""
         let content: String
         if system.contains(NativePreferenceClassifier.marker) {
+            let body = messages.last?.content ?? ""
             content = lock.withLock {
                 classifierCount += 1
+                bodies.append(body)
                 return classifierReply
             }
         } else {
@@ -101,11 +105,16 @@ final class NativePreferenceFlag: @unchecked Sendable {
 final class NativePreferenceClassifierCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
+    private var seen: [String] = []
     let reply: String?
     init(_ reply: String?) { self.reply = reply }
     var calls: Int { lock.withLock { count } }
-    func classify(_ text: String) async -> String? {
-        lock.withLock { count += 1 }
+    var bodies: [String] { lock.withLock { seen } }
+    func classify(_ body: String) async -> String? {
+        lock.withLock {
+            count += 1
+            seen.append(body)
+        }
         return reply
     }
 }
@@ -144,20 +153,22 @@ enum NativePreferencesSelftest {
     static func run() async throws {
         defer { repositories.removeAll() }
         let require = NativeTaskFixture.require
-        try detector(require)
+        try await meaningGate(require)
         try recognizers(require)
         try classifierValidation(require)
+        try labeledSet(require)
         try migration(require)
         try await writeAndReadBack(require)
         try await failedWrite(require)
-        try await recognizerFallback(require)
+        try await noFallback(require)
         try await widerDetection(require)
         try await currency(require)
         try await limits(require)
         try settingsEdits(require)
         try await replay(require)
         try await duplicates(require)
-        try await undo(require)
+        try await removal(require)
+        try await permission(require)
         try scope(require)
         try prompts(require)
         try await companionPrompt(require)
@@ -179,21 +190,60 @@ enum NativePreferencesSelftest {
         print("NATIVE PREFERENCES SELFTEST OK")
     }
 
-    private static func detector(_ require: (Bool, String) throws -> Void) throws {
-        let hits = ["Never respond with em dashes", "don\u{2019}t call me buddy", "Do not use bullet points", "Stop apologizing",
-                    "Always answer in British English", "From now on keep it short", "I told you no emoji", "Quit hedging",
-                    "please don't say that", "No more exclamation marks", "You did it again"]
-        for text in hits { try require(NativePreferenceDetector.hits(text), "The detector hits: \(text)") }
-        let misses = ["What is the weather tomorrow?", "Plan a trip to Rome", "Tell me about stopwatches", "Write a haiku about autumn", ""]
-        let wider = ["I prefer concise replies", "Avoid em dashes in all future replies", "I'd rather you skip the intro", "Keep replies short",
-                     "I want you to be blunt", "Call me Sam", "Refer to me as Dr. Lee", "Going forward, cite sources", "Use metric instead",
-                     "Be more direct", "Stop being so formal", "Whenever you answer, start with the result", "I hate it when you hedge"]
-        for text in wider { try require(NativePreferenceDetector.hits(text), "The wider detector hits: \(text)") }
-        for text in misses { try require(!NativePreferenceDetector.hits(text), "The detector misses: \(text)") }
-        for text in ["forget that", "Never mind.", "undo that!", "Scratch that", "nevermind"] {
-            try require(NativePreferenceDetector.isUndo(text), "Undo is recognized: \(text)")
+    static let brief = #"{"preference": {"statement": "Keep replies brief.", "kind": "style", "strength": "standing", "check": null}}"#
+    static let removeFirst = #"{"remove": 1}"#
+    static let nothing = #"{"preference": null}"#
+
+    private static func meaningGate(_ require: (Bool, String) throws -> Void) async throws {
+        let marked = NativePreferenceStore(database: try tracked().database)
+        let unmarked = NativePreferenceStore(database: try tracked().database)
+        let markedCounter = NativePreferenceClassifierCounter(brief)
+        let unmarkedCounter = NativePreferenceClassifierCounter(brief)
+        let first = await NativePreferenceCapture.run(request("From now on, always keep your replies brief"), store: marked, classify: markedCounter.classify)
+        let second = await NativePreferenceCapture.run(request("Brief replies suit me best"), store: unmarked, classify: unmarkedCounter.classify)
+        let markedRows = try marked.active().map { [$0.statement, $0.kind.rawValue, $0.strength.rawValue] }
+        let unmarkedRows = try unmarked.active().map { [$0.statement, $0.kind.rawValue, $0.strength.rawValue] }
+        try require(first == second && first == .saved("Keep replies brief.") && markedRows == unmarkedRows && markedRows.count == 1,
+                    "A preference with marker words and one without reach the same classifier and save the same record")
+        try require(markedCounter.bodies.first?.hasSuffix("Message:\nFrom now on, always keep your replies brief") == true
+                    && unmarkedCounter.bodies.first?.hasSuffix("Message:\nBrief replies suit me best") == true,
+                    "The classifier reads the person's own words")
+        let ordinary = NativePreferenceClassifierCounter(nothing)
+        for text in ["What is the weather tomorrow?", "Plan a trip to Rome", "", "ok"] {
+            _ = await NativePreferenceCapture.run(request(text), store: unmarked, classify: ordinary.classify)
         }
-        try require(!NativePreferenceDetector.isUndo("forget that last email and write a new one"), "A longer request is not undo")
+        try require(ordinary.calls == 4 && unmarked.active().count == 1, "Every eligible message is classified, whatever its wording")
+    }
+
+    private static func labeledSet(_ require: (Bool, String) throws -> Void) throws {
+        let examples = NativePreferenceLabeledSet.examples
+        let texts = examples.map(\.text)
+        try require(examples.count >= 200 && Set(texts).count == texts.count, "The labeled set has at least 200 distinct messages")
+        for heldOut in [false, true] {
+            let split = examples.filter { $0.heldOut == heldOut }
+            for kind in NativePreferenceExampleKind.allCases {
+                try require(split.contains { $0.kind == kind }, "Each split covers \(kind.rawValue)")
+            }
+        }
+        let acceptance = ["I like short answers", "Keep it casual with me", "Keep this answer short"]
+        for sentence in acceptance {
+            try require(examples.contains { $0.text == sentence && $0.heldOut } && !examples.contains { $0.text == sentence && !$0.heldOut },
+                        "An acceptance sentence is held out: \(sentence)")
+        }
+        for example in examples {
+            if case .remove(let number) = example.label {
+                try require((1...max(example.saved.count, 1)).contains(number) && !example.saved.isEmpty, "A removal names a saved item: \(example.text)")
+            }
+            try require(!NativePreferenceClassifier.instructions.localizedCaseInsensitiveContains(example.text),
+                        "The classifier instructions never contain a labeled message: \(example.text)")
+        }
+        let scored = NativePreferenceExample(text: "x", label: .nothing, kind: .nearMiss, heldOut: false)
+        var score = NativePreferenceScore()
+        score.add(scored, .standing)
+        score.add(NativePreferenceExample(text: "y", label: .standing, kind: .preference, heldOut: false), .standing)
+        score.add(NativePreferenceExample(text: "z", label: .remove(1), kind: .removal, heldOut: false, saved: ["a", "b"]), .remove(2))
+        try require(score.falseWrites == 2 && score.saved == 1 && score.removedRight == 0 && score.misses == ["x", "z"],
+                    "Scoring counts a wrong save and a wrong removal as unwanted writes")
     }
 
     private static func recognizers(_ require: (Bool, String) throws -> Void) throws {
@@ -262,9 +312,30 @@ enum NativePreferencesSelftest {
         for raw in malformed { try require(C.parse(raw) == nil, "Malformed or null output is nothing: \(raw ?? "nil")") }
         let dashed = #"{"preference": {"statement": "Keep it short \#(emDash) no filler", "kind": "style", "strength": "hard"}}"#
         try require(C.parse(dashed)?.statement.contains(emDash) == false, "A saved statement never carries an em dash")
-        let prompt = C.messages(for: "Never use em dashes")
-        try require(prompt[0].content.contains("I never thought about it") && prompt[0].content.contains("don't worry about it")
-                    && prompt[0].content.contains("this message only"), "The classifier prompt names the non preferences it rejects")
+        let prompt = C.messages(for: C.body(text: "Never use em dashes", saved: []))
+        try require(prompt.count == 2 && prompt[0].content == C.instructions && prompt[1].content == "Saved preferences:\nnone\n\nMessage:\nNever use em dashes",
+                    "The classifier gets its instructions, the saved list and the message")
+        let listed = C.body(text: String(repeating: "a", count: 2_500), saved: [
+            C.Saved(id: "x", statement: "Call me Sam", fromPreviousMessage: false),
+            C.Saved(id: "y", statement: "Never use emoji.", fromPreviousMessage: true)])
+        try require(listed.hasPrefix("Saved preferences:\n1. Call me Sam\n2. Never use emoji. (saved from the person's previous message)\n\nMessage:\n")
+                    && listed.hasSuffix(String(repeating: "a", count: C.excerptLimit)) && !listed.contains(String(repeating: "a", count: C.excerptLimit + 1)),
+                    "Saved preferences are numbered, the just saved one is marked and the message is bounded")
+        for sentence in ["I like short answers", "Keep it casual with me", "Keep this answer short", "this time", "just this once",
+                         "forget that", "never mind"] {
+            try require(!C.instructions.localizedCaseInsensitiveContains(sentence), "The instructions hold no acceptance sentence or phrase list: \(sentence)")
+        }
+        try require(C.classify(#"{"remove": 2}"#, savedCount: 2) == .remove(2) && C.classify(#"{"remove": 1}"#, savedCount: 3) == .remove(1),
+                    "A removal names a listed preference")
+        for raw in [#"{"remove": 3}"#, #"{"remove": 0}"#, #"{"remove": -1}"#, #"{"remove": 1.5}"#, #"{"remove": true}"#, #"{"remove": "2"}"#,
+                    #"{"remove": null}"#, #"{"remove": 1, "preference": null}"#, #"{"permission": false}"#, #"{"permission": 1}"#,
+                    #"{"permission": "yes"}"#, #"{"rule": true}"#] {
+            try require(C.classify(raw, savedCount: 2) == .invalid, "An answer outside the schema is invalid: \(raw)")
+        }
+        try require(C.classify(#"{"remove": 1}"#) == .invalid, "With nothing saved there is nothing to remove")
+        try require(C.classify(#"{"remove": "unclear"}"#, savedCount: 2) == .removeUnclear && C.classify(#"{"remove": "unclear"}"#) == .removeUnclear,
+                    "An unclear removal is its own answer")
+        try require(C.classify(#"{"permission": true}"#) == .permission, "A permission request is its own answer")
     }
 
     private static func migration(_ require: (Bool, String) throws -> Void) throws {
@@ -300,12 +371,12 @@ enum NativePreferencesSelftest {
         let junk = NativePreferenceClassifierCounter("sure! here you go")
         let broken = await NativePreferenceCapture.run(request("Stop saying bullet points"), store: store, classify: junk.classify)
         let afterJunk = try store.active().count
-        try require(broken == .unavailable && afterJunk == 1, "Malformed classifier output without a plain prohibition saves nothing")
-        try require(broken.note == "The person asked for a preference but it couldn't be saved right now. Tell them plainly it was not saved and they can try again or add it in Settings.",
-                    "A classifier failure tells the model to say it was not saved")
-        let silent = NativePreferenceClassifierCounter(savedEmDash)
+        try require(broken == .unavailable && afterJunk == 1, "Malformed classifier output saves nothing")
+        try require(broken.note == "The person's saved preferences were not changed by this message, because it couldn't be checked right now. Only if the message asked to set or remove a standing preference, tell them plainly it didn't go through and they can try again or change it in Settings. Otherwise don't mention it.",
+                    "A classifier failure never claims a save and only speaks up if the person asked")
+        let silent = NativePreferenceClassifierCounter(nothing)
         let ordinary = await NativePreferenceCapture.run(request("What should I cook tonight?"), store: store, classify: silent.classify)
-        try require(ordinary == .none && silent.calls == 0, "No marker means no classifier call")
+        try require(ordinary == .none && silent.calls == 1 && ordinary.note == nil, "An ordinary message is classified and changes nothing")
         let typed = try store.add(statement: "Call me Sam", check: NativePreferenceRecognizer.check(for: "Call me Sam"))
         try require(typed.quote == nil && typed.sourceTurnID == nil && store.readBack(id: typed.id, statement: "call me sam") != nil,
                     "A Settings preference saves without a quote and reads back")
@@ -314,67 +385,42 @@ enum NativePreferencesSelftest {
     private static func failedWrite(_ require: (Bool, String) throws -> Void) async throws {
         let repository = try tracked()
         let store = NativePreferenceStore(database: repository.database)
-        try await repository.database.write { db in try db.execute(sql: "DROP TABLE native_preferences") }
+        try await repository.database.write { db in
+            try db.execute(sql: "CREATE TRIGGER refuse_preference BEFORE INSERT ON native_preferences BEGIN SELECT RAISE(ABORT, 'refused'); END")
+        }
         let counter = NativePreferenceClassifierCounter(savedEmDash)
         let outcome = await NativePreferenceCapture.run(request("never use em dashes"), store: store, classify: counter.classify)
+        let unreadable = NativePreferenceStore(database: try tracked().database)
+        try await unreadable.database.write { db in try db.execute(sql: "DROP TABLE native_preferences") }
+        let unchecked = NativePreferenceClassifierCounter(savedEmDash)
+        let unreadableOutcome = await NativePreferenceCapture.run(request("never use em dashes"), store: unreadable, classify: unchecked.classify)
+        try require(unreadableOutcome == .unavailable && unchecked.calls == 0, "Saved preferences that can't be read mean no classification and no claim")
         try require(outcome == .failed, "A failed write reports failure")
         try require(outcome.note == "The person asked for a preference but it could not be saved. Tell them plainly it was not saved.",
                     "The failure note tells the model to say it was not saved")
         try require(outcome.note?.contains("is saved") == false, "The model is never told a failed preference is saved")
     }
 
-    private static func recognizerFallback(_ require: (Bool, String) throws -> Void) async throws {
+    private static func noFallback(_ require: (Bool, String) throws -> Void) async throws {
         let store = NativePreferenceStore(database: try tracked().database)
         let slow = SlowPreferenceTransport()
-        let timeoutRaw = await NativePreferenceClassifier.request(transport: slow, model: "local-model", text: "never use em dashes",
+        let timeoutRaw = await NativePreferenceClassifier.request(transport: slow, model: "local-model", body: "never use em dashes",
                                                                    timeout: .milliseconds(100))
         try require(timeoutRaw == nil, "A classifier timeout returns nothing")
-        let afterTimeout = await NativePreferenceCapture.run(request("Never respond with em dashes"), store: store, classify: { text in
-            await NativePreferenceClassifier.request(transport: slow, model: "local-model", text: text, timeout: .milliseconds(100))
+        let afterTimeout = await NativePreferenceCapture.run(request("Never respond with em dashes"), store: store, classify: { body in
+            await NativePreferenceClassifier.request(transport: slow, model: "local-model", body: body, timeout: .milliseconds(100))
         })
-        try require(afterTimeout == .saved("Don't use em dashes."), "A classifier timeout with an em dash request still saves")
-        let saved = try store.active()
-        try require(saved.count == 1 && saved[0].kind == .style && saved[0].strength == .hard && saved[0].check?.forbidChars == [emDash],
-                    "The fallback saves a hard style preference with the recognizer's check")
-        try require(afterTimeout.note?.contains("it is saved: Don't use em dashes.") == true, "The fallback uses the same saved note")
-
-        let nullStore = NativePreferenceStore(database: try tracked().database)
-        let null = NativePreferenceClassifierCounter(#"{"preference": null}"#)
-        let afterNull = await NativePreferenceCapture.run(request("never use em dashes or emoji"), store: nullStore, classify: null.classify)
-        try require(afterNull == .none && nullStore.active().isEmpty, "A null classification is a rejection even with a recognizer match")
+        try require(afterTimeout == .unavailable && store.active().isEmpty && afterTimeout.note?.contains("saved:") == false,
+                    "A classifier timeout saves nothing, even for a plain prohibition, and claims nothing")
         let malformed = NativePreferenceClassifierCounter("I think so")
-        let afterMalformed = await NativePreferenceCapture.run(request("never use em dashes or emoji"), store: nullStore, classify: malformed.classify)
-        try require(afterMalformed == .saved("Don't use em dashes or emoji."), "A malformed reply with an explicit prohibition falls back")
-        let quotedOnly = await NativePreferenceCapture.run(request("Alice wrote: never use exclamation marks"), store: nullStore, classify: malformed.classify)
-        let asked = await NativePreferenceCapture.run(request("Do I never use exclamation marks?"), store: nullStore, classify: malformed.classify)
-        let mine = await NativePreferenceCapture.run(request("I never use exclamation marks myself"), store: nullStore, classify: malformed.classify)
-        try require(quotedOnly == .unavailable && asked == .unavailable && mine == .unavailable && nullStore.active().count == 1,
-                    "Attributed, asked and self described text never falls back")
-        let multiline = await NativePreferenceCapture.run(request("Alice wrote:\nNever use emoji"), store: nullStore, classify: malformed.classify)
-        let fenced = await NativePreferenceCapture.run(request("```\nNever use emoji\n```"), store: nullStore, classify: malformed.classify)
-        let long = await NativePreferenceCapture.run(request("Never use emoji " + String(repeating: "in any reply at all ", count: 9)), store: nullStore,
-                                                     classify: malformed.classify)
-        let quotedAround = await NativePreferenceCapture.run(request("\"Never use emoji\""), store: nullStore, classify: malformed.classify)
-        let trailing = await NativePreferenceCapture.run(request("I think so. Never use emoji"), store: nullStore, classify: malformed.classify)
-        try require([multiline, fenced, long, quotedAround, trailing].allSatisfy { $0 == .unavailable } && nullStore.active().count == 1,
-                    "Only a single short line that is itself a prohibition falls back")
-        let phrase = await NativePreferenceCapture.run(request("Never say 'great question'"), store: nullStore, classify: malformed.classify)
-        try require(phrase == .saved("Don't say \"great question\"."), "Quotes around the banned phrase are allowed in the fallback")
-        let mixedStore = NativePreferenceStore(database: try tracked().database)
-        let mixed = await NativePreferenceCapture.run(request("Never use emoji, always use em dashes"), store: mixedStore, classify: malformed.classify)
-        try require(mixed == .saved("Don't use emoji.") && mixedStore.activeChecks() == [NativePreferenceCheck(forbidEmoji: true)],
-                    "The fallback bans only the object of the negative clause")
-        let scoped = await NativePreferenceCapture.run(request("Don't use emoji this time"), store: nullStore, classify: malformed.classify)
-        let scopedHere = await NativePreferenceCapture.run(request("Never use em dashes here"), store: nullStore, classify: malformed.classify)
-        try require(scoped == .unavailable && scopedHere == .unavailable && NativePreferenceRecognizer.fallback(for: "Never use emoji") != nil
-                    && NativePreferenceRecognizer.fallback(for: "Never use emoji from here on") != nil, "A one-time request never falls back")
-        try require(NativePreferenceClassifier.messages(for: "x")[0].content.contains("\"just this once\""), "The classifier prompt rejects one-time scope")
         let failing = NativePreferenceClassifierCounter(nil)
-        let afterFailure = await NativePreferenceCapture.run(request("I'd like fewer exclamation marks"), store: nullStore, classify: failing.classify)
-        try require(afterFailure == .none, "No detector hit means nothing even with a recognizer match")
-        let plain = await NativePreferenceCapture.run(request("Never use bullet points"), store: nullStore, classify: failing.classify)
-        let remaining = try nullStore.active().count
-        try require(plain == .unavailable && remaining == 2 && failing.calls == 1, "A failed classifier with no recognizer match saves nothing")
+        for text in ["never use em dashes or emoji", "Never say 'great question'", "Don't use emoji"] {
+            let afterMalformed = await NativePreferenceCapture.run(request(text), store: store, classify: malformed.classify)
+            let afterFailure = await NativePreferenceCapture.run(request(text), store: store, classify: failing.classify)
+            try require(afterMalformed == .unavailable && afterFailure == .unavailable, "No keyword fallback after a bad answer: \(text)")
+        }
+        let rows = try await store.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_preference_captures") ?? 0 }
+        try require(store.active().isEmpty && rows == 0, "A failed classification writes nothing and leaves no record, so a retry classifies again")
         let polar = NativePreferenceStore(database: try tracked().database)
         let likes = #"{"preference": {"statement": "Always use emoji.", "kind": "style", "strength": "hard", "check": null}}"#
         _ = await NativePreferenceCapture.run(request("Always use emoji"), store: polar, classify: NativePreferenceClassifierCounter(likes).classify)
@@ -397,15 +443,6 @@ enum NativePreferencesSelftest {
         _ = await NativePreferenceCapture.run(request("Never use emoji. Also keep a calm tone from now on"), store: ignored,
                                               classify: NativePreferenceClassifierCounter(calm).classify)
         try require(ignored.activeChecks() == [nil], "The person's raw words never add a check the classifier statement lacks")
-
-        let R = NativePreferenceRecognizer.self
-        try require(R.statement(for: NativePreferenceCheck(forbidChars: [enDash])) == "Don't use en dashes as dashes.", "En dash statement")
-        try require(R.statement(for: NativePreferenceCheck(forbidChars: ["!"])) == "Don't use exclamation marks.", "Exclamation statement")
-        try require(R.statement(for: NativePreferenceCheck(forbidPhrases: ["as an AI"])) == "Don't say \"as an AI\".", "Phrase statement")
-        try require(R.statement(for: NativePreferenceCheck(forbidChars: [emDash, enDash, "!"], forbidPhrases: ["circle back"]))
-                    == "Don't use em dashes, en dashes as dashes, or exclamation marks. Don't say \"circle back\".", "Combined statement")
-        try require(R.proposal(for: "Quit using emoji", check: NativePreferenceCheck(forbidEmoji: true))?.strength == .standing,
-                    "Quit saves a standing preference")
     }
 
     private static func widerDetection(_ require: (Bool, String) throws -> Void) async throws {
@@ -441,9 +478,12 @@ enum NativePreferencesSelftest {
         let rows = try await store.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_preference_captures") ?? 0 }
         try require(fenced == .none && store.active().isEmpty && rows == 0, "The write transaction refuses a turn that is no longer current")
         _ = await NativePreferenceCapture.run(request("never use em dashes", message: "m1"), store: store, classify: counter.classify)
-        let blockedUndo = await NativePreferenceCapture.run(request("forget that", previous: "m1"), store: store, classify: counter.classify,
+        let remover = NativePreferenceClassifierCounter(removeFirst)
+        let blockedUndo = await NativePreferenceCapture.run(request("drop the dash rule", previous: "m1"), store: store, classify: remover.classify,
                                                             stillCurrent: { _ in false })
-        try require(blockedUndo == .none && store.active().count == 1, "A stopped undo removes nothing")
+        let lateUndo = await NativePreferenceCapture.run(request("drop the dash rule", previous: "m1"), store: store, classify: remover.classify,
+                                                         isCurrent: { false })
+        try require(blockedUndo == .none && lateUndo == .none && store.active().count == 1, "A stopped or replaced turn removes nothing")
     }
 
     static func longStatement(_ index: Int) -> String {
@@ -552,20 +592,92 @@ enum NativePreferencesSelftest {
         try require(try store.active().map(\.statement) == ["Never use em dashes"], "Editing into a duplicate leaves one preference")
     }
 
-    private static func undo(_ require: (Bool, String) throws -> Void) async throws {
+    private static func removal(_ require: (Bool, String) throws -> Void) async throws {
         let store = NativePreferenceStore(database: try tracked().database)
-        let counter = NativePreferenceClassifierCounter(savedEmDash)
-        _ = await NativePreferenceCapture.run(request("never use em dashes", turn: "t1", message: "m1"), store: store, classify: counter.classify)
-        let undone = request("never mind", turn: "t2", message: "m2", previous: "m1")
-        let outcome = await NativePreferenceCapture.run(undone, store: store, classify: counter.classify)
-        try require(outcome == .removed("Never use em dashes."), "Undo removes the preference the previous turn captured")
+        try store.add(statement: "Call me Sam")
+        _ = await NativePreferenceCapture.run(request("never use em dashes", turn: "t1", message: "m1"), store: store,
+                                              classify: NativePreferenceClassifierCounter(savedEmDash).classify)
+        let unclear = NativePreferenceClassifierCounter(#"{"remove": "unclear"}"#)
+        let asked = await NativePreferenceCapture.run(request("drop that rule", previous: "m1"), store: store, classify: unclear.classify)
+        try require(asked == .removalUnclear && store.active().count == 2 && unclear.calls == 1, "An unclear removal removes nothing")
+        try require(asked.note == "The person seems to want a saved preference removed, but it isn't clear which one, so nothing was removed. Ask which preference they mean.",
+                    "An unclear removal asks which one")
+        let outOfRange = await NativePreferenceCapture.run(request("drop rule nine", previous: "m1"), store: store,
+                                                           classify: NativePreferenceClassifierCounter(#"{"remove": 9}"#).classify)
+        try require(outOfRange == .unavailable && store.active().count == 2, "A removal of a number that isn't listed removes nothing")
+        let counter = NativePreferenceClassifierCounter(#"{"remove": 2}"#)
+        let paraphrased = request("you can go back to using those long dashes", turn: "t2", message: "m2", previous: "m1")
+        let outcome = await NativePreferenceCapture.run(paraphrased, store: store, classify: counter.classify)
+        try require(counter.bodies.first?.contains("1. Call me Sam\n2. Never use em dashes. (saved from the person's previous message)") == true,
+                    "The classifier sees every saved preference and which one the previous message saved")
+        try require(outcome == .removed("Never use em dashes."), "A paraphrased removal removes the preference it names")
         try require(outcome.note == "The preference \"Never use em dashes\" was removed at the person's request. Confirm briefly.",
-                    "The undo note names the removed preference")
-        try require(try store.active().isEmpty && counter.calls == 1, "Undo never classifies and leaves nothing active")
-        try require(await NativePreferenceCapture.run(undone, store: store, classify: counter.classify) == .removed("Never use em dashes."),
-                    "A replayed undo reports the same removal")
-        let unrelated = await NativePreferenceCapture.run(request("forget that", previous: "m-none"), store: store, classify: counter.classify)
-        try require(unrelated == .none && counter.calls == 1, "Undo without a captured previous turn does nothing")
+                    "The removal note names the removed preference")
+        try require(try store.active().map(\.statement) == ["Call me Sam"], "Only the named preference is removed")
+        try require(await NativePreferenceCapture.run(paraphrased, store: store, classify: counter.classify) == .removed("Never use em dashes.")
+                    && counter.calls == 1, "A replayed removal reports the same removal without classifying again")
+        let gone = try store.add(statement: "Answer in metric")
+        let raced = NativePreferenceClassifierCounter(#"{"remove": 2}"#)
+        let racedRequest = request("stop the metric thing", turn: "race", conversation: "race-c")
+        let racedOutcome = await NativePreferenceCapture.run(racedRequest, store: store, classify: { body in
+            try? store.remove(id: gone.id)
+            return await raced.classify(body)
+        })
+        try require(racedOutcome == .removed("Answer in metric") && store.active().map(\.statement) == ["Call me Sam"],
+                    "A preference removed elsewhere while classifying reads back as removed")
+        let markers = try store.captureMarkers(conversationID: "race-c")
+        try require(markers.values.contains(.preferenceRemoved) && markers.count == 1, "That removal still shows its marker")
+        try require(try !store.revertCapture(turnID: "race") && store.active().map(\.statement) == ["Call me Sam"],
+                    "Stopping that turn never restores what was removed elsewhere")
+        try store.add(statement: "Answer in metric")
+        let replayed = await NativePreferenceCapture.run(racedRequest, store: store, classify: raced.classify)
+        try require(replayed == .removed("Answer in metric") && raced.calls == 1
+                    && store.active().map(\.statement) == ["Call me Sam", "Answer in metric"],
+                    "Replaying that message after the preference is added again removes nothing and doesn't classify again")
+
+        let edited = NativePreferenceStore(database: try tracked().database)
+        let units = try edited.add(statement: "Use metric units")
+        let picked = NativePreferenceClassifierCounter(removeFirst)
+        let editedOutcome = await NativePreferenceCapture.run(request("drop the units one", conversation: "edit-c"), store: edited, classify: { body in
+            _ = try? edited.updateStatement(id: units.id, statement: "Cite sources")
+            return await picked.classify(body)
+        })
+        let editedRows = try await edited.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_preference_captures") ?? 0 }
+        try require(editedOutcome == .removalUnclear && edited.active().map(\.statement) == ["Cite sources"] && editedRows == 0,
+                    "A preference edited while classifying is kept, and the reply asks which one was meant")
+
+        let punctuated = NativePreferenceStore(database: try tracked().database)
+        let separator = try punctuated.add(statement: "Use \":\" as the separator")
+        let punctuationOutcome = await NativePreferenceCapture.run(request("drop the separator one"), store: punctuated, classify: { body in
+            _ = try? punctuated.updateStatement(id: separator.id, statement: "Use \";\" as the separator")
+            return await picked.classify(body)
+        })
+        try require(punctuationOutcome == .removalUnclear && punctuated.active().map(\.statement) == ["Use \";\" as the separator"],
+                    "An edit that only changes punctuation still keeps the preference")
+
+        let merged = NativePreferenceStore(database: try tracked().database)
+        let selected = try merged.add(statement: "Use metric units")
+        let other = try merged.add(statement: "Cite sources")
+        let mergedOutcome = await NativePreferenceCapture.run(request("drop the units one", conversation: "merge-c"), store: merged, classify: { body in
+            _ = try? merged.updateStatement(id: other.id, statement: "Use metric units")
+            return await picked.classify(body)
+        })
+        let mergedRows = try await merged.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_preference_captures") ?? 0 }
+        try require(try merged.preference(id: selected.id)?.status == .removed && mergedOutcome == .removalUnclear
+                    && merged.active().map(\.statement) == ["Use metric units"] && mergedRows == 0,
+                    "When Settings merged a duplicate into another row, nothing is claimed removed and the active one stays")
+    }
+
+    private static func permission(_ require: (Bool, String) throws -> Void) async throws {
+        let store = NativePreferenceStore(database: try tracked().database)
+        let counter = NativePreferenceClassifierCounter(#"{"permission": true}"#)
+        let asked = request("you can send emails without checking with me", turn: "p1", message: "pm1")
+        let outcome = await NativePreferenceCapture.run(asked, store: store, classify: counter.classify)
+        try require(outcome == .permission && store.active().isEmpty, "A permission request saves no preference")
+        try require(outcome.note == "The person asked to change what the assistant is allowed to do. That isn't a preference, and nothing was saved. Tell them plainly it wasn't saved and that what the assistant may do is set in Settings, Rules.",
+                    "A permission request is told plainly it wasn't saved")
+        try require(await NativePreferenceCapture.run(asked, store: store, classify: counter.classify) == .none && counter.calls == 1,
+                    "A replayed permission request isn't classified again and changes nothing")
     }
 
     private static func turn(_ text: String, mode: NativeSessionMode = .chat, event: NativeCompanionEvent? = nil,
@@ -696,7 +808,7 @@ enum NativePreferencesSelftest {
         try require(transport.classifierRequests == 1 && NativePreferenceStore(database: repository.database).active().count == 1,
                     "A synthesized revision request never captures")
         transport.dropFirst(3)
-        try require(transport.classifierRequests == 1, "A marker sends one classifier request on the chat model")
+        try require(transport.classifierRequests == 1, "A typed message sends one classifier request on the chat model")
         try require(saved.contains("The person just set a preference and it is saved: Never use em dashes. Follow it from now on."),
                     "The turn is told the preference is saved only after read back")
         try require(saved.contains(NativePreferencePrompt.header + "\n- Never use em dashes."), "The same turn already follows the preference")
@@ -704,11 +816,13 @@ enum NativePreferencesSelftest {
         try require(stored.count == 1 && stored[0].sourceTurnID != nil && stored[0].quote == "Never respond with em dashes",
                     "The preference is saved against its turn")
 
+        transport.reply = nothing
         try require(store.sendText("What should I cook tonight?", fromComposer: true), "An ordinary message sends")
         try await NativeSessionFixture.eventually("The second reply completes") {
             store.selected?.messages.last?.state == .complete && transport.systemPrompts.count == 2
         }
-        try require(transport.classifierRequests == 1, "An ordinary message never classifies")
+        try require(transport.classifierRequests == 2 && !transport.systemPrompts[1].contains("saved preferences were not changed"),
+                    "An ordinary message is classified, changes nothing and adds no note")
         guard let ordinaryMessage = store.selected?.messages.last(where: { $0.role == .user }) else {
             throw NativeTaskFixture.Failure.assertion("The ordinary message exists")
         }
@@ -716,12 +830,14 @@ enum NativePreferencesSelftest {
         try require(transport.systemPrompts[1].contains("- Never use em dashes.") && !transport.systemPrompts[1].contains("just set a preference"),
                     "Later turns follow the preference without the capture note")
 
+        transport.reply = savedEmDash
         try require(store.sendText("Never use em dashes", fromComposer: true), "A repeated preference sends")
         try await NativeSessionFixture.eventually("The third reply completes") {
             store.selected?.messages.last?.state == .complete && transport.systemPrompts.count == 3
         }
         try require(try NativePreferenceStore(database: repository.database).active().count == 1, "Saying it again updates instead of adding")
-        try require(store.sendText("forget that", fromComposer: true), "Undo sends")
+        transport.reply = removeFirst
+        try require(store.sendText("actually, dashes are fine again", fromComposer: true), "A removal sends")
         try await NativeSessionFixture.eventually("The undo reply completes") {
             store.selected?.messages.last?.state == .complete && transport.systemPrompts.count == 4
         }
@@ -733,8 +849,9 @@ enum NativePreferencesSelftest {
                     "Undo shows the removed marker and the earlier saved marker stays")
         try require(transport.systemPrompts[3].contains("was removed at the person's request") && !transport.systemPrompts[3].contains("- Never use em dashes."),
                     "Undo removes the preference and the turn confirms it")
-        try require(try NativePreferenceStore(database: repository.database).active().isEmpty && transport.classifierRequests == 2,
-                    "Undo leaves nothing active and never classifies")
+        try require(try NativePreferenceStore(database: repository.database).active().isEmpty && transport.classifierRequests == 4
+                    && transport.classifierBodies[3].contains("1. Never use em dashes. (saved from the person's previous message)"),
+                    "The removal is decided by the classifier and leaves nothing active")
 
         let off = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: try tracked(),
                             artifactPersistenceEnabled: false)
@@ -744,8 +861,9 @@ enum NativePreferencesSelftest {
         try await NativeSessionFixture.eventually("The capture off reply completes") {
             off.selected?.messages.last?.state == .complete && transport.systemPrompts.count == 5
         }
-        try require(transport.classifierRequests == 2, "Capture off never classifies")
+        try require(transport.classifierRequests == 4, "Capture off never classifies")
 
+        transport.reply = nothing
         store.newConversation()
         try require(store.sendText("What should I cook tonight?", fromComposer: true), "A message sends in a second conversation")
         try await NativeSessionFixture.eventually("The second conversation reply completes") {
@@ -856,6 +974,7 @@ enum NativePreferencesSelftest {
         transport.reply = savedEmDash
         try await settle(store, "Never use em dashes")
         let beforeUndo = store.preferencesRevision
+        transport.reply = removeFirst
         stopping.value = true
         try await settle(store, "forget that")
         try require(store.preferencesRevision == beforeUndo + 2 && preferences.active().map(\.statement) == ["Never use em dashes."],
@@ -891,13 +1010,14 @@ enum NativePreferencesSelftest {
         let transport = NativePreferenceStubTransport(classifierReply: savedEmDash)
         let store = turnStore(transport, repository)
         try await send(store, "Never respond with em dashes", settled: 1, transport)
+        transport.reply = removeFirst
         try await send(store, "forget that", settled: 2, transport)
-        transport.reply = #"{"preference": null}"#
+        transport.reply = nothing
         try await send(store, "I never thought about it", settled: 3, transport)
         store.conversationTurnLoop?.cancel()
         let users = (store.selected?.messages ?? []).filter { $0.role == .user }
         guard let conversation = store.selectedID, users.count == 3 else { throw NativeTaskFixture.Failure.assertion("Three messages were sent") }
-        try require(transport.classifierRequests == 2 && store.preferenceMarker(for: users[2], in: conversation) == nil,
+        try require(transport.classifierRequests == 3 && store.preferenceMarker(for: users[2], in: conversation) == nil,
                     "A message the classifier rejected shows no marker")
 
         let reopened = try LocalChatRepository(url: file, artifactDirectory: artifacts, projectsDirectory: projects)
@@ -937,7 +1057,8 @@ enum NativePreferencesSelftest {
         _ = await NativePreferenceCapture.run(request("never use emoji", turn: "e1", message: "e1m"), store: store,
                                               classify: NativePreferenceClassifierCounter(#"{"preference": {"statement": "Never use emoji.", "kind": "style", "strength": "hard", "check": null}}"#).classify)
         _ = await NativePreferenceCapture.run(request("forget that", turn: "e2", previous: "e1m"), store: store,
-                                              classify: NativePreferenceClassifierCounter(nil).classify)
+                                              classify: NativePreferenceClassifierCounter(#"{"remove": 2}"#).classify)
+        try require(try store.active().map(\.statement) == ["Never use em dashes in headings"], "The removal took the emoji preference")
         try store.add(statement: "Never use emoji")
         try require(try !store.revertCapture(turnID: "e2") && store.active().filter { $0.statement.lowercased().contains("emoji") }.count == 1,
                     "An undone preference is not restored when the same rule is active again")
@@ -969,13 +1090,16 @@ enum NativePreferencesSelftest {
         let first = turnStore(firstTransport, firstRepository)
         defer { first.conversationTurnLoop?.cancel() }
         try await send(first, "Never use em dashes", settled: 1, firstTransport)
+        firstTransport.reply = nothing
         firstTransport.failReplies = true
         try await send(first, "Plan a picnic", settled: 2, firstTransport)
         try require(first.selected?.messages.last?.state == .interrupted, "The unrelated request is interrupted")
         firstTransport.failReplies = false
         try await send(first, "forget that", settled: 3, firstTransport)
-        try require(try NativePreferenceStore(database: firstRepository.database).active().count == 1 && !firstTransport.systemPrompts[2].contains("was removed"),
-                    "Undo after an interrupted unrelated request removes nothing")
+        try require(try NativePreferenceStore(database: firstRepository.database).active().count == 1 && !firstTransport.systemPrompts[2].contains("was removed")
+                    && firstTransport.classifierBodies[2].contains("1. Never use em dashes.\n")
+                    && !firstTransport.classifierBodies[2].contains("previous message"),
+                    "After an interrupted unrelated request, no saved preference is marked as just saved")
 
         let secondRepository = try tracked()
         let secondTransport = NativePreferenceStubTransport(classifierReply: savedEmDash)
@@ -987,10 +1111,12 @@ enum NativePreferencesSelftest {
         try await send(second, "Never use emoji", settled: 2, secondTransport)
         try require(second.selected?.messages.last?.state == .interrupted, "The capturing request is interrupted")
         secondTransport.failReplies = false
+        secondTransport.reply = #"{"remove": 2}"#
         try await send(second, "forget that", settled: 3, secondTransport)
         let left = try NativePreferenceStore(database: secondRepository.database).active().map(\.statement)
-        try require(left == ["Never use em dashes."] && secondTransport.systemPrompts[2].contains("\"Never use emoji\" was removed"),
-                    "Undo removes the preference an interrupted request captured")
+        try require(left == ["Never use em dashes."] && secondTransport.systemPrompts[2].contains("\"Never use emoji\" was removed")
+                    && secondTransport.classifierBodies[2].contains("2. Never use emoji. (saved from the person's previous message)"),
+                    "The preference an interrupted request captured is marked as just saved and can be removed")
 
         let stopRepository = try tracked()
         let stopTransport = NativePreferenceStubTransport(classifierReply: savedEmDash)

@@ -1125,18 +1125,21 @@ private struct NativeCompanionRun {
                 return nil
             }
         }
-        let authority = authority()
-        let (action, decided, authorizedBy, footprint, why) = recordDecision(definition, arguments, authority, honoringLimitedUse: true,
+        let standing = self.authority()
+        let (action, decided, authorizedBy, footprint, why) = recordDecision(definition, arguments, standing, honoringLimitedUse: true,
                                                                              uses: try instructionUses(excluding: key, refused: checkpoint.refused ?? []))
         var decision = decided
         var spend: NativeInstructionSpend?
+        var latest = standing
         if decision == .act(.instruction) {
             decision = .ask
             let judged = try await authorization(definition, arguments, action: action, key: key, checkpoint)
+            latest = self.authority()
+            let unchanged = latest.resolver.revision == standing.resolver.revision && latest.grantsRevision == standing.grantsRevision
             if let judged, judged.authorizes {
-                if let uses = environment.instructionUses, let origin = typedOrigin, judged.messageID == origin.userMessageID,
+                if unchanged, let uses = environment.instructionUses, let origin = typedOrigin, judged.messageID == origin.userMessageID,
                    judged.binds(definition, arguments: arguments),
-                   let signature = NativeCompanionWorker.instructedSignature(definition, arguments, resolver: authority.resolver, honoringLimitedUse: true),
+                   let signature = NativeCompanionWorker.instructedSignature(definition, arguments, resolver: latest.resolver, honoringLimitedUse: true),
                    signature == judged.signature, !uses.refused(origin.userMessageID, signature: signature) {
                     spend = NativeInstructionSpend(messageID: origin.userMessageID, conversationID: origin.conversationID, signature: signature, holder: key)
                     decision = .act(.instruction)
@@ -1151,6 +1154,7 @@ private struct NativeCompanionRun {
             }
         }
         if decision == .handOff { return try handOff(&checkpoint, call: call, title: title, action: action, why: why) }
+        let authority = latest
         let proposal = NativeEffectProposal(
             id: UUID().uuidString.lowercased(), taskID: task.id, generation: task.generation, toolID: definition.id, function: definition.name,
             argumentsJSON: NativeEffectProposal.canonicalArguments(.object(arguments)), target: NativeCompanionWorker.target(arguments),
