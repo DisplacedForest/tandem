@@ -36,8 +36,9 @@ final class CompanionAsideLateWatcher: NativeTaskGenerationRepository, @unchecke
     func taskGenerationStale(referenceID: UUID, job: NativeTaskGenerationJob) -> Bool {
         lock.withLock { blind } ? false : base.taskGenerationStale(referenceID: referenceID, job: job)
     }
-    func finishTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob, response: String?, failure: String?) throws {
-        try base.finishTaskGeneration(referenceID: referenceID, job: job, response: response, failure: failure)
+    func finishTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob, response: String?, failure: String?,
+                              detail: NativeTaskGenerationFailureDetail?) throws {
+        try base.finishTaskGeneration(referenceID: referenceID, job: job, response: response, failure: failure, detail: detail)
     }
 }
 

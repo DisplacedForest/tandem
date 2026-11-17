@@ -409,7 +409,14 @@ protocol NativeTaskGenerationRepository: NativeTaskRepository {
     func reserveTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob) throws -> NativeTaskGenerationReservation
     func taskGenerationStale(referenceID: UUID, job: NativeTaskGenerationJob) -> Bool
     func finishTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob,
-                              response: String?, failure: String?) throws
+                              response: String?, failure: String?, detail: NativeTaskGenerationFailureDetail?) throws
+}
+
+extension NativeTaskGenerationRepository {
+    func finishTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob,
+                              response: String?, failure: String?) throws {
+        try finishTaskGeneration(referenceID: referenceID, job: job, response: response, failure: failure, detail: nil)
+    }
 }
 
 struct NativeTaskGenerationResponse: Codable, Sendable {

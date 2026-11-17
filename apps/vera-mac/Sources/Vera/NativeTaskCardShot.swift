@@ -161,7 +161,28 @@ struct NativeTaskCardShotSurface: View {
             result.canCancel = false
         default: break
         }
-        if [.stopped, .needsInput].contains(result.status) && !result.isCompanion {
+        let documentState = variant.components(separatedBy: "-card-document-")
+        if documentState.count == 2, ["cut-short", "empty", "unusable", "model-changed", "shorter"].contains(documentState[1]) {
+            result.title = "Workshop plan"
+            result.workerType = "document"
+            switch documentState[1] {
+            case "model-changed":
+                result.status = .failed
+                result.milestone = NativeTaskWorkerFailures.modelChangedMessage
+                result.canCancel = false
+            case "shorter":
+                let saved = "{\"phase\":\"draft\",\"outline\":[{\"heading\":\"Layout\",\"instructions\":\"Bench\"},{\"heading\":\"Tools\",\"instructions\":\"Saws\"}],\"drafts\":[\"Bench along the wall.\"],\"revisions\":[],\"shrink_step\":\"draft:1:0\"}"
+                if let checkpoint = try? JSONDecoder().decode(NativeTaskCheckpoint.self, from: Data(saved.utf8)) {
+                    result.milestone = NativeTaskProjection.documentMilestone(checkpoint)
+                }
+            default:
+                result.status = .needsInput
+                result.milestone = documentState[1] == "cut-short" ? NativeTaskWorkerFailures.sectionCutShortMessage
+                    : documentState[1] == "empty" ? NativeTaskWorkerFailures.sectionEmptyMessage : NativeTaskWorkerFailures.sectionUnusableMessage
+                result.canRetry = true
+            }
+        }
+        if [.stopped, .needsInput].contains(result.status) && !result.isCompanion && !result.isDocument {
             result.sources = [
                 PulseSource(n: 1, title: "Installation reference", url: "local"),
                 PulseSource(n: 2, title: "Material comparison", url: "local"),

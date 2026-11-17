@@ -156,6 +156,7 @@ extension SelfTest {
         try await taskGatherRelaunch()
         try await taskDocumentEndToEnd()
         try await taskDocumentAutomaticRetry()
+        try await taskReplyCauses()
         try await taskScheduledRun()
         try await taskScheduleCheckIns()
         try await taskArbiterContract()

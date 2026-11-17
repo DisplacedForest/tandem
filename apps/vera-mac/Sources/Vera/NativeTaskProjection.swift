@@ -116,6 +116,7 @@ enum NativeTaskProjection {
             case "input_limit" where dot: card.milestone = "The assignment and its notes are too large. Start the work again with less."
             case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large. Start a new document with a shorter brief." : "The research input is too large. Start a smaller research request."
             case "request_conflict": card.milestone = "The saved request could not be resumed safely. \(again)."
+            case "profile_changed" where document: card.milestone = NativeTaskWorkerFailures.modelChangedMessage
             default:
                 if dot {
                     card.milestone = "I couldn't finish this."
@@ -213,6 +214,10 @@ enum NativeTaskProjection {
 
     static func documentMilestone(_ checkpoint: NativeTaskCheckpoint) -> String {
         let planned = checkpoint.outline.count
+        if let phase = checkpoint.phase, ["draft", "revise"].contains(phase),
+           checkpoint.shrinkStep == "\(phase):\(checkpoint.drafts.count):\(checkpoint.revisions.count)" {
+            return NativeTaskWorkerFailures.shorterSectionNote
+        }
         switch checkpoint.phase {
         case "draft":
             guard planned > 0 else { return "Planning the outline." }

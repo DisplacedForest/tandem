@@ -28,6 +28,54 @@ extension NativeTaskClient {
 
 struct NativeTaskGenerationFailure: Error, Sendable {
     let code: String
+    var detail: NativeTaskGenerationFailureDetail? = nil
+}
+
+struct NativeTaskGenerationFailureDetail: Codable, Equatable, Sendable {
+    let phase: String?
+    let httpStatus: Int?
+    let finishReason: String?
+
+    init(phase: String?, httpStatus: Int? = nil, finishReason: String? = nil) {
+        self.phase = Self.bounded(phase)
+        self.httpStatus = httpStatus.flatMap { (100...599).contains($0) ? $0 : nil }
+        self.finishReason = Self.bounded(finishReason)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case phase
+        case httpStatus = "http_status"
+        case finishReason = "finish_reason"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(phase: try container.decodeIfPresent(String.self, forKey: .phase),
+                  httpStatus: try container.decodeIfPresent(Int.self, forKey: .httpStatus),
+                  finishReason: try container.decodeIfPresent(String.self, forKey: .finishReason))
+    }
+
+    static func bounded(_ value: String?) -> String? {
+        guard let value, (1...32).contains(value.utf8.count),
+              value.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 })
+        else { return nil }
+        return value
+    }
+
+    func stored() -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return (try? encoder.encode(self)).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    static func restored(_ text: String?) -> NativeTaskGenerationFailureDetail? {
+        guard let text, text.utf8.count <= 256 else { return nil }
+        return try? JSONDecoder().decode(Self.self, from: Data(text.utf8))
+    }
+
+    func merged(phase: String) -> NativeTaskGenerationFailureDetail {
+        NativeTaskGenerationFailureDetail(phase: self.phase ?? phase, httpStatus: httpStatus, finishReason: finishReason)
+    }
 }
 
 actor NativeTaskGenerationBroker {
@@ -167,18 +215,24 @@ actor NativeTaskGenerationBroker {
                     failure = nil
                 } catch {
                     let code: String
+                    var detail = NativeTaskGenerationFailureDetail(phase: job.phase)
                     if error is CancellationError { code = "canceled" }
-                    else if let known = error as? NativeTaskGenerationFailure { code = known.code }
+                    else if let known = error as? NativeTaskGenerationFailure {
+                        code = known.code
+                        detail = known.detail?.merged(phase: job.phase) ?? detail
+                    }
                     else if error is NativeInferenceAdmission.AdmissionError { code = "request_timeout" }
                     else { code = "provider_unavailable" }
-                    try repository.finishTaskGeneration(referenceID: reference.id, job: job, response: nil, failure: code)
+                    try repository.finishTaskGeneration(referenceID: reference.id, job: job, response: nil, failure: code, detail: detail)
                     completion = nil
                     failure = code
                 }
             }
             guard let current = try repository.taskReference(id: reference.id), !current.cancelRequested,
                   let base = configuredBase(), (try? NativeTaskEngineIdentity(base)) == current.engine else { return }
-            try await client.returnGeneration(current, job: job, response: completion?.content, failure: failure,
+            let returned = current.engine != NativeTaskLocalEngine.identity && failure.map({ NativeTaskWorkerFailures.replyCodes.contains($0) }) == true
+                ? "provider_response" : failure
+            try await client.returnGeneration(current, job: job, response: completion?.content, failure: returned,
                                               toolCalls: job.tools == nil ? nil : completion?.toolCalls)
         } catch NativeTaskHTTPError.status(409) {
             if let snapshot = try? await client.fetch(reference) {
