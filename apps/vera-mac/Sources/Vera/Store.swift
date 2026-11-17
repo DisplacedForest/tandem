@@ -161,6 +161,7 @@ final class ChatStore: ObservableObject {
     var preferenceClassifierTimeout: Duration = .seconds(30)
     var instructionCheck: NativeInstructionAnswerer?
     var instructionCheckTimeout: Duration = NativeInstructionCheck.timeout
+    var requestAuthorization: NativeRequestAuthorizer.Transport?
     private let nativeTransportFactory: (NativeChatConfig) -> (any NativeChatTransport)?
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
@@ -2474,17 +2475,14 @@ final class ChatStore: ObservableObject {
         if !turnGrants.isEmpty && folderConsented {
             let rules = nativeRuleSource
             let records = nativeRuleRecordStore
-            let shared = nativeGrantSource
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(
                 for: id, ledger: fileChangeLedger(for: turn),
                 edits: resolver.decision(for: .fileEdits), trash: resolver.decision(for: .trash),
                 live: { rules.resolver(for: id, requestText: said, typed: typed).decision(for: $0) },
-                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: said, typed: typed, uses: uses, action: $0, subjects: $1,
-                                                        roots: NativeFolderAccess(grants: shared.grants(for: id)).roots.map(\.path)) },
+                liveTargets: { ChatStore.folderDecision(rules, store: records, conversationID: id, requestText: said, typed: typed, uses: uses, action: $0, subjects: $1) },
                 instruction: {
                     ChatStore.folderInstruction(rules, store: records, conversationID: id, requestText: said, typed: typed, uses: uses,
-                                                action: $0, subjects: $1, about: $2,
-                                                roots: NativeFolderAccess(grants: shared.grants(for: id)).roots.map(\.path))
+                                                action: $0, subjects: $1, call: $2)
                 },
                 alwaysAvailable: true))
         }
@@ -2513,6 +2511,9 @@ final class ChatStore: ObservableObject {
         let answerer: NativeInstructionAnswerer = instructionCheck ?? { said, about in
             await NativeInstructionCheck.ask(transport: checkTransport, model: checkModel, said: said, about: about, timeout: checkTimeout)
         }
+        let authorizer = NativeRequestAuthorizer(transport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: checkTransport, model: checkModel),
+                                                 deadline: checkTimeout)
+        let trusted = turn.companionEvent == nil ? NativeTrustedRequest.typed(typed, messageID: turn.userMessageID, conversationID: id) : nil
         let capture = composerSentTurns.removeValue(forKey: turn.id)
         let talk = companionTalkControl(for: turn, supportsTools: ModelCapabilityCatalog.resolve(model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile.supportsTools)
         if let talk { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + companionTalkTools(talk, turn: turn, typed: typed, capture: capture, answerer: answerer, timeout: checkTimeout)) }
@@ -2532,7 +2533,7 @@ final class ChatStore: ObservableObject {
                 await self.noteRuleOfferWhy(activity, turn: turn, definitions: turnRegistry.definitions, typed: typed)
                 return await self.awaitTurnConfirmation(activity, turn: turn, subject: subject)
             },
-            instructionCheck: answerer, instructionTimeout: checkTimeout, said: said,
+            authorizer: authorizer, request: trusted,
             effects: chatEffectHook(for: turn, definitions: turnRegistry.definitions, typed: typed))
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile

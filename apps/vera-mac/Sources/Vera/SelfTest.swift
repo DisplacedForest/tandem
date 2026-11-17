@@ -144,7 +144,7 @@ final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendabl
     private var index = 0
     private var capturedHistories: [[NativeChatMessage]] = []
     private var capturedSchemas: [[NativeToolSchema]] = []
-    private var checkAnswer = "{\"run\": false}"
+    private var checkAnswer = "{\"decision\": \"not_authorized\"}"
     private var checks: [String] = []
 
     init(rounds: [[NativeChatStreamSnapshot]]) {
@@ -162,7 +162,7 @@ final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendabl
         messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
     ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
         let snapshots: [NativeChatStreamSnapshot] = locked {
-            if messages.first?.content == NativeInstructionCheck.systemPrompt {
+            if messages.first?.content == NativeRequestAuthorizer.systemPrompt {
                 checks.append(messages.last?.content ?? "")
                 return [NativeChatStreamSnapshot(content: checkAnswer, toolCalls: [], finishReason: "stop")]
             }
@@ -2859,34 +2859,22 @@ enum SelfTest {
         }
         let spokenListed = try spoken(["send", "email", "write to"])
         let spokenDefinition = NativeCapabilityTools.definition(spokenListed, base: { nil })
-        try require(spokenListed.verbs == ["send", "email", "write to"] && spokenDefinition.verbs == spokenListed.verbs && !spokenDefinition.namesNothing,
-                    "Listed action words reach a tool that says where it sends")
+        try require(spokenListed.verbs == ["send", "email", "write to"] && spokenDefinition.authorizable,
+                    "An older file's action words still load, and a tool that names where it sends can be checked against the request")
         let spokenFixed = NativeCapabilityTools.definition(try spoken(["post"], sendsTo: [String]()), base: { nil })
-        try require(spokenFixed.verbs == ["post"] && spokenFixed.namesNothing, "A tool that always sends to the same place needs nothing named")
-        let spokenBare = try spoken(["post"], sendsTo: nil)
-        let spokenBareDefinition = NativeCapabilityTools.definition(spokenBare, base: { nil })
-        try require(spokenBare.verbs == ["post"] && spokenBareDefinition.verbs.isEmpty && !spokenBareDefinition.namesNothing,
-                    "A tool that never said where it sends can't run on an instruction")
-        let spokenGet = NativeCapabilityTools.definition(try spoken(["refresh"], sendsTo: nil, method: "GET", confirmation: "required"), base: { nil })
-        try require(spokenGet.verbs.isEmpty, "A tool that changes something with no recipient can't run on an instruction")
-        try require(try declaration(["to"]).verbs.isEmpty, "No verbs line leaves the tool without action words")
-        let badVerbs: [(Any, String, String)] = [
-            ("send", "POST", "must be a list"),
-            ([String](), "POST", "must be a list"),
-            (Array(repeating: "send", count: 9), "POST", "must be a list"),
-            (["Send"], "POST", "lowercase letters"),
-            (["send!"], "POST", "lowercase letters"),
-            (["write  to"], "POST", "lowercase letters"),
-            ([" send"], "POST", "lowercase letters"),
-            ([String(repeating: "a", count: 25)], "POST", "lowercase letters"),
-            ([7], "POST", "must be a list"),
-            (["send", "send"], "POST", "same word twice"),
-            (["fetch"], "GET", "only reads"),
+        try require(!spokenFixed.authorizable, "A tool that always sends to the same place never runs without asking")
+        let spokenBare = NativeCapabilityTools.definition(try spoken(["post"], sendsTo: nil), base: { nil })
+        try require(!spokenBare.authorizable, "A tool that never said where it sends never runs without asking")
+        let unworded = NativeCapabilityTools.definition(try declaration(["to"]), base: { nil })
+        try require(unworded.authorizable == spokenDefinition.authorizable, "Action words make no difference to whether a tool can run on a request")
+        let oddWords: [(Any, String)] = [
+            ("send", "POST"), ([String](), "POST"), (Array(repeating: "send", count: 9), "POST"), (["Send"], "POST"), (["send!"], "POST"),
+            (["write  to"], "POST"), ([String(repeating: "a", count: 25)], "POST"), ([7], "POST"), (["send", "send"], "POST"), (["fetch"], "GET"),
         ]
-        for (value, method, fragment) in badVerbs {
-            var reason: String?
-            do { _ = try spoken(value, sendsTo: method == "GET" ? nil : ["to"], method: method) } catch let error as NativeToolDeclarationError { reason = error.reason }
-            try require(reason?.contains(fragment) == true, "A verbs line is refused: \(fragment) got \(reason ?? "no error")")
+        for (value, method) in oddWords {
+            var loaded = true
+            do { _ = try spoken(value, sendsTo: method == "GET" ? nil : ["to"], method: method, confirmation: method == "GET" ? "required" : "none") } catch { loaded = false }
+            try require(loaded, "A file with an unusual verbs line still loads: \(value)")
         }
         let unlisted = bundled.filter { $0.method == .post && !$0.reads && $0.sendsTo == nil }.map(\.name)
         try require(Set(unlisted).isSubset(of: bundledSendersWithoutDestination),

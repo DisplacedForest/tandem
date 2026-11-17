@@ -727,7 +727,7 @@ enum CompanionWorkAsideFixture {
             let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter(),
                 workers: { exchange in ["companion": NativeCompanionWorker.make(exchange: exchange, environment: environment)] }) { job in
                     if job.messages.first?.content == NativeCompanionShape.classifierPrompt { return .text("{\"keep\": false}") }
-                    if job.messages.first?.content == NativeInstructionCheck.systemPrompt { return .text("{\"run\": false}") }
+                    if job.messages.first?.content == NativeRequestAuthorizer.systemPrompt { return .text("{\"decision\": \"not_authorized\"}") }
                     await recorder.record(job)
                     if !entered.value {
                         entered.value = true
@@ -1494,7 +1494,7 @@ enum CompanionWorkAsideFixture {
         let broker = NativeTaskGenerationBroker(repository: harness.repository, client: harness.engine.client,
             configuredBase: { NativeTaskLocalEngine.identity.base }, isProfileAvailable: { _ in true }, complete: { _, job in
                 if job.messages.first?.content == NativeCompanionShape.classifierPrompt { return .text("{\"keep\": false}") }
-                if job.messages.first?.content == NativeInstructionCheck.systemPrompt { return .text("{\"run\": false}") }
+                if job.messages.first?.content == NativeRequestAuthorizer.systemPrompt { return .text("{\"decision\": \"not_authorized\"}") }
                 await recorder.record(job)
                 let opening = job.messages.dropFirst().first?.content ?? ""
                 if opening.contains(changedWork) { return .text("The five libraries are compared.") }

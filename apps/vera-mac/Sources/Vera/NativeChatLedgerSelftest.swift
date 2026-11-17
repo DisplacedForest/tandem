@@ -246,12 +246,13 @@ extension SelfTest {
     }
 
     static func chatLedgerLoop(_ definitions: [NativeToolDefinition], calls: [[NativeChatToolCall]], hook: NativeChatEffectHook?,
-                               instructionCheck: NativeInstructionAnswerer? = nil) async throws -> NativeToolTurnSnapshot? {
+                               authorizer: NativeRequestAuthorizer? = nil) async throws -> NativeToolTurnSnapshot? {
         let rounds = calls.map { [NativeChatStreamSnapshot(content: "", toolCalls: $0, finishReason: "tool_calls")] }
             + [[NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")]]
         let loop = NativeToolLoop(transport: ScriptedNativeToolTransport(rounds: rounds), registry: NativeToolRegistry(definitions: definitions),
-                                  executionTimeout: .seconds(5), instructionCheck: instructionCheck, instructionTimeout: .seconds(2),
-                                  said: "Look after the garden", effects: hook)
+                                  executionTimeout: .seconds(5), authorizer: authorizer,
+                                  request: NativeTrustedRequest.typed(NativeTypedWords(typed: "Look after the garden"), messageID: UUID(), conversationID: "garden-chat"),
+                                  effects: hook)
         var final: NativeToolTurnSnapshot?
         for try await snapshot in loop.stream(messages: [NativeChatMessage(role: "user", content: "Look after the garden")], model: "local-model",
                                               enabledToolIDs: Set(definitions.map(\.id))) {
@@ -428,11 +429,12 @@ extension SelfTest {
         var instructed = chatLedgerFixture(id: "garden-instructed", name: "plant_bulbs", action: .otherChanges, log: log)
         let refusedSignatures = NativeChatLedgerLog()
         instructed.confirmationFor = { _ in false }
-        instructed.instructionFor = { _ in NativeInstructionPending(signature: "plant", about: "plant the bulbs", refuse: { refusedSignatures.add("plant") }) }
+        let plant = NativeProposedAction(NativeProposedCall(instructed, arguments: [:]), action: .otherChanges, signature: "plant")
+        instructed.instructionFor = { _ in NativeInstructionPending(action: plant, refuse: { refusedSignatures.add("plant") }) }
         let yes = try await chatLedgerLoop([instructed], calls: [[NativeChatToolCall(id: "i-yes", name: "plant_bulbs", arguments: "{}")]],
-                                           hook: declining, instructionCheck: { _, _ in true })
+                                           hook: declining, authorizer: NativeAuthorizationScript(.authorized).authorizer())
         let no = try await chatLedgerLoop([instructed], calls: [[NativeChatToolCall(id: "i-no", name: "plant_bulbs", arguments: "{}")]],
-                                          hook: declining, instructionCheck: { _, _ in false })
+                                          hook: declining, authorizer: NativeAuthorizationScript(.notAuthorized).authorizer())
         let planted = try chatLedgerRows(ledger, turn, "plant_bulbs")
         try require(yes?.activities.first?.state == .succeeded && no?.activities.first?.state == .failed && refusedSignatures.count("plant") == 1
                     && planted.count == 2 && planted.contains { $0.state == .completed && $0.decisionID == nil }

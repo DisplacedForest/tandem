@@ -1,10 +1,7 @@
 import Foundation
 
 enum NativeFolderTools {
-    static let verbs: [NativeActionClass: [String]] = [
-        .fileEdits: ["save", "write", "create", "edit", "update"],
-        .trash: ["delete", "trash", "remove"],
-    ]
+    static let instructed: Set<NativeActionClass> = [.fileEdits, .trash]
 
     static let toolID = "folder-files"
     static let listName = "list_directory"
@@ -47,7 +44,7 @@ enum NativeFolderTools {
                             edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
                             live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
                             liveTargets: (@Sendable (NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?)? = nil,
-                            instruction: (@Sendable (NativeActionClass, [[NativeRuleTarget]], String) -> NativeInstructionPending?)? = nil,
+                            instruction: (@Sendable (NativeActionClass, [[NativeRuleTarget]], NativeProposedCall) -> NativeInstructionPending?)? = nil,
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let available: @Sendable () -> Bool = { alwaysAvailable || !grants().isEmpty }
         let access: @Sendable () -> NativeFolderAccess = { NativeFolderAccess(grants: grants()) }
@@ -214,7 +211,6 @@ enum NativeFolderTools {
             var targeted = definition
             targeted.governed = true
             targeted.ruleSubjects = declared(paths)
-            targeted.folderRoots = { access().roots.map(\.path) }
             if let action = definition.action {
                 let planned = action == .trash ? trash : edits
                 let subjectsFor = declared(paths)
@@ -230,11 +226,11 @@ enum NativeFolderTools {
                     liveTargets(action, subjectsFor(arguments))?.decision.requiresConfirmation ?? fallback
                 }
                 if let instruction {
-                    let original = definition
+                    let described = targeted
                     targeted.instructionFor = { arguments in
                         let subjects = subjectsFor(arguments)
                         guard liveTargets(action, subjects)?.decision == .act(.instruction) else { return nil }
-                        return instruction(action, subjects, NativeInstructionCheck.about(original, arguments: arguments, targets: subjects.flatMap { $0 }))
+                        return instruction(action, subjects, NativeProposedCall(described, arguments: arguments))
                     }
                 }
             }
@@ -260,37 +256,6 @@ enum NativeFolderTools {
         var directory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder, isDirectory: &directory), directory.boolValue else { return [] }
         return try FileManager.default.contentsOfDirectory(atPath: folder)
-    }
-
-    static func beside(_ path: String, top: String?, listing: (String) throws -> [String] = entries) -> [String]? {
-        let target = URL(fileURLWithPath: path).standardizedFileURL
-        let own = target.path
-        var folders = [target.deletingLastPathComponent().path]
-        if let top {
-            let standard = URL(fileURLWithPath: top).standardizedFileURL.path
-            if !folders.contains(standard) { folders.append(standard) }
-        }
-        var names: [String] = []
-        for folder in folders {
-            guard let found = try? listing(folder) else { return nil }
-            for name in found where URL(fileURLWithPath: folder).appendingPathComponent(name).standardizedFileURL.path != own {
-                if !names.contains(name) { names.append(name) }
-            }
-        }
-        return names
-    }
-
-    static func instructionClaim(_ action: NativeActionClass, targets: [NativeRuleTarget], roots: [String],
-                                 listing: (String) throws -> [String] = entries) -> NativeInstructionClaim? {
-        guard let verbs = verbs[action] else { return nil }
-        let files = targets.filter { $0.kind == .folder }
-        guard files.count == 1 else { return NativeInstructionClaim(verbs: verbs) }
-        let path = files[0].value
-        let top = roots.map { URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path }
-            .filter { NativeFolderAccess.contains(root: $0, path: path) }
-            .max { $0.count < $1.count }
-        guard let found = beside(path, top: top, listing: listing) else { return nil }
-        return NativeInstructionClaim(verbs: verbs, beside: found)
     }
 
     static let creatingKey = "path+"

@@ -227,10 +227,7 @@ struct NativeToolDefinition: Sendable {
     var proposes = false
     var alwaysAsks = false
     var fixedDestination = false
-    var verbs: [String] = []
-    var namesNothing = false
-    var instructionNames: (@Sendable ([String: NativeJSONValue]) -> [String])? = nil
-    var folderRoots: (@Sendable () -> [String])? = nil
+    var authorizable = false
     var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
     var instructionFor: (@Sendable ([String: NativeJSONValue]) -> NativeInstructionPending?)? = nil
@@ -704,9 +701,8 @@ struct NativeToolLoop: Sendable {
     let authorize: @Sendable () async -> Bool
     let willExecute: @Sendable (NativeToolActivity) async -> Bool
     let confirm: @Sendable (NativeToolActivity) async -> Bool
-    let instructionCheck: NativeInstructionAnswerer?
-    let instructionTimeout: Duration
-    let said: String
+    let authorizer: NativeRequestAuthorizer?
+    let request: NativeTrustedRequest?
     let effects: NativeChatEffectHook?
 
     init(
@@ -718,9 +714,8 @@ struct NativeToolLoop: Sendable {
         authorize: @escaping @Sendable () async -> Bool = { true },
         willExecute: @escaping @Sendable (NativeToolActivity) async -> Bool = { _ in true },
         confirm: @escaping @Sendable (NativeToolActivity) async -> Bool = { _ in false },
-        instructionCheck: NativeInstructionAnswerer? = nil,
-        instructionTimeout: Duration = NativeInstructionCheck.timeout,
-        said: String = "",
+        authorizer: NativeRequestAuthorizer? = nil,
+        request: NativeTrustedRequest? = nil,
         effects: NativeChatEffectHook? = nil
     ) {
         self.transport = transport
@@ -731,9 +726,8 @@ struct NativeToolLoop: Sendable {
         self.authorize = authorize
         self.willExecute = willExecute
         self.confirm = confirm
-        self.instructionCheck = instructionCheck
-        self.instructionTimeout = instructionTimeout
-        self.said = said
+        self.authorizer = authorizer
+        self.request = request
         self.effects = effects
     }
 
@@ -873,15 +867,15 @@ struct NativeToolLoop: Sendable {
                                     let recording = effects.flatMap { NativeChatEffects.records(definition, arguments) ? $0 : nil }
                                     let revisions = recording?.revisions()
                                     var needsConfirmation = definition.confirmationFor?(arguments) ?? (definition.confirmation == .required)
-                                    var cleared: String?
+                                    var cleared: NativeAuthorizationDecision?
                                     if !needsConfirmation, let pending = definition.instructionFor?(arguments) {
                                         try await checkAuthorization()
-                                        let yes = await confirmsInstruction(pending)
+                                        let decided = try await authorization(pending)
                                         try await checkAuthorization()
-                                        if yes {
-                                            cleared = pending.signature
+                                        if let decided, decided.authorizes {
+                                            cleared = decided
                                         } else {
-                                            pending.refuse()
+                                            if decided?.remembersRefusal == true { pending.refuse() }
                                             needsConfirmation = true
                                         }
                                     }
@@ -926,7 +920,7 @@ struct NativeToolLoop: Sendable {
                                     }
                                     if let recording, let current = ticket, let activity = activities.first(where: { $0.id == call.id }) {
                                         let admitted = try await Self.admit(current, recording: recording, definition: definition, arguments: arguments,
-                                                                            activity: activity, answer: answer, instruction: cleared)
+                                                                            activity: activity, answer: answer, instruction: cleared?.signature)
                                         ticket = admitted
                                         if admitted == nil { handsOff = true }
                                         if let answer, admitted != nil { await recording.answered(activity, answer) }
@@ -962,7 +956,7 @@ struct NativeToolLoop: Sendable {
                                         value = try await NativeToolProgressReporter.$report.withValue(report) {
                                             try await NativeToolCallContext.$confirmed.withValue(approved) {
                                                 try await NativeToolCallContext.$reason.withValue(reasonSink) {
-                                                    try await NativeInstructionCheck.$cleared.withValue(clearing) {
+                                                    try await NativeRequestAuthorizer.$cleared.withValue(clearing) {
                                                         try await NativeRuleAdmission.$expectsHandOff.withValue(expectsHandOff) {
                                                             try await NativeToolCallContext.$boundary.withValue(boundary) {
                                                                 try await NativeToolCallContext.$otherToolRan.withValue(ranOther) {
@@ -1066,7 +1060,7 @@ struct NativeToolLoop: Sendable {
             return try await NativeToolCallContext.$activityID.withValue(activity.id) {
                 try await NativeToolCallContext.$request.withValue(activity.request) {
                     try await NativeToolCallContext.$round.withValue(activity.round) {
-                        try await definition.execute(arguments)
+                        try await NativeRequestAuthorizer.bound(definition, arguments) { try await definition.execute(arguments) }
                     }
                 }
             }
@@ -1081,11 +1075,9 @@ struct NativeToolLoop: Sendable {
         try Task.checkCancellation()
     }
 
-    private func confirmsInstruction(_ pending: NativeInstructionPending) async -> Bool {
-        guard let instructionCheck else { return false }
-        let said = self.said
-        let about = pending.about
-        return await NativeInstructionCheck.bounded(instructionTimeout) { await instructionCheck(said, about) }
+    private func authorization(_ pending: NativeInstructionPending) async throws -> NativeAuthorizationDecision? {
+        guard let authorizer, let request else { return nil }
+        return try await authorizer.decide(request, pending.action)
     }
 
     private func checkAuthorization() async throws {
