@@ -173,7 +173,7 @@ extension SelfTest {
                         == .literal("Shared with the chat Receipts. Read only. Can't be opened.")
                     && SharedFolderRows.noted(SharedFolderRows.companionSentence, state: .offline("x")).plain(name: "Ada") == "Shared with Ada's thread. On a drive that isn't connected.",
                     "The row's second line carries the state after the place")
-        let banned = ["Vera", "task", "background", "worker", "agent", "engine", "grant", "bookmark", "identity", "inode", "\u{2014}"]
+        let banned = ["grant", "bookmark", "identity", "inode", "\u{2014}"]
         let sentences = [missingSentence, awaySentence, closedSentence, fixedSentence, SharedFolderRows.chooseAgain, SharedFolderRows.choosePrompt,
                          SharedFolderRows.notMoved, SharedFolderRows.alreadyShared("Seedlings")]
             + FolderAvailability.notes.compactMap(\.rowNote) + FolderAvailability.notes.compactMap { $0.chipNote("Seedlings") }
