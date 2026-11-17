@@ -74,7 +74,7 @@ extension ChatStore {
         var decisionID: String?
         if phase == .waiting, let decision = snapshot?.decision {
             decisionID = decision.id
-            let shown = CompanionSavedText.plain(SavedWording.current(decision.prompt), name: companionName, appWritten: workerType == "companion")
+            let shown = CompanionSavedText.plain(SavedWording.question(decision.prompt), name: companionName, appWritten: workerType == "companion")
             question = CompanionTalkTools.clipped(shown, CompanionTalkTools.questionLimit)
             for wire in decision.choices where !NativeTaskProjection.carryOnChoices.contains(wire) {
                 guard let choiceTitle = NativeTaskCardPresentation.choiceTitle(wire) else { continue }

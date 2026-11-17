@@ -271,8 +271,20 @@ extension SelfTest {
                     && Words.retryPrompt(Words.pauseMessage("credential_unavailable")) == Words.credentialUnreadableMessage
                     && Words.pauseMessage("provider_auth") == "The saved model credential was not accepted.",
                     "An unreadable key has its own question, asked once, and a refused key keeps its line")
+        let prefixed = SavedWording.argumentsLead + "The saved model credential is unavailable. Retry this step?"
+        let ordinary = "Waiting for your decision. Send the booking request to the inspector?"
+        try require(SavedWording.question(prefixed) == prefixed && SavedWording.question(Words.credentialUnreadableMessage) == Words.credentialUnreadableMessage
+                    && SavedWording.question(ordinary) == ordinary, "A question is only swapped when the whole of it is an earlier line")
+        let chosen = try OngoingWorkFixture.reference(conversationID: "credential-words", title: "Workshop inspection", workerType: "research",
+                                                      state: "needs_decision", decision: ["id": "ordinary", "prompt": ordinary, "choices": ["decline", "approve"]])
+        let prefixedCard = try OngoingWorkFixture.reference(conversationID: "credential-words", title: "Workshop plan", workerType: "document",
+                                                            state: "needs_decision", decision: ["id": "prefixed", "prompt": prefixed, "choices": ["retry"]])
+        try require(try NativeTaskProjection.display(reference: chosen, snapshot: chosen.snapshot).card.milestone == ordinary
+                    && NativeTaskProjection.display(reference: prefixedCard, snapshot: prefixedCard.snapshot).card.milestone == prefixed,
+                    "Cards show any other saved question exactly as saved")
         for old in ["The saved model credential is unavailable.", "The saved model credential is unavailable. Retry this step?"] {
-            try require(SavedWording.current(old) == Words.credentialUnreadableMessage, "A saved credential line reads with the current words: \(old)")
+            try require(SavedWording.current(old) == Words.credentialUnreadableMessage && SavedWording.question(old) == Words.credentialUnreadableMessage,
+                        "A saved credential line reads with the current words: \(old)")
             for workerType in ["document", "research"] {
                 let waiting = try OngoingWorkFixture.reference(conversationID: "credential-words", title: "Workshop plan", workerType: workerType,
                                                                state: "needs_decision", decision: ["id": "saved", "prompt": old, "choices": ["retry"]])

@@ -104,7 +104,7 @@ enum NativeTaskProjection {
             }
             card.status = .needsInput
             card.milestone = retryPending ? "Your retry is saved. Waiting to continue."
-                : SavedWording.current(decision.prompt)
+                : SavedWording.question(decision.prompt)
             card.canRetry = decision.choices.contains("retry") && !retryPending
             if dot, !retryPending, let details = decision.details, details.unicodeScalars.count <= 20000 { card.details = details }
             if dot, !retryPending { card.covers = CardAnswers.shown(decision.covers) }

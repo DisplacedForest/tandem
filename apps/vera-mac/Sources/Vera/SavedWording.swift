@@ -30,6 +30,10 @@ enum SavedWording {
 
     static let argumentsLead = "The tool arguments are invalid: "
 
+    static func question(_ saved: String) -> String {
+        earlier.first(where: { $0.0 == saved })?.1 ?? saved
+    }
+
     static func current(_ saved: String) -> String {
         if let pair = earlier.first(where: { $0.0 == saved }) { return pair.1 }
         guard saved.hasPrefix(argumentsLead) else { return saved }
