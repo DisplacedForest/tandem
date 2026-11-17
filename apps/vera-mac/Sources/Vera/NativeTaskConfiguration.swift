@@ -28,34 +28,52 @@ final class NativeTaskConfiguration {
               profile.selectedModel == config.model, !profile.selectedModel.isEmpty else {
             throw NativeTaskError.invalidRequest("Choose a saved model profile before starting background research.")
         }
+        let executionModel = fixtureExecutionModel ?? profile.selectedModel
         return NativeTaskProfileBinding(id: UUID().uuidString, profileID: profile.id,
             provider: provider, savedModel: profile.selectedModel,
-            executionModel: fixtureExecutionModel ?? profile.selectedModel,
+            executionModel: executionModel,
             limits: try limits ?? NativeTaskGenerationLimits(),
-            requiresCredential: config.apiKey?.isEmpty == false)
+            requiresCredential: config.apiKey?.isEmpty == false,
+            reasoning: Self.reasoningOn(options(profileID: profile.id, model: executionModel)))
+    }
+
+    static func reasoningOn(_ options: NativeChatRequestOptions) -> Bool {
+        guard let entry = options.topLevel.first(where: { $0.key == "reasoning" }),
+              case .object(let values) = entry.value else { return false }
+        if case .bool(let enabled) = values["enabled"] { return enabled }
+        if case .string(let effort) = values["effort"] { return ["minimal", "low", "medium", "high"].contains(effort) }
+        return false
+    }
+
+    private func options(profileID: String, model: String) -> NativeChatRequestOptions {
+        let current = settings()
+        let capability = current.resolveCapabilities(model: model).profile
+        return generationOptions ?? NativeChatRequestOptions.resolve(
+            overrides: current.parameterOverrides(profileID: profileID, model: model),
+            profile: capability, savedTemplateKwargs: savedTemplate(), environmentTemplateKwargs: nil)
+    }
+
+    func matches(_ binding: NativeTaskProfileBinding) -> Bool {
+        guard let profile = settings().profiles.first(where: { $0.id == binding.profileID }),
+              let url = URL(string: profile.baseURL),
+              (try? NativeTaskEngineIdentity(url)) == binding.provider else { return false }
+        return profile.selectedModel == binding.savedModel
     }
 
     func isAvailable(_ binding: NativeTaskProfileBinding) -> Bool {
-        guard let profile = settings().profiles.first(where: { $0.id == binding.profileID }),
-              let url = URL(string: profile.baseURL),
-              (try? NativeTaskEngineIdentity(url)) == binding.provider,
-              profile.selectedModel == binding.savedModel else { return false }
+        guard matches(binding) else { return false }
         return !binding.requiresCredential || credential(binding.profileID)?.isEmpty == false
     }
 
     func load(_ binding: NativeTaskProfileBinding) throws -> NativeChatConfig {
-        guard isAvailable(binding) else { throw NativeTaskGenerationFailure(code: "profile_changed") }
+        guard matches(binding) else { throw NativeTaskGenerationFailure(code: "profile_changed") }
         let key = credential(binding.profileID)
         guard !binding.requiresCredential || key?.isEmpty == false else {
             throw NativeTaskGenerationFailure(code: "credential_unavailable")
         }
-        let current = settings()
-        let capability = current.resolveCapabilities(model: binding.executionModel).profile
-        let options = generationOptions ?? NativeChatRequestOptions.resolve(
-            overrides: current.parameterOverrides(profileID: binding.profileID, model: binding.executionModel),
-            profile: capability, savedTemplateKwargs: savedTemplate(), environmentTemplateKwargs: nil)
+        let resolved = options(profileID: binding.profileID, model: binding.executionModel)
         return NativeChatConfig(baseURL: binding.provider.base, apiKey: key,
-            model: binding.executionModel, chatTemplateKwargs: savedTemplate(), streaming: false, options: options)
+            model: binding.executionModel, chatTemplateKwargs: savedTemplate(), streaming: false, options: resolved)
     }
 }
 

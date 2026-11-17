@@ -41,12 +41,26 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
         return stale ?? false
     }
 
+    static let generationDetailMigration = "nativeTaskGenerationDetailV44"
+
+    static func migrateGenerationDetail(_ db: Database) throws {
+        try db.execute(sql: "ALTER TABLE native_task_generations ADD COLUMN failure_detail TEXT")
+    }
+
+    static func taskGenerationFailureDetail(_ db: Database, referenceID: UUID, key: String) throws -> NativeTaskGenerationFailureDetail? {
+        let text = try String.fetchOne(db, sql: "SELECT failure_detail FROM native_task_generations WHERE request_id = ? AND generation_key = ?",
+                                       arguments: [referenceID.uuidString, key])
+        return NativeTaskGenerationFailureDetail.restored(text)
+    }
+
     func finishTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob,
-                              response: String?, failure: String?) throws {
-        let allowedFailures: Set<String> = ["provider_unavailable", "provider_auth", "provider_quota",
-            "provider_response", "canceled", "request_timeout", "profile_changed", "credential_unavailable"]
+                              response: String?, failure: String?, detail: NativeTaskGenerationFailureDetail?) throws {
+        let allowedFailures = Set<String>(["provider_unavailable", "provider_auth", "provider_quota",
+            "provider_response", "canceled", "request_timeout", "profile_changed", "credential_unavailable"])
+            .union(NativeTaskWorkerFailures.replyCodes)
         guard (response == nil) != (failure == nil), response.map({ $0.utf8.count <= 262144 }) ?? true,
               failure.map({ allowedFailures.contains($0) }) ?? true else { throw NativeTaskHTTPError.invalidResponse }
+        let storedDetail = failure == nil ? nil : detail?.stored()
         try database.write { db in
             if failure == "canceled", let reference = try Self.readTaskReference(db, id: referenceID), !reference.cancelRequested,
                try Self.generationHeld(db, reference: reference, running: false) || Self.generationMoved(db, reference: reference, job: job) {
@@ -62,9 +76,9 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
                 return
             }
             try db.execute(sql: """
-                UPDATE native_task_generations SET state = ?, response = ?, failure = ?
+                UPDATE native_task_generations SET state = ?, response = ?, failure = ?, failure_detail = ?
                 WHERE request_id = ? AND generation_key = ? AND messages_digest = ? AND state = 'reserved' AND (? IS NULL OR reserved_until >= ?)
-                """, arguments: [response == nil ? "failed" : "completed", response, failure,
+                """, arguments: [response == nil ? "failed" : "completed", response, failure, storedDetail,
                                    referenceID.uuidString, job.key, job.messagesDigest, response, Date().timeIntervalSince1970])
             guard db.changesCount == 1 else { throw NativeTaskHTTPError.invalidResponse }
         }
