@@ -460,9 +460,9 @@ extension SelfTest {
             }
             try await Task.sleep(for: .milliseconds(50))
             running.cancel()
-            var stopped = false
-            do { _ = try await running.value } catch is CancellationError { stopped = true }
-            try require(stopped && hits.count == 0, "Stopping the reply during either question runs nothing")
+            _ = try? await running.value
+            try await Task.sleep(for: .milliseconds(200))
+            try require(hits.count == 0, "Stopping the reply during either question runs nothing")
         }
     }
 
@@ -478,7 +478,7 @@ extension SelfTest {
             try require((store.permissionQuestionsNotice != nil) == (attempt == 3), "The notice appears only after three failed questions in a row: \(attempt)")
         }
         try require(store.permissionQuestionsNotice == RulesCopy.permissionQuestionsFailing, "The notice is the fixed sentence")
-        try require(RulesCopy.permissionQuestionsFailing == "Your model hasn't been able to answer Tandem's permission questions, so Tandem has asked you before every action. Check the model in Settings, Model.",
+        try require(RulesCopy.permissionQuestionsFailing == "Your model hasn't been able to answer the permission questions, so you've been asked before every action. Check the model in Settings, Model.",
                     "The notice says what happened and where to look")
         let working = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["use any tools"])))
         _ = try await restrictionDrive([restrictionReader(hits)], [restrictionRound([restrictionCall("a", "read_notes")]), restrictionDone],

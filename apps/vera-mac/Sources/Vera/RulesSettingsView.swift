@@ -6,7 +6,7 @@ enum RulesCopy {
     static let infoLabel = "What each choice means"
     static let floorSectionTitle = "Always left to you"
     static let imagesNote = "This also covers saving generated images."
-    static let permissionQuestionsFailing = "Your model hasn't been able to answer Tandem's permission questions, so Tandem has asked you before every action. Check the model in Settings, Model."
+    static let permissionQuestionsFailing = "Your model hasn't been able to answer the permission questions, so you've been asked before every action. Check the model in Settings, Model."
 
     static func info(for action: NativeActionClass, choice: NativeRuleChoice) -> String {
         let detail = NativeRules.detail(for: action, choice: choice)
