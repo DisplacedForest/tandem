@@ -100,8 +100,7 @@
 3 apps/vera-mac/Sources/Vera/NativeTaskStoreIntegration.swift
 1 apps/vera-mac/Sources/Vera/NativeTaskTools.swift
 2 apps/vera-mac/Sources/Vera/NativeTaskTrackingClient.swift
-15 apps/vera-mac/Sources/Vera/NativeTurnAuthorityFixture.swift
-2 apps/vera-mac/Sources/Vera/NativeTurnToolAuthority.swift
+11 apps/vera-mac/Sources/Vera/NativeTurnAuthorityFixture.swift
 3 apps/vera-mac/Sources/Vera/NativeWorkerAudienceSelftest.swift
 19 apps/vera-mac/Sources/Vera/NativeWorkerOriginSelftest.swift
 1 apps/vera-mac/Sources/Vera/OngoingWorkFixture.swift
