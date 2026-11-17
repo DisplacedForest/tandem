@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from routers import authoring, actions, action_store, kitchen
+from routers import authoring, actions, action_store
 from routers import action_spec as sp
 
 
@@ -31,7 +31,7 @@ def test_spec_verb_validates_and_is_gated():
 
 def test_verb_never_enters_the_free_lane():
     assert not sp.is_autonomous("authoring.skill_upsert")
-    assert [v for v, s in sp.SPEC.items() if s["autonomous"]] == ["kitchen.mealie_import"]
+    assert [v for v, s in sp.SPEC.items() if s["autonomous"]] == []
 
 
 def test_author_skill_stages_and_does_not_write(writes):

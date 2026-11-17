@@ -29,7 +29,7 @@ All endpoints, model servers, thresholds, and behavioral defaults are configurat
 Three components, connected by URLs:
 
 - **An OpenAI-compatible model endpoint**: native text chat connects directly to its `/v1` API and keeps conversation history on the Mac.
-- **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, document knowledge collections with retrieval, memory grooming, a scheduler, durable task storage with replayable events, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
+- **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, document knowledge collections with retrieval, memory grooming, a scheduler, durable task storage with replayable events, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
 - **Tandem.app**: a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, and integrations.
 
 ```mermaid
@@ -39,7 +39,7 @@ flowchart LR
     API["vera-api<br/>one container, every capability"]
     SEARX["SearXNG"]
     HA["Home Assistant"]
-    INT["Grocy · Mealie · Overseerr · Unraid"]
+    INT["Overseerr · Unraid"]
     SAT["satellite contracts<br/>image · vision · coder"]
 
     APP --> LLM
@@ -230,7 +230,6 @@ Every external dependency is a configuration slot with defined behavior when emp
 | Integration | Powers | When absent |
 |---|---|---|
 | Home Assistant | Live home state, actuation, the `ha_state` vein block | Home features off |
-| Grocy / Mealie | Kitchen inventory, expiry, recipes (pairing unlocks suggestions) | Kitchen tools off |
 | Overseerr | Media requests, weekly curation digest (consent-gated) | Media curation unavailable |
 | Unraid | Container updates, host actuation | Those update sources drop from update digests |
 | Apple Reminders | Reminders lists read/write from chat, shared lists included (through the headless EventKit bridge, on a Mac signed into iCloud) | Reminders tools off |

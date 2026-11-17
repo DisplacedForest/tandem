@@ -158,13 +158,13 @@ struct VeinEntry: Identifiable, Hashable, Sendable {
 
     static func browseMock() -> [VeinEntry] {
         [
-            VeinEntry(kind: "pantry", label: "Pantry", icon: "basket",
-                      blurb: "a weekly restock digest from your inventory",
-                      nominalLabel: "stocked", enabled: false, canEnable: false, requires: [],
+            VeinEntry(kind: "notes_digest", label: "Notes digest", icon: "note.text",
+                      blurb: "a weekly digest of what changed in your notes",
+                      nominalLabel: "quiet", enabled: false, canEnable: false, requires: [],
                       providers: [], options: [],
                       jobs: [], exposed: false,
-                      requiresUnmet: [VeinRequirement(label: "Grocy", met: false, detail: "",
-                                                      integration: "grocy")]),
+                      requiresUnmet: [VeinRequirement(label: "Example Notes", met: false, detail: "",
+                                                      integration: "example_notes")]),
         ]
     }
 }

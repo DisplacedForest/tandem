@@ -1,11 +1,10 @@
 """Worldview/taste/region config — the judgment knobs are config, not code.
 
 Covers sentinel gating, temperature-unit threshold semantics, US-region detection,
-orthogonal Mealie axes, and the neutral fallbacks. Run under pytest."""
+and the neutral fallbacks. Run under pytest."""
 import pytest
 
 from routers import persona, units, weather
-from routers.kitchen import _orthogonal_categories
 
 
 # --------------------------------------------------------------------------- temperature unit
@@ -79,16 +78,3 @@ def test_forecast_link_template_and_region(monkeypatch):
     monkeypatch.delenv("WEATHER_LON", raising=False)
     assert weather._forecast_sources(1, 2) == []
 
-
-# --------------------------------------------------------------------------- orthogonal axes
-
-def test_orthogonal_categories_default_empty(monkeypatch):
-    monkeypatch.delenv("MEALIE_ORTHOGONAL_CATEGORIES", raising=False)
-    assert _orthogonal_categories() == {}
-
-
-def test_orthogonal_categories_parse_names_and_hints(monkeypatch):
-    monkeypatch.setenv("MEALIE_ORTHOGONAL_CATEGORIES",
-                       "Preserving=shelf-stable preservation (jams, pickles); Baking")
-    got = _orthogonal_categories()
-    assert got == {"Preserving": "shelf-stable preservation (jams, pickles)", "Baking": ""}

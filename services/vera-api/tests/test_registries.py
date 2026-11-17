@@ -14,15 +14,14 @@ from routers import (action_registry, action_spec, actions, groom_common, knowle
 ROUTERS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "routers")
 
 CAPABILITY_MODULES = {
-    "kitchen", "knowledge_store", "media_store", "overseerr", "groom_common", "authoring",
+    "knowledge_store", "media_store", "overseerr", "groom_common", "authoring",
     "updates", "home", "home_model", "home_reconcile", "conversation_extract", "learn",
     "knowledge_groom", "knowledge_actions", "media_curation",
 }
 
 VERBS = {
     "authoring.skill_upsert", "ha.service", "knowledge.set", "knowledge.delete",
-    "knowledge.reverify", "knowledge.promote", "kitchen.grocy_adjust", "kitchen.mealie_import",
-    "health.check", "overseerr_request", "docker.update",
+    "knowledge.reverify", "knowledge.promote", "health.check", "overseerr_request", "docker.update",
 }
 
 JOBS = {
@@ -109,7 +108,7 @@ def test_duplicate_verb_raises() -> None:
     before = _snapshot()
     with pytest.raises(ValueError):
         action_registry.register_action(
-            "kitchen.mealie_import", validate=_validate, preview=_preview, risk="low",
+            "health.check", validate=_validate, preview=_preview, risk="low",
             reversible=True, autonomous=False, order=1, executor=_noop)
     assert _snapshot() == before
 
@@ -262,7 +261,7 @@ def _fresh(script: str) -> None:
 
 
 ORDERED_VERBS = ("authoring.skill_upsert", "ha.service", "knowledge.set", "knowledge.delete", "knowledge.reverify",
-         "knowledge.promote", "kitchen.grocy_adjust", "kitchen.mealie_import", "health.check",
+         "knowledge.promote", "health.check",
          "overseerr_request", "docker.update")
 ORDERED_JOBS = ("pulse", "home_model", "home_reconcile", "home_digest", "conversation_extract", "weight_fit",
         "knowledge_groom")
@@ -296,7 +295,7 @@ def test_actions_alone_stages_a_verb_owned_elsewhere() -> None:
 def test_autonomy_lookup_alone_sees_every_verb() -> None:
     _fresh(
         "from routers import action_spec\n"
-        "assert action_spec.is_autonomous('kitchen.mealie_import') is True\n"
+        "assert [v for v, s in action_spec.SPEC.items() if s['autonomous']] == []\n"
         "assert action_spec.is_autonomous('docker.update') is False\n"
         f"assert list(action_spec.SPEC) == list({ORDERED_VERBS!r})\n"
     )
@@ -359,7 +358,7 @@ def test_importing_main_registers_everything_without_the_lifespan() -> None:
 
 
 def test_each_owner_imports_alone() -> None:
-    for name in ("authoring", "conversation_extract", "home", "home_model", "home_reconcile", "kitchen",
+    for name in ("authoring", "conversation_extract", "home", "home_model", "home_reconcile",
                  "knowledge_actions", "knowledge_groom", "learn", "media_curation", "overseerr", "pulse",
                  "updates", "actions", "scheduler", "action_spec", "builtin_capabilities"):
         _fresh(f"import routers.{name}\n")
@@ -446,12 +445,12 @@ def _retry_script(preimport: str, fail_at: int) -> str:
     )
 
 
-@pytest.mark.parametrize("fail_at", [1, 2, 3, 5, 8, 11])
+@pytest.mark.parametrize("fail_at", [1, 2, 3, 5, 8, 9])
 def test_a_load_that_fails_midway_surfaces_and_the_retry_completes(fail_at: int) -> None:
     _fresh(_retry_script("", fail_at))
 
 
-@pytest.mark.parametrize("first", ["home", "kitchen", "knowledge_actions", "media_curation", "pulse"])
+@pytest.mark.parametrize("first", ["home", "knowledge_actions", "media_curation", "pulse"])
 def test_retry_completes_when_an_owner_was_imported_before_the_failed_load(first: str) -> None:
     _fresh(_retry_script(f"import routers.{first}\n", 2))
 

@@ -84,7 +84,7 @@ def test_action_lifecycle_proposals_and_dismissals_visible():
 
 
 def test_auto_lane_attribution_from_caller():
-    action_store.log_auto("kitchen.mealie_import", {"url": "https://x.test/r/1"}, {"ok": True},
+    action_store.log_auto("sample.import_link", {"url": "https://x.test/r/1"}, {"ok": True},
                           source="vera", actor="vera")
     e = _activity()["events"][0]
     assert e["kind"] == "auto"

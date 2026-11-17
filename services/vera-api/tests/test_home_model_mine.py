@@ -107,15 +107,14 @@ def test_automation_causation_tagging():
         events.append(ev("automation.morning_lights", "Morning Lights", None, t,
                          etype="automation_triggered", context={"id": f"ctx{i}"}))
         # the light change it caused carries the automation's context as parent_id
-        events.append(ev("light.kitchen", "on", "off", t + timedelta(seconds=1),
+        events.append(ev("light.hallway", "on", "off", t + timedelta(seconds=1),
                          context={"id": f"child{i}", "parent_id": f"ctx{i}"}))
-    # one manual kitchen change (no automation context)
-    events.append(ev("light.kitchen", "on", "off", base + timedelta(days=11),
+    events.append(ev("light.hallway", "on", "off", base + timedelta(days=11),
                      context={"id": "manual"}))
 
     caused = m.automation_causation(events)
-    assert "light.kitchen" in caused, caused
-    frac, cause = caused["light.kitchen"]
+    assert "light.hallway" in caused, caused
+    frac, cause = caused["light.hallway"]
     assert cause == "automation.morning_lights", cause
     assert frac >= 0.6, frac  # 10 of 11 automation-caused
     print("ok test_automation_causation_tagging:", round(frac, 3), cause)
