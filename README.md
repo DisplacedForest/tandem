@@ -14,8 +14,6 @@
 
 [Setup](docs/SETUP.md) · [Contributing](CONTRIBUTING.md)
 
-<img src="docs/assets/home.png" alt="Tandem: the native macOS client" width="850">
-
 </div>
 
 ---
@@ -29,7 +27,7 @@ All endpoints, model servers, thresholds, and behavioral defaults are configurat
 Three components, connected by URLs:
 
 - **An OpenAI-compatible model endpoint**: native text chat connects directly to its `/v1` API and keeps conversation history on the Mac.
-- **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, document knowledge collections with retrieval, memory grooming, a scheduler, durable task storage with replayable events, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
+- **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, document knowledge collections with retrieval, memory grooming, a scheduler, durable task storage with replayable events, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
 - **Tandem.app**: a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, and integrations.
 
 ```mermaid
@@ -39,7 +37,7 @@ flowchart LR
     API["vera-api<br/>one container, every capability"]
     SEARX["SearXNG"]
     HA["Home Assistant"]
-    INT["Grocy · Mealie · Overseerr · Unraid"]
+    INT["Overseerr · Unraid"]
     SAT["satellite contracts<br/>image · vision · coder"]
 
     APP --> LLM
@@ -75,8 +73,6 @@ Attachment routing is deterministic and disclosed. Every model carries a capabil
 Advanced model controls live in Settings, Model behind a collapsed Advanced section, so ordinary setup never sees them. Every parameter is a typed declaration with a range, a scope, and a plain-language explanation: sampling (temperature, top p, top k, seed, penalties), tokens and stops, reasoning mode and effort, a streaming toggle, and a client-side context-length ceiling. Controls the selected model's capability profile cannot honor are disabled with the reason stated, overrides are stored per endpoint profile and model, and anything left at its endpoint default is omitted from the request entirely, so an untouched install sends exactly the same payload as before. A typed key-value editor covers provider-specific knobs through the chat template kwargs object, a per-request trace shows the final resolved parameter set actually sent, and when an endpoint rejects a parameter the app names it and offers a one-tap reset that retries without losing the message.
 
 Native personal memory is an optional Mac feature. Approved memory is stored only on this Mac. Generating proposals and embeddings sends the current turn and your existing memories to the configured model endpoint, and Settings shows whether that endpoint is on this Mac or remote. Memory starts off, stores approved readable facts beside local chat history, retrieves only relevant approved and unexpired facts within fixed budgets, and places every generated create, update, merge, suppression, expiry, or deletion in a review queue. Approved episodic facts are removed automatically once their expiry date has passed, each removal recorded in the audit trail. The Memory Library organizes items as **You**, **Topics**, **Areas**, and **People**. Approved-memory storage and lexical recall have no server dependencies. With embeddings unset, recall uses local FTS5 search. Memory citations open the existing detail view with saved source evidence and corrections; optional extraction and semantic recall use configured model endpoints. Search past chats, Generate proposals, and Sensitive information are separate settings. Turning one off stops work already in progress, and sensitive text is never remembered unless you choose to have it suggested for review. The persistent-workspace runtime adapter consumes the same approved-memory authority as focused chats. Use **Record from evidence** in Memory to review typed facts, stock changes, and care records from saved messages; counts are calculated from approved evidence. Tandem also suggests these stock and care records from your conversations, quoting your exact words, and you review them like any other memory change. See [Native memory](docs/NATIVE_MEMORY.md).
-
-<div align="center"><img src="docs/assets/chat.png" alt="Tandem chat: interactive choice cards, canvas artifacts, cited sources" width="850"></div>
 
 ### Knowledge: document collections that ground chat
 
@@ -207,11 +203,9 @@ Everything Tandem does on its own is also auditable in one place: an Activity fe
 
 This is the Settings, Plugins store for the optional server-side integrations, separate from Connected services in the rail. Each integration is a card: enter a URL and key, test, enable. Enabling an integration activates the capability across the stack. Experimental features (whole-house behavior modeling, media curation) require explicit consent and state exactly what they do before they can be enabled.
 
-<div align="center"><img src="docs/assets/plugins.png" alt="Integrations with live status" width="850"></div>
-
 ### Memory and home control
 
-Tandem maintains an inspectable, editable memory store and grooms it nightly: every change reversible and surfaced as an audit card. With Home Assistant connected, Tandem answers from live home state and acts through a typed, confirmation-gated action system; nothing in the home actuates without an explicit confirmation. Trust is graduated per verb: an action explicitly enrolled as autonomous: which the registry permits only for low-risk, trivially reversible verbs: executes without a confirmation and surfaces afterward as a System card. Exactly one verb is enrolled: recipe import, so Tandem can save a recipe it finds worth keeping into the household cookbook on its own, capped, deduplicated, and announced after the fact.
+Tandem maintains an inspectable, editable memory store and grooms it nightly: every change reversible and surfaced as an audit card. With Home Assistant connected, Tandem answers from live home state and acts through a typed, confirmation-gated action system; nothing in the home actuates without an explicit confirmation. Trust is graduated per verb: an action explicitly enrolled as autonomous: which the registry permits only for low-risk, trivially reversible verbs: executes without a confirmation and surfaces afterward as a System card. No built-in verb is enrolled.
 
 ## The endpoint matrix
 
@@ -230,7 +224,6 @@ Every external dependency is a configuration slot with defined behavior when emp
 | Integration | Powers | When absent |
 |---|---|---|
 | Home Assistant | Live home state, actuation, the `ha_state` vein block | Home features off |
-| Grocy / Mealie | Kitchen inventory, expiry, recipes (pairing unlocks suggestions) | Kitchen tools off |
 | Overseerr | Media requests, weekly curation digest (consent-gated) | Media curation unavailable |
 | Unraid | Container updates, host actuation | Those update sources drop from update digests |
 | Apple Reminders | Reminders lists read/write from chat, shared lists included (through the headless EventKit bridge, on a Mac signed into iCloud) | Reminders tools off |

@@ -14,12 +14,6 @@
       "avoid_when": "A single quick fact (use web_search instead)."
     },
     {
-      "tool": "kitchen_status", "node": "api",
-      "summary": "Live kitchen state: low/expiring stock (Grocy) + recipes and today's meal plan (Mealie).",
-      "use_when": "The user asks what's low/expiring, what to cook or what to buy, or about meals.",
-      "avoid_when": "General cooking questions unrelated to their actual stock."
-    },
-    {
       "tool": "knowledge_lookup", "node": "api",
       "summary": "Read durable home facts from Vera's knowledge store (server, network gear, appliances, HVAC, vehicles, wine batches).",
       "use_when": "The user asks about something durable they own or how the home/server/network is configured (e.g. 'what GPU is in the server', 'when was the water heater installed').",
@@ -47,7 +41,7 @@
       "tool": "reminders", "node": "api->bridge",
       "summary": "Apple Reminders read/write through the EventKit bridge (shared lists included).",
       "use_when": "The user asks what is on a reminders or shopping list, wants an item added, or wants one checked off.",
-      "avoid_when": "Kitchen inventory or Grocy stock questions (use kitchen_status), or the reminders integration is unconfigured."
+      "avoid_when": "The reminders integration is unconfigured."
     }
   ]
 }

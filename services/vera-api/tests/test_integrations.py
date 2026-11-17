@@ -12,20 +12,35 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from routers import env_compat as ec
 from routers import integrations as ig  # noqa: E402
 from routers import integrations_store as ist  # noqa: E402
 from routers import conversation_extract, home, home_model, home_reconcile, knowledge_groom, learn, pulse
 
-_ENV_VARS = ["GROCY_URL", "GROCY_API_KEY", "MEALIE_URL", "MEALIE_API_KEY",
+_ENV_VARS = ["SAMPLE_SERVICE_BASE", "SAMPLE_SERVICE_KEY", "SAMPLE_SERVICE_URL",
+             "SAMPLE_SERVICE_API_KEY", "SAMPLE_A_URL", "SAMPLE_B_URL",
              "HOME_ASSISTANT_URL", "HOME_ASSISTANT_TOKEN", "OVERSEERR_URL",
              "OVERSEERR_API_KEY", "UNRAID_API_URL", "UNRAID_API_KEY", "SEARXNG_URL",
              "VERA_EMBED_URL", "VERA_EMBED_MODEL", "VERA_REMINDERS_URL",
              "HOME_EVENTS_ENABLED", "MEDIA_CURATION_ENABLED", "HOME_STATE"]
 
+SAMPLE_SERVICE = {
+    "display_name": "Sample Service",
+    "fields": [
+        {"id": "url", "env": "SAMPLE_SERVICE_BASE", "label": "Base URL", "secret": False},
+        {"id": "api_key", "env": "SAMPLE_SERVICE_KEY", "label": "API key", "secret": True},
+    ],
+    "unlocks": ["sample lookups"],
+}
+SAMPLE_ALIASES = {"SAMPLE_SERVICE_BASE": "SAMPLE_SERVICE_URL", "SAMPLE_SERVICE_KEY": "SAMPLE_SERVICE_API_KEY"}
+
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch, tmp_path):
     monkeypatch.setattr(ist, "PATH", str(tmp_path / "integrations.json"))
+    monkeypatch.setitem(ig.REGISTRY, "sample_service", SAMPLE_SERVICE)
+    for new, old in SAMPLE_ALIASES.items():
+        monkeypatch.setitem(ec.ALIASES, new, old)
     for k in _ENV_VARS:
         monkeypatch.delenv(k, raising=False)
     ig._last_test.clear()
@@ -39,8 +54,8 @@ def _put(iid, **kw):
 # --- resolution & precedence -------------------------------------------------------------
 
 def test_unconfigured_is_off():
-    assert ig.integration("grocy") is None
-    entry = _entry("grocy")
+    assert ig.integration("sample_service") is None
+    entry = _entry("sample_service")
     assert entry["status"] == "unconfigured" and not entry["enabled"]
 
 
@@ -49,23 +64,23 @@ def _entry(iid):
 
 
 def test_env_configured_means_enabled(monkeypatch):
-    monkeypatch.setenv("GROCY_URL", "http://grocy.example/")
-    monkeypatch.setenv("GROCY_API_KEY", "k")
-    cfg = ig.integration("grocy")
-    assert cfg == {"url": "http://grocy.example", "api_key": "k"}
-    assert _entry("grocy")["status"] == "enabled"
+    monkeypatch.setenv("SAMPLE_SERVICE_URL", "http://sample.example/")
+    monkeypatch.setenv("SAMPLE_SERVICE_API_KEY", "k")
+    cfg = ig.integration("sample_service")
+    assert cfg == {"url": "http://sample.example", "api_key": "k"}
+    assert _entry("sample_service")["status"] == "enabled"
 
 
 def test_env_beats_store(monkeypatch):
-    ist.update("grocy", fields={"url": "http://from-store", "api_key": "store-key"})
-    monkeypatch.setenv("GROCY_URL", "http://from-env")
-    assert ig.integration("grocy")["url"] == "http://from-env"
-    assert ig.integration("grocy")["api_key"] == "store-key"  # unset env falls through
+    ist.update("sample_service", fields={"url": "http://from-store", "api_key": "store-key"})
+    monkeypatch.setenv("SAMPLE_SERVICE_URL", "http://from-env")
+    assert ig.integration("sample_service")["url"] == "http://from-env"
+    assert ig.integration("sample_service")["api_key"] == "store-key"
 
 
 def test_store_configured_works_without_env():
-    _put("grocy", fields={"url": "http://runtime", "api_key": "k"})
-    assert ig.integration("grocy")["url"] == "http://runtime"
+    _put("sample_service", fields={"url": "http://runtime", "api_key": "k"})
+    assert ig.integration("sample_service")["url"] == "http://runtime"
 
 
 def test_embeddings_store_configured_resolves():
@@ -87,27 +102,27 @@ def test_embeddings_env_configured_means_enabled(monkeypatch):
 
 
 def test_runtime_disable_wins_over_configured(monkeypatch):
-    monkeypatch.setenv("GROCY_URL", "http://x")
-    monkeypatch.setenv("GROCY_API_KEY", "k")
-    _put("grocy", enabled=False)
-    assert ig.integration("grocy") is None
-    assert _entry("grocy")["status"] == "configured"
-    _put("grocy", enabled=True)
-    assert ig.integration("grocy") is not None
+    monkeypatch.setenv("SAMPLE_SERVICE_URL", "http://x")
+    monkeypatch.setenv("SAMPLE_SERVICE_API_KEY", "k")
+    _put("sample_service", enabled=False)
+    assert ig.integration("sample_service") is None
+    assert _entry("sample_service")["status"] == "configured"
+    _put("sample_service", enabled=True)
+    assert ig.integration("sample_service") is not None
 
 
 # --- PUT validation ----------------------------------------------------------------------
 
 def test_put_env_pinned_field_is_409(monkeypatch):
-    monkeypatch.setenv("GROCY_URL", "http://pinned")
+    monkeypatch.setenv("SAMPLE_SERVICE_URL", "http://pinned")
     with pytest.raises(Exception) as e:
-        _put("grocy", fields={"url": "http://other"})
+        _put("sample_service", fields={"url": "http://other"})
     assert getattr(e.value, "status_code", None) == 409
 
 
 def test_enable_without_required_fields_is_400():
     with pytest.raises(Exception) as e:
-        _put("grocy", enabled=True)
+        _put("sample_service", enabled=True)
     assert getattr(e.value, "status_code", None) == 400
 
 
@@ -116,7 +131,7 @@ def test_unknown_integration_and_field():
         _put("nope", enabled=True)
     assert getattr(e.value, "status_code", None) == 404
     with pytest.raises(Exception) as e:
-        _put("grocy", fields={"bogus": "x"})
+        _put("sample_service", fields={"bogus": "x"})
     assert getattr(e.value, "status_code", None) == 422
 
 
@@ -174,20 +189,25 @@ def test_feature_off_when_parent_disabled_later(monkeypatch):
 # --- API view ----------------------------------------------------------------------------
 
 def test_secrets_never_echoed(monkeypatch):
-    monkeypatch.setenv("GROCY_API_KEY", "super-secret")
-    entry = _entry("grocy")
+    monkeypatch.setenv("SAMPLE_SERVICE_API_KEY", "super-secret")
+    entry = _entry("sample_service")
     secret = next(f for f in entry["fields"] if f["id"] == "api_key")
     assert secret["set"] is True and "value" not in secret
     assert "super-secret" not in str(entry)
 
 
 def test_paired_with_active_when_both_enabled(monkeypatch):
-    monkeypatch.setenv("GROCY_URL", "http://g")
-    monkeypatch.setenv("GROCY_API_KEY", "k")
-    assert _entry("grocy")["paired_with"]["active"] is False
-    monkeypatch.setenv("MEALIE_URL", "http://m")
-    monkeypatch.setenv("MEALIE_API_KEY", "k")
-    assert _entry("grocy")["paired_with"]["active"] is True
+    for iid, other in (("sample_a", "sample_b"), ("sample_b", "sample_a")):
+        monkeypatch.setitem(ig.REGISTRY, iid, {
+            "display_name": iid,
+            "fields": [{"id": "url", "env": f"{iid.upper()}_URL", "label": "Base URL", "secret": False}],
+            "unlocks": [],
+            "paired_with": {"id": other, "label": "combined view"},
+        })
+    monkeypatch.setenv("SAMPLE_A_URL", "http://a")
+    assert _entry("sample_a")["paired_with"]["active"] is False
+    monkeypatch.setenv("SAMPLE_B_URL", "http://b")
+    assert _entry("sample_a")["paired_with"]["active"] is True
 
 
 # --- scheduler gate inheritance -----------------------------------------------------------

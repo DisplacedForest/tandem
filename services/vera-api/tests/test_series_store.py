@@ -16,7 +16,7 @@ def _fresh(monkeypatch, tmp_path):
 NOW = int(time.time())
 
 
-def _fill(entity="sensor.kitchen_temp", n=5, step=60, start=None):
+def _fill(entity="sensor.hallway_temp", n=5, step=60, start=None):
     start = NOW - n * step if start is None else start
     for i in range(n):
         series_store.insert(entity, start + i * step, 20.0 + i)
@@ -32,12 +32,12 @@ def test_insert_idempotent():
 
 def test_series_range_sort_limit():
     start = _fill(n=5)
-    pts = series_store.series("sensor.kitchen_temp")
+    pts = series_store.series("sensor.hallway_temp")
     assert [p[1] for p in pts] == [20.0, 21.0, 22.0, 23.0, 24.0]
     assert pts == sorted(pts)
-    mid = series_store.series("sensor.kitchen_temp", since=start + 60, until=start + 180)
+    mid = series_store.series("sensor.hallway_temp", since=start + 60, until=start + 180)
     assert [p[1] for p in mid] == [21.0, 22.0, 23.0]
-    assert len(series_store.series("sensor.kitchen_temp", limit=2)) == 2
+    assert len(series_store.series("sensor.hallway_temp", limit=2)) == 2
 
 
 def test_insert_many_counts_new_rows_only():
@@ -59,7 +59,7 @@ def test_entities_counts_and_min_points():
 def test_latest():
     assert series_store.latest("sensor.none") is None
     start = _fill(n=3)
-    assert series_store.latest("sensor.kitchen_temp") == (start + 120, 22.0)
+    assert series_store.latest("sensor.hallway_temp") == (start + 120, 22.0)
 
 
 def test_purge_cutoff():
@@ -102,15 +102,15 @@ def _msg(entity, new_state, ts=None):
 
 
 def test_record_tees_numeric_sensor():
-    home_events._record(_msg("sensor.kitchen_temp", "21.7"))
-    pts = series_store.series("sensor.kitchen_temp")
+    home_events._record(_msg("sensor.hallway_temp", "21.7"))
+    pts = series_store.series("sensor.hallway_temp")
     assert len(pts) == 1 and pts[0][1] == 21.7
 
 
 def test_record_skips_non_numeric_and_non_sensor():
     home_events._record(_msg("sensor.door", "unavailable"))
     home_events._record(_msg("sensor.mode", "eco"))
-    home_events._record(_msg("light.kitchen", "42"))
+    home_events._record(_msg("light.hallway", "42"))
     assert series_store.entities() == []
 
 

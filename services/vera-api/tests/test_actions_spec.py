@@ -3,9 +3,10 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from routers import action_registry
 from routers import action_spec as sp  # noqa: E402
 from routers import home as ha
-from routers import kitchen, knowledge_actions, updates
+from routers import knowledge_actions, updates
 
 
 def test_ha_allowlist():
@@ -41,12 +42,6 @@ def test_knowledge_validate():
     assert sp.SPEC["knowledge.delete"]["validate"]({})  # missing identifier
 
 
-def test_grocy_validate():
-    assert sp.SPEC["kitchen.grocy_adjust"]["validate"]({"product_id": 3, "op": "consume", "amount": 1}) is None
-    assert sp.SPEC["kitchen.grocy_adjust"]["validate"]({"product_id": 3, "op": "nope", "amount": 1})  # bad op
-    assert sp.SPEC["kitchen.grocy_adjust"]["validate"]({"op": "add", "amount": 1})  # missing product_id
-
-
 def test_update_install_allowed():
     # Applying an HA update.* entity is the HA-domain apply path for stack updates.
     assert ha.ha_allowed("update", "install")
@@ -64,14 +59,29 @@ def test_docker_update_spec():
     assert "radarr" in sp.SPEC["docker.update"]["preview"]({"name": "radarr", "image": "x/radarr:latest"})
 
 
+async def _sample_executor(args):
+    return {"ok": True}
+
+
 def test_autonomous_enrollment():
-    # the free lane is an explicit allowlist: exactly one verb enrolled today
-    assert sp.is_autonomous("kitchen.mealie_import")
-    assert [v for v, s in sp.SPEC.items() if s["autonomous"]] == ["kitchen.mealie_import"]
-    assert not sp.is_autonomous("ha.service")
-    assert not sp.is_autonomous("kitchen.grocy_adjust")
-    assert not sp.is_autonomous("knowledge.set")
-    assert not sp.is_autonomous("nonexistent.verb")
+    assert [v for v, s in sp.SPEC.items() if s["autonomous"]] == []
+    action_registry.register_action(
+        "sample.import_link", validate=lambda a: None, preview=lambda a: "import",
+        risk="low", reversible=True, autonomous=True, order=2_000_010, executor=_sample_executor)
+    action_registry.register_action(
+        "sample.adjust_count", validate=lambda a: None, preview=lambda a: "adjust",
+        risk="low", reversible=True, autonomous=False, order=2_000_020, executor=_sample_executor)
+    try:
+        assert sp.is_autonomous("sample.import_link")
+        assert [v for v, s in sp.SPEC.items() if s["autonomous"]] == ["sample.import_link"]
+        assert not sp.is_autonomous("sample.adjust_count")
+        assert not sp.is_autonomous("ha.service")
+        assert not sp.is_autonomous("knowledge.set")
+        assert not sp.is_autonomous("nonexistent.verb")
+    finally:
+        action_registry.unregister_action("sample.import_link")
+        action_registry.unregister_action("sample.adjust_count")
+    assert [v for v, s in sp.SPEC.items() if s["autonomous"]] == []
 
 
 def test_autonomy_invariant():
@@ -101,7 +111,6 @@ if __name__ == "__main__":
     test_media_player_allowed()
     test_ha_validate()
     test_knowledge_validate()
-    test_grocy_validate()
     test_update_install_allowed()
     test_docker_update_spec()
     test_autonomous_enrollment()
