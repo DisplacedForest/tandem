@@ -206,7 +206,14 @@ enum NativeFolderTools {
         ]
         let keys: [String: [String]] = [writeName: ["path"], editName: ["path"], moveName: ["from", "to"], mkdirName: [creatingKey], trashName: ["path"]]
         return definitions.map { original in
-            let definition = refusingOutside(original, grants: grants)
+            var definition = refusingOutside(original, grants: grants)
+            definition.place = { arguments, key in
+                guard arguments[key] != nil else {
+                    let shared = grants()
+                    return shared.count == 1 ? shared[0].path : nil
+                }
+                return subjects(arguments, [key]).first?.first.flatMap { $0.kind == .folder ? $0.value : nil }
+            }
             guard let paths = keys[definition.name] else { return definition }
             var targeted = definition
             targeted.governed = true

@@ -69,7 +69,7 @@ extension NativeRuleResolver {
         guard !typed.said.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard unnamed(in: query, honoringLimitedUse: honoringLimitedUse) == nil else { return nil }
         let message = NativeTypedWords(current: typed.said, earlier: [])
-        guard targets.filter({ $0.kind == .commandPrefix }).allSatisfy({ message.names($0, inCurrentOnly: true) }) else { return nil }
+        guard targets.filter({ $0.kind == .commandPrefix }).allSatisfy({ message.names($0, inCurrentOnly: true, keepingCase: true) }) else { return nil }
         let signature = NativeInstruction.signature(action: query.action, toolID: query.toolID, targets: targets, names: [])
         if uses?.used(signature) == true { return nil }
         return signature

@@ -139,6 +139,8 @@ enum NativeRuleRecordsSelftest {
         try require(!commandEligible("Run the tests", "make test") && !commandEligible("Run `make pdf`", "make pdfs")
                         && !commandEligible("Run make", "make pdf"),
                     "A command that doesn't appear in the typed message is never eligible")
+        try require(!commandEligible("Run make test", "make TEST") && !commandEligible("Run `Make pdf`", "make pdf") && commandEligible("Run make TEST", "make TEST"),
+                    "A command is eligible only in the case the person typed")
 
         let message = UUID()
         func pending(_ definition: NativeToolDefinition, typed: String = told, global: NativeRules? = nil) -> NativeInstructionPending? {

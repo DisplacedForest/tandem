@@ -298,6 +298,11 @@ enum NativeCommandTools {
             let assessed = planned(command, arguments.folderString("directory"))
             return NativeChatDecision(action: assessed.action, decision: assessed.decision)
         }
+        definition.place = { arguments, key in
+            guard key == "directory" else { return nil }
+            let shared = grants()
+            return arguments.folderString("directory") ?? (shared.count == 1 ? shared[0].path : nil)
+        }
         if let instruction {
             let original = definition
             definition.instructionFor = { arguments in

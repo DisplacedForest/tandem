@@ -221,6 +221,7 @@ struct NativeToolDefinition: Sendable {
     var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
     var ruleWhy: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleWhy?)? = nil
     var ruleSubjects: (@Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]])? = nil
+    var place: (@Sendable ([String: NativeJSONValue], String) -> String?)? = nil
     var access: NativeToolAccess? = nil
     var wants: String? = nil
     var governed = false
@@ -756,6 +757,7 @@ struct NativeToolLoop: Sendable {
                     var turnSources: [String: Int] = [:]
                     var refusals: NativeRefusalList?
                     var refusalsDown = false
+                    var ranCalls: [String] = []
                     for round in 1...Self.maximumRounds {
                         try await checkAuthorization()
                         let active = registry.active(enabledIDs: enabledToolIDs)
@@ -884,7 +886,7 @@ struct NativeToolLoop: Sendable {
                                             }
                                             if let said = refusals, !said.refusesNothing {
                                                 try await checkAuthorization()
-                                                let outcome = try await restrictionCheck.outcome(NativeProposedCall(definition, arguments: arguments), refusals: said)
+                                                let outcome = try await restrictionCheck.outcome(NativeProposedCall(definition, arguments: arguments), refusals: said, ran: ranCalls)
                                                 try await checkAuthorization()
                                                 switch outcome {
                                                 case .allowed:
@@ -976,6 +978,7 @@ struct NativeToolLoop: Sendable {
                                         }
                                     }
                                     if isSearch { webSearchCount += 1 }
+                                    if restrictionCheck != nil { ranCalls.append(NativeActionDescription.describe(definition, arguments: arguments)) }
                                     guard let activity = activities.first(where: { $0.id == call.id }) else {
                                         throw NativeToolError.failed("The tool call could not be matched to its request")
                                     }
