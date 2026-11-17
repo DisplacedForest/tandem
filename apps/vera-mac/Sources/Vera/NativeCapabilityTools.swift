@@ -33,21 +33,50 @@ enum NativeToolHTTPMethod: String, Equatable, Hashable, Sendable {
 enum NativeToolPropertyType: String, Equatable, Hashable, Sendable {
     case string
     case boolean
+    case integer
+    case number
 }
 
 struct NativeToolProperty: Equatable, Hashable, Sendable {
     let name: String
     let type: NativeToolPropertyType
     let description: String
+    var keywords: [String: NativeJSONValue] = [:]
+}
+
+enum NativeToolDeclarationProblem: Equatable, Hashable, Sendable {
+    case unreadable
+    case notJSON
+    case missing(String)
+    case badName
+    case badParameters
+    case badField(String)
+    case unsupportedType(field: String, type: String)
+    case unsupportedKeyword(String)
+    case badValue(field: String, keyword: String)
+    case badRequired
+    case badEndpoint
+    case badMethod
+    case badConfirmation
+    case badTimeout
+    case badEnabled
+    case badJSONFields
+    case badSendsTo
+    case badVerbs
+    case duplicateName(String)
+    case reservedName(String)
+    case other
 }
 
 struct NativeToolDeclarationError: Error, Equatable {
     let reason: String
+    var problem: NativeToolDeclarationProblem = .other
 }
 
 struct NativeToolDeclarationFailure: Equatable, Hashable, Sendable, Identifiable {
     let file: String
     let reason: String
+    var problem: NativeToolDeclarationProblem = .other
 
     var id: String { "\(file)|\(reason)" }
 }
@@ -90,14 +119,7 @@ struct NativeToolDeclaration: Equatable, Hashable, Sendable, Identifiable {
     var parameters: NativeJSONValue {
         var fields: [String: NativeJSONValue] = [:]
         for property in properties {
-            var entry: [String: NativeJSONValue] = ["type": .string(property.type.rawValue)]
-            if property.type == .string {
-                entry["minLength"] = .number(1)
-            }
-            if !property.description.isEmpty {
-                entry["description"] = .string(property.description)
-            }
-            fields[property.name] = .object(entry)
+            fields[property.name] = .object(Self.entry(property))
         }
         return .object([
             "type": .string("object"),
@@ -105,6 +127,18 @@ struct NativeToolDeclaration: Equatable, Hashable, Sendable, Identifiable {
             "required": .array(required.map(NativeJSONValue.string)),
             "additionalProperties": .bool(false),
         ])
+    }
+
+    static func entry(_ property: NativeToolProperty) -> [String: NativeJSONValue] {
+        var entry = property.keywords
+        entry["type"] = .string(property.type.rawValue)
+        if property.type == .string, entry["minLength"] == nil {
+            entry["minLength"] = .number(1)
+        }
+        if !property.description.isEmpty {
+            entry["description"] = .string(property.description)
+        }
+        return entry
     }
 }
 
@@ -120,6 +154,8 @@ enum NativeCapabilityTools {
     static let defaultTimeoutSeconds: Double = 20
     static let maximumTimeoutSeconds: Double = 300
     static let directoryName = "tools.d"
+    static let parameterKeywords: Set<String> = ["type", "properties", "required", "additionalProperties"]
+    static let propertyKeywords: Set<String> = ["type", "description", "enum", "const", "minLength", "maxLength", "minimum", "maximum", "default", "title", "examples"]
 
     static func identifier(name: String) -> String { "capability-\(name)" }
 
@@ -143,23 +179,25 @@ enum NativeCapabilityTools {
             AppLocations.refuseRealFile(file)
             guard let data = try? Data(contentsOf: file) else {
                 failures.append(NativeToolDeclarationFailure(
-                    file: label, reason: "The file could not be read"))
+                    file: label, reason: "The file could not be read", problem: .unreadable))
                 continue
             }
             do {
                 let declaration = try parse(data: data, source: label)
                 guard !taken.contains(declaration.name) else {
+                    let reserved = reservedNames.contains(declaration.name)
                     failures.append(NativeToolDeclarationFailure(
                         file: label,
-                        reason: reservedNames.contains(declaration.name)
+                        reason: reserved
                             ? "The name '\(declaration.name)' is reserved by a built-in tool"
-                            : "A tool named '\(declaration.name)' is already loaded"))
+                            : "A tool named '\(declaration.name)' is already loaded",
+                        problem: reserved ? .reservedName(declaration.name) : .duplicateName(declaration.name)))
                     continue
                 }
                 taken.insert(declaration.name)
                 declarations.append(declaration)
             } catch let error as NativeToolDeclarationError {
-                failures.append(NativeToolDeclarationFailure(file: label, reason: error.reason))
+                failures.append(NativeToolDeclarationFailure(file: label, reason: error.reason, problem: error.problem))
             } catch {
                 failures.append(NativeToolDeclarationFailure(
                     file: label, reason: error.localizedDescription))
@@ -411,6 +449,8 @@ enum NativeCapabilityTools {
             return trimmed.isEmpty ? nil : trimmed
         case .bool(let flag):
             return flag ? "true" : "false"
+        case .number(let number):
+            return number.rounded(.towardZero) == number && abs(number) < 1e15 ? String(Int(number)) : String(number)
         default:
             return nil
         }
@@ -419,7 +459,7 @@ enum NativeCapabilityTools {
     static func parse(data: Data, source: String) throws -> NativeToolDeclaration {
         guard let any = try? JSONSerialization.jsonObject(with: data),
               let object = any as? [String: Any] else {
-            throw NativeToolDeclarationError(reason: "The file is not a JSON object")
+            throw NativeToolDeclarationError(reason: "The file is not a JSON object", problem: .notJSON)
         }
         return try parse(object: object, source: source)
     }
@@ -427,105 +467,126 @@ enum NativeCapabilityTools {
     static func parse(object: [String: Any], source: String) throws -> NativeToolDeclaration {
         let name = text(object["name"])
         guard !name.isEmpty else {
-            throw NativeToolDeclarationError(reason: "A non-empty 'name' is required")
+            throw NativeToolDeclarationError(reason: "A non-empty 'name' is required", problem: .missing("name"))
         }
         guard isFunctionName(name) else {
             throw NativeToolDeclarationError(
-                reason: "'name' must start with a letter and use only letters, digits, or underscores")
+                reason: "'name' must start with a letter and use only letters, digits, or underscores", problem: .badName)
         }
         let title = text(object["title"])
         guard !title.isEmpty else {
-            throw NativeToolDeclarationError(reason: "A non-empty 'title' is required")
+            throw NativeToolDeclarationError(reason: "A non-empty 'title' is required", problem: .missing("title"))
         }
         let description = text(object["description"])
         guard !description.isEmpty else {
-            throw NativeToolDeclarationError(reason: "A non-empty 'description' is required")
+            throw NativeToolDeclarationError(reason: "A non-empty 'description' is required", problem: .missing("description"))
         }
         guard let schema = object["parameters"] as? [String: Any] else {
-            throw NativeToolDeclarationError(reason: "'parameters' must be a JSON Schema object")
+            throw NativeToolDeclarationError(reason: "'parameters' must be a JSON Schema object", problem: .badParameters)
         }
         guard (schema["type"] as? String) == "object" else {
-            throw NativeToolDeclarationError(reason: "'parameters.type' must be \"object\"")
+            throw NativeToolDeclarationError(reason: "'parameters.type' must be \"object\"", problem: .badParameters)
+        }
+        if let unknown = schema.keys.sorted().first(where: { !parameterKeywords.contains($0) }) {
+            throw NativeToolDeclarationError(
+                reason: "'parameters' uses '\(unknown)', which is not supported", problem: .unsupportedKeyword(unknown))
         }
         guard let rawProperties = schema["properties"] as? [String: Any] else {
-            throw NativeToolDeclarationError(reason: "'parameters.properties' must be an object")
+            throw NativeToolDeclarationError(reason: "'parameters.properties' must be an object", problem: .badParameters)
         }
         if let additional = schema["additionalProperties"] {
             guard let flag = additional as? Bool, flag == false else {
                 throw NativeToolDeclarationError(
-                    reason: "'parameters.additionalProperties' must be false")
+                    reason: "'parameters.additionalProperties' must be false", problem: .unsupportedKeyword("additionalProperties"))
             }
         }
         var properties: [NativeToolProperty] = []
         for key in rawProperties.keys.sorted() {
             guard let entry = rawProperties[key] as? [String: Any] else {
-                throw NativeToolDeclarationError(reason: "Property '\(key)' must be an object")
+                throw NativeToolDeclarationError(reason: "Property '\(key)' must be an object", problem: .badField(key))
             }
-            guard let rawType = entry["type"] as? String else {
-                throw NativeToolDeclarationError(reason: "Property '\(key)' needs a 'type'")
-            }
-            guard let type = NativeToolPropertyType(rawValue: rawType) else {
+            if let rawType = entry["type"] as? String, NativeToolPropertyType(rawValue: rawType) == nil {
                 throw NativeToolDeclarationError(
-                    reason: "Property '\(key)' uses unsupported type '\(rawType)'; use string or boolean")
+                    reason: "Property '\(key)' uses unsupported type '\(rawType)'; use string, boolean, integer or number",
+                    problem: .unsupportedType(field: key, type: rawType))
             }
-            properties.append(NativeToolProperty(
-                name: key, type: type, description: text(entry["description"])))
+            if let unknown = entry.keys.sorted().first(where: { !propertyKeywords.contains($0) }) {
+                throw NativeToolDeclarationError(
+                    reason: "Property '\(key)' uses '\(unknown)', which is not supported", problem: .unsupportedKeyword(unknown))
+            }
+            guard let rawType = entry["type"] as? String, let type = NativeToolPropertyType(rawValue: rawType) else {
+                throw NativeToolDeclarationError(reason: "Property '\(key)' needs a 'type'", problem: .badField(key))
+            }
+            var keywords: [String: NativeJSONValue] = [:]
+            for keyword in entry.keys.sorted() where keyword != "type" && keyword != "description" {
+                guard let raw = entry[keyword], let value = try? NativeJSONValue(any: raw),
+                      (try? NativeJSONSchema(.object(["type": .string(rawType), keyword: value]))) != nil else {
+                    throw NativeToolDeclarationError(
+                        reason: "Property '\(key)' has a '\(keyword)' value that can't be used", problem: .badValue(field: key, keyword: keyword))
+                }
+                keywords[keyword] = value
+            }
+            let property = NativeToolProperty(name: key, type: type, description: text(entry["description"]), keywords: keywords)
+            guard (try? NativeJSONSchema(.object(NativeToolDeclaration.entry(property)))) != nil else {
+                throw NativeToolDeclarationError(reason: "Property '\(key)' can't be checked as written", problem: .badField(key))
+            }
+            properties.append(property)
         }
         var required: [String] = []
         if let raw = schema["required"] {
             guard let names = raw as? [String] else {
                 throw NativeToolDeclarationError(
-                    reason: "'parameters.required' must be an array of strings")
+                    reason: "'parameters.required' must be an array of strings", problem: .badRequired)
             }
             for entry in names {
                 guard properties.contains(where: { $0.name == entry }) else {
                     throw NativeToolDeclarationError(
-                        reason: "'required' names '\(entry)', which is not a declared property")
+                        reason: "'required' names '\(entry)', which is not a declared property", problem: .badRequired)
                 }
             }
             required = names.sorted()
         }
         let endpoint = text(object["endpoint"])
         guard !endpoint.isEmpty else {
-            throw NativeToolDeclarationError(reason: "An 'endpoint' is required")
+            throw NativeToolDeclarationError(reason: "An 'endpoint' is required", problem: .missing("endpoint"))
         }
         guard let endpointURL = URL(string: endpoint) else {
-            throw NativeToolDeclarationError(reason: "'endpoint' is not a valid URL or path")
+            throw NativeToolDeclarationError(reason: "'endpoint' is not a valid URL or path", problem: .badEndpoint)
         }
         if let scheme = endpointURL.scheme?.lowercased() {
             guard scheme == "http" || scheme == "https" else {
                 throw NativeToolDeclarationError(
-                    reason: "'endpoint' must be an http or https URL, or a path")
+                    reason: "'endpoint' must be an http or https URL, or a path", problem: .badEndpoint)
             }
             guard endpointURL.host?.isEmpty == false else {
-                throw NativeToolDeclarationError(reason: "'endpoint' needs a host")
+                throw NativeToolDeclarationError(reason: "'endpoint' needs a host", problem: .badEndpoint)
             }
         }
         guard let rawMethod = object["method"] as? String,
               let method = NativeToolHTTPMethod(rawValue: rawMethod.uppercased()) else {
-            throw NativeToolDeclarationError(reason: "'method' must be \"GET\" or \"POST\"")
+            throw NativeToolDeclarationError(reason: "'method' must be \"GET\" or \"POST\"", problem: .badMethod)
         }
         guard let rawConfirmation = object["confirmation"] as? String,
               let confirmation = NativeToolConfirmation(rawValue: rawConfirmation.lowercased()) else {
             throw NativeToolDeclarationError(
-                reason: "'confirmation' must be \"none\" or \"required\"")
+                reason: "'confirmation' must be \"none\" or \"required\"", problem: .badConfirmation)
         }
         var timeout = defaultTimeoutSeconds
         if let raw = object["timeout_s"] {
             guard let number = raw as? NSNumber, !(raw is Bool) else {
-                throw NativeToolDeclarationError(reason: "'timeout_s' must be a number")
+                throw NativeToolDeclarationError(reason: "'timeout_s' must be a number", problem: .badTimeout)
             }
             let value = number.doubleValue
             guard value >= 1, value <= maximumTimeoutSeconds else {
                 throw NativeToolDeclarationError(
-                    reason: "'timeout_s' must be between 1 and \(Int(maximumTimeoutSeconds))")
+                    reason: "'timeout_s' must be between 1 and \(Int(maximumTimeoutSeconds))", problem: .badTimeout)
             }
             timeout = value
         }
         var enabled = true
         if let raw = object["enabled"] {
             guard let flag = raw as? Bool else {
-                throw NativeToolDeclarationError(reason: "'enabled' must be true or false")
+                throw NativeToolDeclarationError(reason: "'enabled' must be true or false", problem: .badEnabled)
             }
             enabled = flag
         }
@@ -533,30 +594,30 @@ enum NativeCapabilityTools {
         if let raw = object["json_fields"] {
             guard let mapping = raw as? [String: String] else {
                 throw NativeToolDeclarationError(
-                    reason: "'json_fields' must map a declared string field to a request body field")
+                    reason: "'json_fields' must map a declared string field to a request body field", problem: .badJSONFields)
             }
             guard method == .post else {
-                throw NativeToolDeclarationError(reason: "'json_fields' requires the POST method")
+                throw NativeToolDeclarationError(reason: "'json_fields' requires the POST method", problem: .badJSONFields)
             }
             var claimed: [String: String] = [:]
             for key in mapping.keys.sorted() {
                 let field = mapping[key] ?? ""
                 guard properties.contains(where: { $0.name == key && $0.type == .string }) else {
                     throw NativeToolDeclarationError(
-                        reason: "'json_fields' names '\(key)', which is not a declared string property")
+                        reason: "'json_fields' names '\(key)', which is not a declared string property", problem: .badJSONFields)
                 }
                 guard !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw NativeToolDeclarationError(
-                        reason: "'json_fields' needs a request body field name for '\(key)'")
+                        reason: "'json_fields' needs a request body field name for '\(key)'", problem: .badJSONFields)
                 }
                 if let existing = claimed[field] {
                     throw NativeToolDeclarationError(
-                        reason: "'json_fields' maps both '\(existing)' and '\(key)' onto the request body field '\(field)'")
+                        reason: "'json_fields' maps both '\(existing)' and '\(key)' onto the request body field '\(field)'", problem: .badJSONFields)
                 }
                 claimed[field] = key
                 if field != key, properties.contains(where: { $0.name == field }) {
                     throw NativeToolDeclarationError(
-                        reason: "'json_fields' sends '\(key)' as '\(field)', which would overwrite the declared property '\(field)'")
+                        reason: "'json_fields' sends '\(key)' as '\(field)', which would overwrite the declared property '\(field)'", problem: .badJSONFields)
                 }
             }
             jsonFields = mapping
@@ -564,40 +625,40 @@ enum NativeCapabilityTools {
         var sendsTo: [String]?
         if let raw = object["sends_to"] {
             guard let fields = raw as? [String] else {
-                throw NativeToolDeclarationError(reason: "'sends_to' must be a list of declared string fields, or an empty list for a tool that always sends to the same place")
+                throw NativeToolDeclarationError(reason: "'sends_to' must be a list of declared string fields, or an empty list for a tool that always sends to the same place", problem: .badSendsTo)
             }
             guard method == .post else {
-                throw NativeToolDeclarationError(reason: "'sends_to' requires the POST method")
+                throw NativeToolDeclarationError(reason: "'sends_to' requires the POST method", problem: .badSendsTo)
             }
             for field in fields {
                 guard properties.contains(where: { $0.name == field && $0.type == .string }) else {
                     throw NativeToolDeclarationError(
-                        reason: "'sends_to' names '\(field)', which is not a declared string property")
+                        reason: "'sends_to' names '\(field)', which is not a declared string property", problem: .badSendsTo)
                 }
             }
             guard Set(fields).count == fields.count else {
-                throw NativeToolDeclarationError(reason: "'sends_to' lists the same field twice")
+                throw NativeToolDeclarationError(reason: "'sends_to' lists the same field twice", problem: .badSendsTo)
             }
             sendsTo = fields
         }
         var verbs: [String] = []
         if let raw = object["verbs"] {
             guard let words = raw as? [String], !words.isEmpty, words.count <= 8 else {
-                throw NativeToolDeclarationError(reason: "'verbs' must be a list of one to eight action words, such as [\"send\", \"post\"]")
+                throw NativeToolDeclarationError(reason: "'verbs' must be a list of one to eight action words, such as [\"send\", \"post\"]", problem: .badVerbs)
             }
             guard !(method == .get && confirmation != .required) else {
-                throw NativeToolDeclarationError(reason: "'verbs' only applies to a tool that changes something, not one that only reads")
+                throw NativeToolDeclarationError(reason: "'verbs' only applies to a tool that changes something, not one that only reads", problem: .badVerbs)
             }
             for word in words {
                 guard (1...24).contains(word.count),
                       word.allSatisfy({ ("a"..."z").contains($0) || $0 == " " }),
                       word.first != " ", word.last != " ", !word.contains("  ") else {
                     throw NativeToolDeclarationError(
-                        reason: "'verbs' lists '\(word)', but each must be 1 to 24 lowercase letters, with single spaces between words")
+                        reason: "'verbs' lists '\(word)', but each must be 1 to 24 lowercase letters, with single spaces between words", problem: .badVerbs)
                 }
             }
             guard Set(words).count == words.count else {
-                throw NativeToolDeclarationError(reason: "'verbs' lists the same word twice")
+                throw NativeToolDeclarationError(reason: "'verbs' lists the same word twice", problem: .badVerbs)
             }
             verbs = words
         }

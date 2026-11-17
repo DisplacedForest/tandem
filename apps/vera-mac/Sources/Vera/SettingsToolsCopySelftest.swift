@@ -64,8 +64,43 @@ extension SelfTest {
                 source: "garden.json")
             try require(blank.summary == nil, "A blank summary counts as none")
         }
-        let hint = SettingsToolsCopy.failureHint("broken.json").lowercased()
-        try require(hint == "broken" && !banned.contains { hint.contains($0) }, "The hover for a tool file that couldn't load names the file plainly")
+        try require(SettingsToolsCopy.failureLine(file: "garden.json", problem: .unsupportedKeyword("pattern"))
+                    == "garden.json wasn't loaded. It uses \"pattern\", which Tandem can't check. Remove it and save.",
+                    "A file using a keyword Tandem can't check says which keyword to remove")
+        let pinned: [(NativeToolDeclarationProblem, String)] = [
+            (.unreadable, "garden.json wasn't loaded. Tandem couldn't open it. Check that the file can be read, then save it again."),
+            (.notJSON, "garden.json wasn't loaded. Tandem couldn't read what's in it. Check its brackets, commas and quotes, then save."),
+            (.duplicateName("water"), "garden.json wasn't loaded. Another file already uses the name \"water\". Rename one of them and save."),
+            (.reservedName("web_search"), "garden.json wasn't loaded. The name \"web_search\" belongs to a tool built into Tandem. Rename it and save."),
+            (.unsupportedType(field: "beds", type: "array"), "garden.json wasn't loaded. The field \"beds\" is \"array\", which Tandem can't check. Use string, boolean, integer or number, then save."),
+            (.badValue(field: "count", keyword: "minimum"), "garden.json wasn't loaded. The \"minimum\" on the field \"count\" isn't a value Tandem can use. Fix it and save."),
+            (.other, "garden.json wasn't loaded. Check the file and save it again."),
+        ]
+        for (problem, sentence) in pinned {
+            try require(SettingsToolsCopy.failureLine(file: "garden.json", problem: problem) == sentence, "A refused file reads plainly: \(sentence)")
+        }
+        let problems: [NativeToolDeclarationProblem] = [
+            .unreadable, .notJSON, .missing("description"), .badName, .badParameters, .badField("count"),
+            .unsupportedType(field: "beds", type: "object"), .unsupportedKeyword("format"), .badValue(field: "count", keyword: "enum"),
+            .badRequired, .badEndpoint, .badMethod, .badConfirmation, .badTimeout, .badEnabled, .badJSONFields, .badSendsTo, .badVerbs,
+            .duplicateName("water"), .reservedName("schedule_task"), .other,
+        ]
+        let internals = ["parameters.", "'", "property '", "json schema", "pointer", "#/", "nativetool", "problem", "reason", "\u{2014}"]
+        for problem in problems {
+            let failure = NativeToolDeclarationFailure(file: "/Users/someone/.config/tools/garden.json", reason: "Property 'count' uses 'format', which is not supported", problem: problem)
+            let line = SettingsToolsCopy.failureLine(failure)
+            try require(line.hasPrefix("garden.json wasn't loaded. ") && !line.contains("/") && !line.contains("\\"), "A refused file is named without its folder: \(line)")
+            try require(!line.contains(failure.reason), "A refused file never shows the loader's own wording: \(line)")
+            var plain = String(line.dropFirst("garden.json".count))
+            while let open = plain.firstIndex(of: "\""), let close = plain[plain.index(after: open)...].firstIndex(of: "\"") {
+                plain.removeSubrange(open...close)
+            }
+            let lowered = plain.lowercased().replacingOccurrences(of: "wasn't", with: "").replacingOccurrences(of: "can't", with: "")
+                .replacingOccurrences(of: "couldn't", with: "").replacingOccurrences(of: "isn't", with: "").replacingOccurrences(of: "what's", with: "")
+            for word in banned + internals {
+                try require(!lowered.contains(word), "A refused file's line never says '\(word)': \(line)")
+            }
+        }
         print("  settings tools copy OK (plain words, tab buttons, server tools hidden without a server, text for the assistant unchanged)")
     }
 }

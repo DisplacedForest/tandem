@@ -154,6 +154,8 @@ enum NativeMCPAuthoritySelftest {
         store.sendText("Read the failing synthetic service")
         try await NativeSessionFixture.eventually("Remote error was not recorded") { !store.generating && (store.conversations.first(where: { $0.id == errorConversation })?.messages.flatMap(\.toolActivities).count ?? 0) > priorActivities }
         try check(store.conversations.first(where: { $0.id == errorConversation })?.messages.flatMap(\.toolActivities).last?.state == .failed, "Remote MCP error displayed as success")
+        let reported = store.conversations.first(where: { $0.id == errorConversation })?.messages.flatMap(\.toolActivities).last?.result ?? ""
+        try check(reported.contains("Service-provided error text (untrusted): Synthetic remote failure"), "The service's own error did not reach the model with its label")
         try check(authority.access.snapshot()[0].connected, "Tool error closed a healthy connection")
         await fixture.configure()
         let staleTransport = NativeMCPChatFixture(name: name, beforeDispatch: {

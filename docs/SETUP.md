@@ -516,8 +516,10 @@ Chat tools beyond the built-ins are configuration, not code. Drop a JSON file in
 and the app loads it at startup and again whenever Settings saves. Each valid file becomes
 a native tool: a toggle appears in Settings, Tools, the model is offered the tool when it is
 enabled and available, calls execute over HTTP, and each call renders as an activity chip
-in chat like any other tool. A malformed file is skipped. Settings, Tools says one couldn't be loaded, and hovering
-that line shows which file.
+in chat like any other tool. A file that can't be loaded is skipped and its tool is never
+offered to the model. Settings, Tools shows a line for it that names the file and says what
+to change, for example: garden.json wasn't loaded. It uses "pattern", which Tandem can't
+check. Remove it and save.
 
 A declaration is one JSON object per file. For example, a tool over a home inventory
 service:
@@ -544,14 +546,21 @@ service:
 }
 ```
 
-- `name`: the unique function name the model calls.
+- `name`: the unique function name the model calls. A name already used by a tool built
+  into Tandem is refused, and so is a name another file already took.
 - `title`: the short label shown in Settings and in the activity chip.
 - `description`: what the tool does and when to use it, written for the model.
 - `summary`: optional. One short line for people, shown under the title in Settings,
   Tools. The `description` is never shown there. Without a `summary` the row shows the
   title alone.
-- `parameters`: a JSON Schema object. The supported subset is string and boolean
-  properties, plus `required` and `additionalProperties: false`.
+- `parameters`: a JSON Schema object with `type: "object"`, `properties`, an optional
+  `required` list and an optional `additionalProperties: false`. Each property has a
+  `type` of `string`, `boolean`, `integer` or `number`, and may also use `description`,
+  `enum`, `const`, `minLength`, `maxLength`, `minimum`, `maximum`, `default`, `title` and
+  `examples`. Arguments are checked against these before any request is sent, and a
+  string property without its own `minLength` must not be empty. A file that uses any
+  other keyword, inside a property or next to `properties` (for example `pattern`,
+  `format`, `items`, a nested object, `oneOf` or `$ref`), isn't loaded.
 - `endpoint`: an absolute URL, or a path starting with `/`, resolved against the
   configured vera-api base URL. A path-relative tool stays unavailable, and off the list in
   Settings, Tools, until that URL is set.
@@ -568,7 +577,7 @@ service:
 - `json_fields`: optional, POST only. Maps a declared string property to a request body
   field, and the string must then contain a JSON object, for example
   `"json_fields": {"filters_json": "filters"}`. This lets a tool accept a nested object
-  while the parameters stay within the string and boolean subset.
+  while the parameters stay within the supported subset.
 - `sends_to`: optional, POST only. Lists the declared string fields that say where a
   message goes, for example `"sends_to": ["to"]`. A field can hold several addresses
   separated by commas or semicolons. Leave the list empty, `"sends_to": []`, for a tool

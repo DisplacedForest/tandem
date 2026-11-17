@@ -460,6 +460,7 @@ final class ChatStore: ObservableObject {
 
     static var builtInToolNames: Set<String> {
         Set(buildToolRegistry([]).definitions.map(\.name)).union([NativeTaskTools.toolName]).union(NativeFolderTools.toolNames).union(NativeCommandTools.toolNames)
+            .union([NativeScheduleTools.toolName, NativeCompanionProfileTools.name]).union(CompanionTalkTools.names)
     }
 
     func reloadCapabilityTools(_ declarations: [NativeToolDeclaration]) {
