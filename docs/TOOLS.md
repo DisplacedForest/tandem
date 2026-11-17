@@ -70,11 +70,11 @@ For a call to `shelf_lookup` (titled "Look up a shelf") that leaves out its requ
 }
 ```
 
-For a call to `create_background_task` whose `title` is 231 letter t's, the sentence names the field, its limit and what was sent:
+For a call to `create_background_task` whose `title` runs to 231 characters, the sentence names the field, its limit and what was sent:
 
 ```json
 {
-  "action": "Write the document \"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt...\"",
+  "action": "Write the document \"Plans for the week, day by day, with everything that has to be bought, booked or...\"",
   "error": "The tool arguments are invalid: Field 'title' must be at most 200 characters, and this one has 231",
   "fault": "invalid_arguments",
   "fix": "Nothing ran. Correct the arguments and send this call again.",

@@ -551,7 +551,7 @@ extension SelfTest {
             posts.hit()
             return (Data(), 503)
         }
-        let service = NativeTaskHandoffService(repository: repository, client: client, configuredBase: { URL(string: "https://engine.test/api") })
+        let service = NativeTaskHandoffService(repository: repository, client: client, configuredBase: { URL(string: "https://work.test/api") })
         func tool() throws -> NativeToolDefinition {
             var handOff = NativeTaskTools.definition(service: service, origin: try NativeTaskFixture.origin(repository), profile: nil,
                                                      searchAvailable: { true }, didSave: { _ in saves.hit() })
@@ -620,7 +620,7 @@ extension SelfTest {
                         && started.state == .succeeded,
                         "\(item.label) is saved as a new piece of work: \(started.fields)")
         }
-        try require(posts.count == accepted.count, "Each saved piece of work was offered to the engine once")
+        try require(posts.count == accepted.count, "Each saved piece of work was offered for starting once")
 
         let refusedTotals: [(label: String, raw: String, message: String)] = try [
             ("A document over the limit", arguments("document", "Write a guide.", [String(repeating: "p", count: NativeResearchTaskRequest.documentInputCharacters - 14 + 5)]),
