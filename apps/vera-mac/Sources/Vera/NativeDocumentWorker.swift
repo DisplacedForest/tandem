@@ -139,17 +139,17 @@ enum NativeDocumentWorker {
                 return NativeTaskStepResult(state: .queued, checkpoint: try checkpoint.encoded(), event: "progress",
                                             data: try NativeTaskStore.canonical(payload))
             }
-            return try pause(&checkpoint, NativeTaskWorkerFailures.pauseMessage(failure.code, sections: checkpoint.phase != "outline"),
-                             cause: failure.code)
+            let reason = checkpoint.phase == "outline" && failure.code == "response_cut_short"
+                ? NativeTaskWorkerFailures.outlineCutShortMessage
+                : NativeTaskWorkerFailures.pauseMessage(failure.code, sections: checkpoint.phase != "outline")
+            return try pause(&checkpoint, reason, cause: failure.code)
         }
     }
 
     private static func shorten(_ checkpoint: inout NativeDocumentCheckpoint, binding: NativeTaskAdmissionBinding?) throws -> NativeTaskStepResult? {
         if checkpoint.phase == "outline" {
+            guard checkpoint.outlineAttempts < maximumShrinks else { return nil }
             checkpoint.outlineAttempts += 1
-            guard checkpoint.outlineAttempts < 3 else {
-                return try fail(&checkpoint, code: "input_limit", message: "The writing model could not fit a plan for this document. Start a new document with a shorter brief or fewer inputs.")
-            }
             checkpoint.outlineLimit = max(50, checkpoint.outlineLimit.map { $0 / 2 } ?? firstSectionCharacters(binding))
             checkpoint.attempt = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
             return try progress(checkpoint)

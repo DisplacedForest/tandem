@@ -34,7 +34,9 @@ struct NativeTaskProvider {
                ["none", "minimal", "low", "medium", "high"].contains(effort) { reasoning["effort"] = .string(effort) }
             if !reasoning.isEmpty { options.topLevel.append(.init(key: "reasoning", value: .object(reasoning), source: .saved)) }
         }
-        options.topLevel.append(.init(key: "max_tokens", value: .number(Double(binding.limits.maximumOutputTokens)), source: .override))
+        if let limit = NativeTaskConfiguration.outputLimit(config.options) {
+            options.topLevel.append(.init(key: "max_tokens", value: .number(Double(limit)), source: .saved))
+        }
         let bounded = NativeChatConfig(baseURL: binding.provider.base, apiKey: config.apiKey,
             model: binding.executionModel, chatTemplateKwargs: nil,
             streaming: false, options: options)
