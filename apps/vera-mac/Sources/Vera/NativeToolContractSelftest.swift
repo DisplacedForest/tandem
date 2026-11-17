@@ -265,6 +265,14 @@ extension SelfTest {
         let composedKey = NativeToolSchemaCache.exactKey(.object(["enum": .array([.string("\u{E9}")])]))
         let decomposedKey = NativeToolSchemaCache.exactKey(.object(["enum": .array([.string("e\u{301}")])]))
         try require(composedKey != decomposedKey, "Two schemas that differ only in how an accented letter is written never share a validator")
+        let entry: NativeJSONValue = .object(["type": .string("boolean")])
+        var eleven: [String: NativeJSONValue] = [String(repeating: "a", count: 110): entry]
+        for name in ["b", "c", "d", "e", "f", "g", "h", "i", "j", "k"] { eleven[name] = entry }
+        let longKey = String(repeating: "a", count: 1_110)
+        try require(NativeToolSchemaCache.exactKey(.object(eleven)) != NativeToolSchemaCache.exactKey(.object([longKey: entry])),
+                    "An object's entry count can never run into its first key's length")
+        try require(NativeToolSchemaCache.exactKey(.array([.number(1), .number(2)])) != NativeToolSchemaCache.exactKey(.array([.array([.number(1)]), .number(2)])),
+                    "Arrays of different shapes never share a key")
         let composed = NativeToolSchemaCache.shared.validator(.object(["type": .string("string"), "enum": .array([.string("\u{E9}")])]))
         let decomposed = NativeToolSchemaCache.shared.validator(.object(["type": .string("string"), "enum": .array([.string("e\u{301}")])]))
         try require(composed?.violation(.string("\u{E9}")) == nil && decomposed?.violation(.string("e\u{301}")) == nil

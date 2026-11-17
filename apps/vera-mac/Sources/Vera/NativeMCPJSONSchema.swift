@@ -420,11 +420,13 @@ final class NativeToolSchemaCache: @unchecked Sendable {
         case .array(let items):
             bytes.append(0x5B)
             bytes.append(contentsOf: String(items.count).utf8)
+            bytes.append(0x3A)
             for item in items { append(item, to: &bytes) }
             bytes.append(0x5D)
         case .object(let object):
             bytes.append(0x7B)
             bytes.append(contentsOf: String(object.count).utf8)
+            bytes.append(0x3A)
             for (key, item) in object.sorted(by: { $0.key.utf8.lexicographicallyPrecedes($1.key.utf8) }) {
                 append(key, to: &bytes)
                 append(item, to: &bytes)
