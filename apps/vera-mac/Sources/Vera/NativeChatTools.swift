@@ -292,22 +292,6 @@ struct NativeToolDefinition: Sendable {
                 }
             }
         }
-        for (name, value) in values {
-            guard case .object(let property) = properties[name],
-                  case .string(let type)? = property["type"] else { continue }
-            switch (type, value) {
-            case ("string", .string(let text)) where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-                break
-            case ("boolean", .bool):
-                break
-            case ("string", _):
-                throw NativeToolError.invalidArguments("Field '\(name)' must be a non-empty string")
-            case ("boolean", _):
-                throw NativeToolError.invalidArguments("Field '\(name)' must be a boolean")
-            default:
-                break
-            }
-        }
         return values
     }
 }
@@ -429,7 +413,7 @@ enum NativeRemindersTools {
                 id: toolID,
                 name: "apple_reminders_get_lists",
                 title: "List reminder lists",
-                description: "List available Apple Reminders lists by exact name. Use this first when the user names a list informally, including shopping or grocery list requests, then use the returned exact name. Never invent a list name.",
+                description: "Lists the person's Apple Reminders lists by their exact names. When to use: the exact name of a list is needed before reading or adding reminders and no earlier result in this conversation gave it, or the person wants to know which lists they have. When not to use: to see the reminders inside a list, use apple_reminders_list. Effects: read only; it changes nothing. Returns lists, each with an id and its exact name; pass that exact name as list to apple_reminders_list or apple_reminders_create, and never invent a list name. If it fails or returns no lists, say plainly that no reminder lists are available.",
                 parameters: objectSchema(properties: [:], required: []),
                 confirmation: .none,
                 effect: .read,
@@ -442,11 +426,13 @@ enum NativeRemindersTools {
                 id: toolID,
                 name: "apple_reminders_list",
                 title: "List reminders",
-                description: "Read the contents of an Apple Reminders list. Use this for natural requests such as what is on my shopping list. If the exact saved list name is unknown, call apple_reminders_get_lists first.",
+                description: "Reads reminders from Apple Reminders, from one list or from every list. When to use: the person wants to know what is on one of their lists or which reminders are open or done, or you need a reminder's id before marking it complete. When not to use: to add a reminder, use apple_reminders_create; to mark one done, use apple_reminders_complete. Effects: read only; it changes nothing. Prerequisite: list must name an existing list; call apple_reminders_get_lists first when the exact name is not known. Matching ignores letter case and a trailing word such as list or reminders. Returns reminders, each with id, title, notes, due, completed and list; answer from them and keep the id of any reminder that will be completed. If it says no list has that name, call apple_reminders_get_lists and retry once with an exact name.",
                 parameters: objectSchema(
                     properties: [
-                        "list": .object(["type": .string("string"), "description": .string("Optional reminder list name")]),
-                        "completed": .object(["type": .string("boolean"), "description": .string("Whether to list completed reminders")]),
+                        "list": .object(["type": .string("string"), "minLength": .number(1),
+                                         "description": .string("Exact name of the list to read, as returned by apple_reminders_get_lists. Omit it to read reminders from every list.")]),
+                        "completed": .object(["type": .string("boolean"),
+                                              "description": .string("true returns only completed reminders, false returns only open ones. Default false.")]),
                     ], required: []),
                 confirmation: .none,
                 effect: .read,
@@ -461,13 +447,17 @@ enum NativeRemindersTools {
                 id: toolID,
                 name: "apple_reminders_create",
                 title: "Create reminder",
-                description: "Create an Apple Reminder after an explicit chat request.",
+                description: "Adds one reminder to an Apple Reminders list. When to use: the person wants something added to one of their reminder lists or wants to be reminded of something themselves. When not to use: to read existing reminders, use apple_reminders_list; for research or a document that should be produced later or on a repeat, use schedule_task. Effects: creates one new reminder in the named list, with the first letter of its title capitalized; the app may ask the person first. Prerequisite: list must be an existing list name; call apple_reminders_get_lists first when it is not known. Returns reminder with its id, title, notes, due, completed and list; confirm it in one short sentence. If it fails because the list is unknown or the due value is malformed, retry once with a corrected value, otherwise say plainly that it could not be added.",
                 parameters: objectSchema(
                     properties: [
-                        "list": .object(["type": .string("string"), "description": .string("Exact reminder list name")]),
-                        "title": .object(["type": .string("string"), "description": .string("Reminder title")]),
-                        "notes": .object(["type": .string("string"), "description": .string("Optional notes")]),
-                        "due": .object(["type": .string("string"), "description": .string("Optional ISO 8601 date or date-time")]),
+                        "list": .object(["type": .string("string"), "minLength": .number(1),
+                                         "description": .string("Exact name of an existing reminders list, as returned by apple_reminders_get_lists.")]),
+                        "title": .object(["type": .string("string"), "minLength": .number(1),
+                                          "description": .string("The reminder itself, as one short line.")]),
+                        "notes": .object(["type": .string("string"), "minLength": .number(1),
+                                          "description": .string("Extra detail saved with the reminder. Omit when there is none.")]),
+                        "due": .object(["type": .string("string"), "minLength": .number(1),
+                                        "description": .string("When it is due: a date as YYYY-MM-DD, or a date and time with a time zone offset such as 2026-03-14T09:30:00-05:00. Omit for no due date.")]),
                     ], required: ["list", "title"]),
                 confirmation: .none,
                 effect: .write, action: .reminders,
@@ -488,10 +478,11 @@ enum NativeRemindersTools {
                 id: toolID,
                 name: "apple_reminders_complete",
                 title: "Complete reminder",
-                description: "Mark one Apple Reminder complete after an explicit chat request.",
+                description: "Marks one Apple Reminders reminder as completed. When to use: the person says a reminder is done or wants it checked off. When not to use: to find the reminder first, use apple_reminders_list; deleting a reminder or changing its text is not possible with these tools, so say so. Effects: sets that one reminder to completed; the app may ask the person first. Prerequisite: id must be the exact id from an apple_reminders_list result; never guess one. Returns reminder, the updated reminder. If no reminder has that id, call apple_reminders_list again and retry once with the id it returns, or ask the person which reminder they mean.",
                 parameters: objectSchema(
                     properties: [
-                        "id": .object(["type": .string("string"), "description": .string("Exact reminder identifier returned by the list tool")]),
+                        "id": .object(["type": .string("string"), "minLength": .number(1),
+                                       "description": .string("The exact id of the reminder, from an apple_reminders_list result.")]),
                     ], required: ["id"]),
                 confirmation: .none,
                 effect: .write, action: .reminders,

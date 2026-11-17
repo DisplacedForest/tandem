@@ -128,7 +128,7 @@ struct NativeMCPJSONSchema: Sendable {
     }
 
     private static func plain(_ number: Double) -> String {
-        number.rounded(.towardZero) == number && abs(number) < 1e15 ? String(Int(number)) : String(number)
+        number.rounded(.towardZero) == number && abs(number) < 1e18 ? String(Int(number)) : String(number)
     }
 
     private static func measure(_ value: NativeJSONValue, depth: Int, nodes: inout Int, bytes: inout Int) throws {

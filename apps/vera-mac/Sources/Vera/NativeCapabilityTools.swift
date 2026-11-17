@@ -91,6 +91,9 @@ struct NativeToolDeclaration: Equatable, Hashable, Sendable, Identifiable {
         var fields: [String: NativeJSONValue] = [:]
         for property in properties {
             var entry: [String: NativeJSONValue] = ["type": .string(property.type.rawValue)]
+            if property.type == .string {
+                entry["minLength"] = .number(1)
+            }
             if !property.description.isEmpty {
                 entry["description"] = .string(property.description)
             }
@@ -261,6 +264,11 @@ enum NativeCapabilityTools {
         arguments: [String: NativeJSONValue],
         base: URL?
     ) throws -> (target: URL, body: Data?) {
+        for name in arguments.keys.sorted() {
+            if case .string(let text)? = arguments[name], text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw NativeToolError.invalidArguments("Field '\(name)' must be a non-empty string")
+            }
+        }
         guard let endpoint = resolve(declaration, base: base) else {
             throw NativeToolError.unavailable
         }
@@ -626,7 +634,7 @@ enum NativeCapabilityTools {
         {
           "name": "actions_registry",
           "title": "List available actions",
-          "description": "List the action verbs this deployment can propose, with the arguments each one takes. Call this before proposing an action so the verb and arguments are real.",
+          "description": "Lists the actions the connected server can propose, with the arguments each one takes. When to use: before calling propose_action, to find a real verb and its arguments, or when the person wants to know which actions the server offers. When not to use: to carry out or propose anything, since this only reads. Effects: read only; it changes nothing. Returns verbs, each with verb, summary, args showing the shape of its arguments, risk, reversible and autonomous, and the server may add further catalog fields. Use only verbs and argument names from this result. If it fails, say plainly that the list of actions could not be loaded, and never guess a verb.",
           "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
           "endpoint": "/actions/registry",
           "method": "GET",
@@ -638,14 +646,14 @@ enum NativeCapabilityTools {
         {
           "name": "propose_action",
           "title": "Propose an action",
-          "description": "Propose an action for review. The verb must come from the action registry, and both title and body are required. Pass args_json as a JSON object string holding that verb's arguments, for example {\\"key\\": \\"value\\"}, when the verb takes any. The proposal is queued for a decision, not run.",
+          "description": "Proposes one action from the server's list for the person to approve or dismiss; nothing runs now. When to use: a specific action from that list is worth taking and the person should decide on it. When not to use: before actions_registry has given you the verb and its arguments in this conversation, so call it first; for something another tool here can do directly. Effects: the server checks the verb and arguments and, if they are valid, posts the proposal for the person's decision; the action runs only if the person approves it. Inputs: verb exactly as actions_registry lists it; args_json holding that verb's arguments as a JSON object written as a string, omitted when the verb takes none; a short title; and a body of one or two sentences on why it is worth doing. Returns ok and, on success, a preview with the risk and whether it can be reversed; when ok is false, error says what was wrong. If ok is false, fix the verb or arguments from actions_registry and retry once, otherwise tell the person it could not be proposed.",
           "parameters": {
             "type": "object",
             "properties": {
-              "verb": {"type": "string", "description": "An action verb returned by the action registry"},
-              "args_json": {"type": "string", "description": "A JSON object string holding the verb's arguments"},
-              "title": {"type": "string", "description": "Short headline for the proposal"},
-              "body": {"type": "string", "description": "One or two sentences explaining why the action is worth taking"}
+              "verb": {"type": "string", "description": "An action verb exactly as actions_registry lists it."},
+              "args_json": {"type": "string", "description": "The verb's arguments as a JSON object written as a string. Omit it when the verb takes none."},
+              "title": {"type": "string", "description": "A short headline for the proposal."},
+              "body": {"type": "string", "description": "One or two sentences on why the action is worth taking."}
             },
             "required": ["verb", "title", "body"],
             "additionalProperties": false
@@ -661,13 +669,13 @@ enum NativeCapabilityTools {
         {
           "name": "author_skill",
           "title": "Write a skill",
-          "description": "Write or replace a named skill document. Use this only when asked to capture a repeatable procedure.",
+          "description": "Proposes saving a named skill, a stored set of step-by-step instructions that can be followed again later, or replacing the skill with that name. When to use: the person wants a repeatable procedure kept so it can be reused. When not to use: a one-off answer or a preference, which you handle in the conversation; a document meant for reading, which create_background_task writes when it is offered. Effects: the app asks the person first, and the server then holds the change for approval before the skill is saved; a skill with the same name is replaced. Inputs: name, the full content, and optionally a one-line description. Returns proposed and a preview of the change. If it fails, say plainly that the skill could not be saved.",
           "parameters": {
             "type": "object",
             "properties": {
-              "name": {"type": "string", "description": "Skill name"},
-              "content": {"type": "string", "description": "Full skill body"},
-              "description": {"type": "string", "description": "One line summary of what the skill covers"}
+              "name": {"type": "string", "description": "The skill's name. A skill with the same name is replaced."},
+              "content": {"type": "string", "description": "The full text of the skill: the steps to follow, in order."},
+              "description": {"type": "string", "description": "One line summing up what the skill covers. Optional."}
             },
             "required": ["name", "content"],
             "additionalProperties": false

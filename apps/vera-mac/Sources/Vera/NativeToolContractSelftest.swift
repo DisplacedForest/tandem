@@ -127,12 +127,14 @@ extension SelfTest {
             (#"{"title":"Plan","tags":["a",3]}"#, "Field 'tags' has an item that does not match its schema", "A list holding a number among strings is refused"),
             (#"["Plan"]"#, "Expected a JSON object", "A JSON list in place of an object is refused"),
             ("not json", "Expected a JSON object", "Text that is not JSON is refused"),
-            (#"{"title":"   "}"#, "Field 'title' must be a non-empty string", "A blank title is still refused after the schema check"),
+            (#"{"title":""}"#, "Field 'title' must be a non-empty string", "An empty title is refused by its declared minimum length"),
         ]
         for item in refused {
             let message = refusal(item.raw)
             try require(message == item.message, "\(item.label) with the message \(item.message), not \(message ?? "no refusal")")
         }
+        try require(refusal(#"{"title":"   "}"#) == nil,
+                    "A title of spaces meets the declared minimum length, so the schema alone decides and the tool's own check handles blank text")
 
         var own = contractTool("garden_service", parameters: declared)
         own.argumentValidator = { values in
@@ -204,6 +206,62 @@ extension SelfTest {
         try require(together.issues.isEmpty && together.definitions.count == shipped.count,
                     "All shipped tools taken together are kept by the registry with no issue")
         try require(shipped.count == 27, "Every shipped tool family that can be built here was checked: \(shipped.count) tools")
-        print("  native tool contract OK (registry rules, schema-declared validation messages, \(shipped.count) shipped tools and \(variants.count) variants pass the registry)")
+
+        let stems: [[String]] = [["ta", "sk"], ["back", "ground"], ["work", "er"], ["ag", "ent"], ["eng", "ine"]]
+        var listed: Set<String> = ["ve" + "ra"]
+        for stem in stems {
+            listed.insert(stem.joined())
+            listed.insert(stem.joined() + "s")
+        }
+        func words(_ text: String) -> [String] {
+            var found: [String] = []
+            var current = ""
+            for character in text {
+                if character.isLetter || character.isNumber || character == "_" {
+                    current.append(character)
+                } else if !current.isEmpty {
+                    found.append(current.lowercased())
+                    current = ""
+                }
+            }
+            if !current.isEmpty { found.append(current.lowercased()) }
+            return found
+        }
+        for definition in shipped {
+            let text = definition.description
+            try require(text.contains("When to use:"), "\(definition.name) says when to use it")
+            try require(text.utf8.count <= 4096, "\(definition.name) keeps its description within 4096 bytes, not \(text.utf8.count)")
+            let hits = words(text).filter { listed.contains($0) }
+            try require(hits.isEmpty, "\(definition.name) describes itself in plain words, without \(hits)")
+            try require(!text.contains("\u{2014}"), "\(definition.name) has no em dash in its description")
+            guard case .object(let root) = definition.parameters else {
+                throw NativeTaskFixture.Failure.assertion("\(definition.name) declares an object schema")
+            }
+            let properties: [String: NativeJSONValue]
+            if case .object(let declared)? = root["properties"] { properties = declared } else { properties = [:] }
+            for (key, property) in properties.sorted(by: { $0.key < $1.key }) {
+                guard case .object(let fields) = property else {
+                    throw NativeTaskFixture.Failure.assertion("\(definition.name) declares \(key) as an object")
+                }
+                var described = false
+                if case .string(let note)? = fields["description"] {
+                    described = !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+                try require(described, "\(definition.name) explains its \(key) field")
+                if fields["type"] == .string("string") {
+                    try require(fields["minLength"] != nil, "\(definition.name) says whether its \(key) field may be empty")
+                }
+            }
+        }
+
+        let section = NativeContextAssembler.toolsSection(shipped)
+        for definition in shipped {
+            try require(!section.contains(definition.description), "The prompt's tool list leaves out the description of \(definition.name)")
+            try require(section.contains("- \(definition.name) (\"\(NativeContextAssembler.plainName(for: definition))\")"),
+                        "The prompt's tool list names \(definition.name) with its plain name")
+        }
+        try require(section.count < NativeContextAssembler.Caps.tools,
+                    "The prompt's tool list for every shipped tool fits under its cap: \(section.count) characters")
+        print("  native tool contract OK (registry rules, schema-declared validation messages, \(shipped.count) shipped tools and \(variants.count) variants pass the registry, every shipped description says when to use it in plain words within 4096 bytes, every field is explained and says whether it may be empty, and the prompt lists tools by name only within its cap)")
     }
 }

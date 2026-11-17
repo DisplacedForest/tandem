@@ -146,7 +146,8 @@ extension ChatStore {
             parameters: .object(["type": .string("object"), "additionalProperties": .bool(false),
                                  "required": .array([.string("item")]),
                                  "properties": .object(["item": .object(["type": .string("string"), "minLength": .number(1),
-                                                                         "maxLength": .number(Double(CompanionTalkTools.handleLimit))])])]),
+                                                                         "maxLength": .number(Double(CompanionTalkTools.handleLimit)),
+                                                                         "description": .string("The item code of the entry to stop, exactly as given in the list of your work.")])])]),
             confirmation: .none, timeout: toolTimeout, effect: .read, isAvailable: { true },
             execute: { [weak self] arguments in
                 guard Set(arguments.keys) == ["item"], let handle = CompanionTalkTools.text(arguments, "item", limit: CompanionTalkTools.handleLimit) else {
@@ -188,9 +189,11 @@ extension ChatStore {
                                  "required": .array([.string("item"), .string("answer")]),
                                  "properties": .object([
                                     "item": .object(["type": .string("string"), "minLength": .number(1),
-                                                     "maxLength": .number(Double(CompanionTalkTools.handleLimit))]),
+                                                     "maxLength": .number(Double(CompanionTalkTools.handleLimit)),
+                                                     "description": .string("The item code of the entry whose question is being answered, exactly as given in the list of your work.")]),
                                     "answer": .object(["type": .string("string"), "minLength": .number(1),
-                                                       "maxLength": .number(Double(CompanionTalkTools.answerLimit))]),
+                                                       "maxLength": .number(Double(CompanionTalkTools.answerLimit)),
+                                                       "description": .string("One of the answers listed for that entry, written as listed.")]),
                                  ])]),
             confirmation: .none, timeout: toolTimeout, effect: .read, isAvailable: { true },
             execute: { [weak self] arguments in

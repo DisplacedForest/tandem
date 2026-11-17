@@ -82,7 +82,7 @@ extension SelfTest {
         try require(store.turnToolIDs(for: "no tools please @Search the web Swift").isEmpty, "A no-tools instruction still wins over a mention")
 
         let plain = NativeTurnToolAuthority("tell me about tea")
-        try require(!plain.allowsResearch, "Plain text does not authorize research")
+        try require(plain.allowsResearch, "Offering research does not depend on the wording of the message")
         let mentioned = NativeTurnToolAuthority("@Research tea", mentions: [NativeWebTools.researchToolID])
         try require(mentioned.allowsResearch, "A research mention authorizes research")
         try require(mentioned.filter([NativeWebTools.researchToolID, NativeTaskTools.toolID]) == [NativeWebTools.researchToolID, NativeTaskTools.toolID], "Research tools pass the filter when mentioned")

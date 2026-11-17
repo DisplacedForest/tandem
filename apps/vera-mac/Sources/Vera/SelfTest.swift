@@ -892,7 +892,8 @@ enum SelfTest {
         guard tools.count >= 2, toolLines.count == tools.count,
               first.sections[3].content.contains("Never say a function name to the user."),
               zip(tools, toolLines).allSatisfy({ tool, line in
-                  line.hasPrefix("- \(tool.name) (\"\(NativeContextAssembler.plainTitle(tool.title))\"): ")
+                  let head = "- \(tool.name) (\"\(NativeContextAssembler.plainTitle(tool.title))\")"
+                  return (line == head || line == head + " Requires in-app confirmation before it runs.")
                       && !NativeContextAssembler.plainTitle(tool.title).isEmpty
               }) else {
             print("SELFTEST ERROR: native context tool lines \(toolLines)"); exit(1)
@@ -913,8 +914,9 @@ enum SelfTest {
         var titled = input
         titled.tools = [quoted, untitled]
         let titledTools = NativeContextAssembler.assemble(titled).sections.first(where: { $0.name == "tools" })?.content ?? ""
-        guard titledTools.contains("- garden_log_post (\"Post to the garden log\"): Post a note Requires in-app confirmation before it runs."),
-              titledTools.contains("- garden_log_read (\"Garden log read\"): Read the log"),
+        guard titledTools.contains("- garden_log_post (\"Post to the garden log\") Requires in-app confirmation before it runs."),
+              titledTools.contains("- garden_log_read (\"Garden log read\")"),
+              !titledTools.contains("Post a note"), !titledTools.contains("Read the log"),
               NativeContextAssembler.plainTitle("Post\u{22}\u{301} it \u{201C}now\u{201D}") == "Post\u{301} it now",
               !NativeContextAssembler.plainTitle("a\u{22}\u{301}b").unicodeScalars.contains("\u{22}") else {
             print("SELFTEST ERROR: native context tool titles \(titledTools)"); exit(1)
