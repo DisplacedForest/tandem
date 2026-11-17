@@ -97,8 +97,11 @@ extension ChatStore {
     }
 
     func projectFolders(_ id: String, edited: [FolderGrant], opened: Set<String>) -> [FolderGrant] {
-        let current = Set(project(id)?.grants.map(\.id) ?? [])
-        return edited.filter { !opened.contains($0.id) || current.contains($0.id) }
+        let saved = Dictionary((project(id)?.grants ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return edited.compactMap { grant in
+            if let now = saved[grant.id] { return now }
+            return opened.contains(grant.id) ? nil : grant
+        }
     }
 
     @discardableResult

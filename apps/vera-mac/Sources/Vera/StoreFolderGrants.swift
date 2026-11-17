@@ -477,7 +477,37 @@ extension ChatStore {
     }
 
     var sharedFolderRows: [SharedFolderRow] {
-        SharedFolderRows.rows(conversations: conversations, projects: projects, companionThreadID: veraThreadID, name: companionName)
+        let known = folderStates
+        return SharedFolderRows.rows(conversations: conversations, projects: projects, companionThreadID: veraThreadID, name: companionName,
+                                     availability: { known[Self.folderStateKey($0)] ?? .usable })
+    }
+
+    nonisolated static func folderStateKey(_ grant: FolderGrant) -> String { grant.id + "|" + grant.path }
+
+    nonisolated static func folderStates(_ grants: [FolderGrant]) -> [String: FolderAvailability] {
+        var states: [String: FolderAvailability] = [:]
+        for grant in grants { states[folderStateKey(grant)] = grant.availability }
+        return states
+    }
+
+    var everySharedFolder: [FolderGrant] { conversations.flatMap(\.grants) + projects.flatMap(\.grants) }
+
+    func folderState(_ grant: FolderGrant) -> FolderAvailability { folderStates[Self.folderStateKey(grant)] ?? .usable }
+
+    func checkSharedFoldersNow() {
+        let next = Self.folderStates(everySharedFolder)
+        if next != folderStates { folderStates = next }
+    }
+
+    func checkSharedFolders() {
+        let grants = everySharedFolder
+        Task.detached(priority: .utility) { [weak self] in
+            let next = ChatStore.folderStates(grants)
+            await MainActor.run { [weak self] in
+                guard let self, next != self.folderStates else { return }
+                self.folderStates = next
+            }
+        }
     }
 
     @discardableResult
@@ -508,8 +538,8 @@ extension ChatStore {
         }
         func placed(_ grants: [FolderGrant], _ grantID: String) -> [FolderGrant]? {
             guard let index = grants.firstIndex(where: { $0.id == grantID }) else { return nil }
-            let others = grants.filter { $0.id != grantID }
-            guard !others.contains(where: { NativeFolderAccess.contains(root: $0.path, path: chosen.path) || NativeFolderAccess.contains(root: chosen.path, path: $0.path) }) else {
+            let others = grants.filter { $0.id != grantID }.flatMap { [$0.path] + ($0.current().map { [$0.path] } ?? []) }
+            guard !others.contains(where: { NativeFolderAccess.contains(root: $0, path: chosen.path) || NativeFolderAccess.contains(root: chosen.path, path: $0) }) else {
                 rulesNotice = SharedFolderRows.alreadyShared(chosen.name)
                 return nil
             }
@@ -540,6 +570,7 @@ extension ChatStore {
             if !saved { projectError = projectLine }
         }
         if saved {
+            checkSharedFolders()
             if rulesNotice == SharedFolderRows.notMoved || rulesNotice == SharedFolderRows.failed { rulesNotice = nil }
         } else {
             rulesNotice = SharedFolderRows.notMoved

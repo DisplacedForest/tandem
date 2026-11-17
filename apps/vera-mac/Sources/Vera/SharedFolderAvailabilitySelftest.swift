@@ -157,6 +157,33 @@ extension SelfTest {
                     "A folder in the Trash can't be found, and nothing is written into the Trash: \(binnedWrite)")
         try manager.moveItem(at: binned, to: renamed)
         try require(wandering.availability == .usable && NativeFolderAccess(grants: [wandering]).roots.count == 1, "Putting the folder back restores the share")
+        let binnedAgain = bin.appendingPathComponent("Wandered", isDirectory: true)
+        try manager.moveItem(at: renamed, to: binnedAgain)
+        try manager.createSymbolicLink(atPath: renamed.path, withDestinationPath: binnedAgain.path)
+        let throughLink = try await failure(NativeFolderTools.writeName, [wandering], ["path": .string("note.txt"), "content": .string("x")])
+        try require(wandering.availability == .missing && throughLink.hasPrefix("The shared folder Wandering can't be found.")
+                    && (try manager.contentsOfDirectory(atPath: binnedAgain.path)).isEmpty,
+                    "A link at the saved place that points into the Trash does not bring the share back: \(throughLink)")
+        var followed = wandering
+        followed.path = renamed.path
+        do {
+            _ = try NativeFolderIO.openRoot(followed)
+            throw NativeTaskFixture.Failure.assertion("A folder whose real place is the Trash must not open")
+        } catch let error as NativeFolderAccessError {
+            guard case .unavailable(_, _, .missing) = error else { throw NativeTaskFixture.Failure.assertion("Opening through the link says missing: \(error)") }
+        }
+        try manager.removeItem(atPath: renamed.path)
+        try manager.moveItem(at: binnedAgain, to: renamed)
+
+        let whole = try FolderGrant.make(url: base)
+        let underBin = bin.appendingPathComponent("dropped.txt").path
+        let binSentence = "\(underBin) is in the Trash, which the file tools leave alone."
+        let intoBin = try await failure(NativeFolderTools.writeName, [whole], ["path": .string(underBin), "content": .string("x")])
+        let listBin = try await failure(NativeFolderTools.listName, [whole], ["path": .string(bin.path)])
+        try require(intoBin == binSentence && listBin == "\(bin.path) is in the Trash, which the file tools leave alone."
+                    && !manager.fileExists(atPath: underBin),
+                    "Sharing a parent folder does not reach into its Trash: \(intoBin)")
+
         try require(FolderGrant.inTrash("/home/.Trash/Plans") && FolderGrant.inTrash("/Volumes/Storage/.Trashes/501/Plans")
                     && !FolderGrant.inTrash("/home/Trash/Plans") && !FolderGrant.inTrash("/home/.Trash-notes/Plans"),
                     "Only a real Trash folder counts")
@@ -175,7 +202,8 @@ extension SelfTest {
                     "The row's second line carries the state after the place")
         let banned = ["grant", "bookmark", "identity", "inode", "\u{2014}"]
         let sentences = [missingSentence, awaySentence, closedSentence, fixedSentence, SharedFolderRows.chooseAgain, SharedFolderRows.choosePrompt,
-                         SharedFolderRows.notMoved, SharedFolderRows.alreadyShared("Seedlings")]
+                         SharedFolderRows.notMoved, SharedFolderRows.alreadyShared("Seedlings"),
+                         NativeFolderAccessError.inTrash("/home/.Trash/a.txt").errorDescription ?? ""]
             + FolderAvailability.notes.compactMap(\.rowNote) + FolderAvailability.notes.compactMap { $0.chipNote("Seedlings") }
         for sentence in sentences {
             for word in banned where sentence.range(of: word, options: .caseInsensitive) != nil && !base.path.localizedCaseInsensitiveContains(word) {
@@ -209,7 +237,10 @@ extension SelfTest {
             store.conversations.insert(conversation, at: 0)
             store.refreshConversationGrants(id)
         }
-        func row(_ id: String) -> SharedFolderRow? { store.sharedFolderRows.first { $0.id == id } }
+        func row(_ id: String) -> SharedFolderRow? {
+            store.checkSharedFoldersNow()
+            return store.sharedFolderRows.first { $0.id == id }
+        }
         func access(_ id: String) -> NativeFolderAccess { NativeFolderAccess(grants: store.nativeGrantSource.grants(for: id)) }
         func refused(_ id: String, _ path: String) -> NativeFolderAccessError? {
             do { _ = try access(id).locate(path); return nil } catch { return error as? NativeFolderAccessError }
@@ -222,6 +253,9 @@ extension SelfTest {
         try require(row(rowID)?.state == .usable && row(rowID)?.spoken(name: nil) == "Shared with the chat Folder check" && refused("a-check", "a.txt") == nil,
                     "A usable folder reads the same in the row and to the file tools")
         try manager.removeItem(atPath: scratch.path)
+        try require(store.sharedFolderRows.first { $0.id == rowID }?.state == .usable && store.folderState(scratch) == .usable
+                    && refused("a-check", "a.txt") == .unavailable(name: "tandem-scratch", path: scratch.path, state: .missing),
+                    "Before the next check the row still shows the last known state, and the file tools refuse on their own check")
         guard let missing = row(rowID) else { throw NativeTaskFixture.Failure.assertion("A missing folder keeps its row") }
         try require(missing.title == "tandem-scratch" && missing.state == .missing && missing.state.canChooseAgain
                     && missing.spoken(name: nil) == "Shared with the chat Folder check. Can't be found."
@@ -255,6 +289,22 @@ extension SelfTest {
                     "The share now points only at the chosen folder, checked like a new share: \(chosen)")
         try require(try repository.inner.listConversations().first { $0.id == "a-check" }?.grants == chosen, "The chosen folder is saved")
 
+        let guarded = try FolderGrant.make(url: try folder("Guarded"))
+        var readOnly = guarded
+        readOnly.readOnly = true
+        let stray = try FolderGrant.make(url: try folder("Stray"))
+        try add("a-guard", "Guarded chat", [readOnly, stray])
+        let guardedMoved = base.appendingPathComponent("Guarded moved", isDirectory: true)
+        try manager.moveItem(atPath: guarded.path, toPath: guardedMoved.path)
+        try manager.createDirectory(at: guardedMoved.appendingPathComponent("inner"), withIntermediateDirectories: true)
+        try manager.removeItem(atPath: stray.path)
+        guard let strayRow = row("chat|a-guard|\(stray.id)") else { throw NativeTaskFixture.Failure.assertion("The stray folder is listed") }
+        try require(row("chat|a-guard|\(readOnly.id)")?.state == .usable, "A renamed read only folder is still followed")
+        try require(!store.chooseAgain(strayRow, url: guardedMoved.appendingPathComponent("inner"))
+                    && store.rulesNotice == SharedFolderRows.alreadyShared("inner")
+                    && store.conversations.first { $0.id == "a-guard" }?.grants == [readOnly, stray],
+                    "Choosing a folder inside where a read only share now really is gets refused")
+
         guard let project = store.createProject(name: "Spring garden") else { throw NativeTaskFixture.Failure.assertion("The project saves") }
         let plans = try FolderGrant.make(url: try folder("Plans"))
         try require(store.saveProjectEdits(project.id, name: project.name, instructions: "", grants: [plans]), "The project folder saves")
@@ -270,6 +320,13 @@ extension SelfTest {
         let plansAgain = try folder("Plans again")
         try require(store.chooseAgain(projectRow, url: plansAgain) && row(projectRowID)?.state == .usable && refused("a-member", "a.txt") == nil
                     && store.project(project.id)?.grants.map(\.id) == [plans.id], "Choosing a project's folder again restores it for its chats")
+        let editorKept = store.projectFolders(project.id, edited: [plans], opened: [plans.id])
+        try require(editorKept.map(\.id) == [plans.id] && editorKept.first?.path == plansAgain.resolvingSymlinksInPath().path,
+                    "A project editor that was already open takes the recovered location, not the one it opened with: \(editorKept)")
+        let added = try FolderGrant.make(url: try folder("Added in editor"))
+        try require(store.projectFolders(project.id, edited: [plans, added], opened: [plans.id]).map(\.id) == [plans.id, added.id]
+                    && store.projectFolders(project.id, edited: [FolderGrant(id: "dropped", path: "/nowhere/dropped")], opened: ["dropped"]).isEmpty,
+                    "The editor still keeps a folder it added and drops one that was removed elsewhere")
         try manager.removeItem(at: plansAgain)
         guard let again = row(projectRowID) else { throw NativeTaskFixture.Failure.assertion("The project row is still listed") }
         try require(store.stopSharing(again) && row(projectRowID) == nil && refused("a-member", "a.txt") == .noGrants,

@@ -282,7 +282,9 @@ struct RulesSettingsTab: View {
             if startsClosed { advanced.leave() }
             store.sweepRuleRecords()
             refresh()
+            store.checkSharedFolders()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.checkSharedFolders() }
         .onReceive(NotificationCenter.default.publisher(for: .ruleRecordsChanged).receive(on: RunLoop.main)) { _ in refresh() }
         .onChange(of: store.conversations.map(\.title)) { _, _ in refresh() }
         .onChange(of: config.nativeSettings.rules) { _, _ in refresh() }

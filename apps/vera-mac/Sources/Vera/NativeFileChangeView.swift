@@ -16,7 +16,7 @@ struct FolderGrantChips: View {
     let grants: [FolderGrant]
     var unsupported: String? = nil
     var onRemove: (String) -> Void
-    var availability: (FolderGrant) -> FolderAvailability = { $0.availability }
+    var availability: (FolderGrant) -> FolderAvailability = { _ in .usable }
     @Environment(\.renderSafe) private var renderSafe
 
     private var chips: some View {

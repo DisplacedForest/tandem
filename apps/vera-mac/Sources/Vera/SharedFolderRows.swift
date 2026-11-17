@@ -103,7 +103,7 @@ enum SharedFolderRows {
     }
 
     static func rows(conversations: [Conversation], projects: [ProjectRecord], companionThreadID: String?, name: String?,
-                     availability: (FolderGrant) -> FolderAvailability = { $0.availability }) -> [SharedFolderRow] {
+                     availability: (FolderGrant) -> FolderAvailability = { _ in .usable }) -> [SharedFolderRow] {
         var pending: [(grant: FolderGrant, sentence: CompanionLine, kind: SharedFolderRow.Kind, id: String, place: String)] = []
         for conversation in conversations {
             let companion = conversation.id == companionThreadID

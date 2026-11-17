@@ -76,6 +76,10 @@ enum NativeFolderIO {
         if let identity = grant.identity {
             guard NativeFolderIdentity.of(descriptor: fd) == identity else { throw NativeFolderAccessError.gone(grant, .missing) }
         }
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        if fcntl(fd, F_GETPATH, &buffer) == 0, FolderGrant.inTrash(String(cString: buffer)) {
+            throw NativeFolderAccessError.gone(grant, .missing)
+        }
         return descriptor
     }
 

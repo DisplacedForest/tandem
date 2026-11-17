@@ -96,8 +96,14 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
         path.split(separator: "/", omittingEmptySubsequences: true).contains { $0 == ".Trash" || $0 == ".Trashes" }
     }
 
+    static func real(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
     private static func reachable(_ grant: FolderGrant) -> (grant: FolderGrant?, state: FolderAvailability) {
-        if inTrash(grant.path) { return (nil, .missing) }
+        if inTrash(grant.path) || inTrash(real(grant.path)) { return (nil, .missing) }
         return access(grant.path, R_OK | X_OK) == 0 ? (grant, .usable) : (nil, .denied)
     }
 
@@ -153,6 +159,7 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
     case readOnly(String)
     case unavailable(name: String, path: String, state: FolderAvailability)
     case unchangeable(String)
+    case inTrash(String)
 
     static func gone(_ grant: FolderGrant, _ state: FolderAvailability) -> NativeFolderAccessError {
         .unavailable(name: grant.name, path: grant.path, state: state)
@@ -178,6 +185,7 @@ enum NativeFolderAccessError: Error, LocalizedError, Equatable {
             case .missing, .usable:
                 return "The shared folder \(name) can't be found. It was at \(path) and may have been moved, renamed or deleted. It's still shared with this chat. Put it back, or choose it again in Settings, Rules."
             }
+        case .inTrash(let path): return "\(path) is in the Trash, which the file tools leave alone."
         case .unchangeable(let name): return "\(name) can be read but not changed. The folder or its drive doesn't allow changes."
         }
     }
@@ -267,6 +275,7 @@ struct NativeFolderAccess: Sendable {
         if let best = matches.max(by: { $0.root.path.count < $1.root.path.count }) {
             let relative = String(best.path.dropFirst(best.root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
             guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
+            guard !relative.contains(where: { $0 == ".Trash" || $0 == ".Trashes" }) else { throw NativeFolderAccessError.inTrash(requested) }
             return NativeFolderLocation(root: best.root, components: relative)
         }
         for candidate in candidates {

@@ -28,7 +28,10 @@ enum RulesShot {
         if variant == "rules-saved-kind" { store.addRuleRecord(RuleOffer.record(.fileEdits, conversationID: "rules-greenhouse")) }
         if variant == "rules-saved-literal" { seedLiteral(store, root: directory.path) }
         if variant == "rules-shared" || showsSharingInfo { seedShared(store, root: directory.path) }
-        if variant == "rules-shared-states" { seedStates(store, root: directory.path) }
+        if variant == "rules-shared-states" {
+            seedStates(store, root: directory.path)
+            store.checkSharedFoldersNow()
+        }
         let opened = showsMenu ? store.ruleRows().first(where: { $0.widenQuestion != nil }) : nil
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
         var advanced = RulesAdvancedState()
