@@ -696,7 +696,8 @@ extension SelfTest {
         let full: String = "under \(NativeDocumentWorker.sectionCharacters) characters"
         let half: String = "under \(NativeDocumentWorker.sectionCharacters / 2) characters"
         try require(systems.count == 3, "The plan was asked for three times")
-        let firstOpen: Bool = !systems[0].contains("under")
+        let firstMessage: String? = tries[0].messages.first?.content
+        let firstOpen: Bool = firstMessage.map { !$0.contains("under") } ?? false
         let secondFull: Bool = systems[1].contains(full)
         let thirdHalf: Bool = systems[2].contains(half)
         try require(firstOpen && secondFull && thirdHalf, "The plan is asked for again shorter twice before pausing")
