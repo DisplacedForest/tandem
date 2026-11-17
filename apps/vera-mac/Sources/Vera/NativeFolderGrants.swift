@@ -92,8 +92,13 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
         return String(parts[1])
     }
 
+    static func inTrash(_ path: String) -> Bool {
+        path.split(separator: "/", omittingEmptySubsequences: true).contains { $0 == ".Trash" || $0 == ".Trashes" }
+    }
+
     private static func reachable(_ grant: FolderGrant) -> (grant: FolderGrant?, state: FolderAvailability) {
-        access(grant.path, R_OK | X_OK) == 0 ? (grant, .usable) : (nil, .denied)
+        if inTrash(grant.path) { return (nil, .missing) }
+        return access(grant.path, R_OK | X_OK) == 0 ? (grant, .usable) : (nil, .denied)
     }
 
     func resolved() -> (grant: FolderGrant?, state: FolderAvailability) {

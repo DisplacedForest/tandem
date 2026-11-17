@@ -142,6 +142,25 @@ extension SelfTest {
                         "A folder that vanishes between the check and the write is reported missing and nothing is created: \(error)")
         }
 
+        let wandering = try FolderGrant.make(url: try folder("Wandering"))
+        let renamed = base.appendingPathComponent("Wandered", isDirectory: true)
+        try manager.moveItem(atPath: wandering.path, toPath: renamed.path)
+        try require(wandering.availability == .usable && NativeFolderAccess(grants: [wandering]).roots.map(\.path) == [renamed.resolvingSymlinksInPath().path],
+                    "A folder renamed on the same drive is still followed")
+        let bin = try folder(".Trash")
+        let binned = bin.appendingPathComponent("Wandered", isDirectory: true)
+        try manager.moveItem(at: renamed, to: binned)
+        let binnedWrite = try await failure(NativeFolderTools.writeName, [wandering], ["path": .string("note.txt"), "content": .string("x")])
+        try require(wandering.availability == .missing && NativeFolderAccess(grants: [wandering]).roots.isEmpty
+                    && binnedWrite.hasPrefix("The shared folder Wandering can't be found.")
+                    && (try manager.contentsOfDirectory(atPath: binned.path)).isEmpty,
+                    "A folder in the Trash can't be found, and nothing is written into the Trash: \(binnedWrite)")
+        try manager.moveItem(at: binned, to: renamed)
+        try require(wandering.availability == .usable && NativeFolderAccess(grants: [wandering]).roots.count == 1, "Putting the folder back restores the share")
+        try require(FolderGrant.inTrash("/Users/someone/.Trash/Plans") && FolderGrant.inTrash("/Volumes/Storage/.Trashes/501/Plans")
+                    && !FolderGrant.inTrash("/Users/someone/Trash/Plans") && !FolderGrant.inTrash("/Users/someone/.Trash-notes/Plans"),
+                    "Only a real Trash folder counts")
+
         try require(FolderAvailability.missing.rowNote == "Can't be found." && FolderAvailability.offline("x").rowNote == "On a drive that isn't connected."
                     && FolderAvailability.denied.rowNote == "Can't be opened." && FolderAvailability.usable.rowNote == nil,
                     "Row notes read as written")
