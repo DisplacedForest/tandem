@@ -473,43 +473,6 @@ struct NativePreferenceCaptureKey: Equatable, Sendable {
     let userMessageID: String
 }
 
-enum NativePreferenceDetector {
-    private static let markers = [
-        "never", "don't", "dont", "do not", "stop", "always", "from now on", "i told you", "again", "quit",
-        "please don't", "no more", "prefer", "i'd prefer", "i would prefer", "i'd rather", "i would rather", "avoid", "keep",
-        "i want you to", "i'd like you to", "i would like you to", "i like it when", "i hate it when", "i don't like it when",
-        "please always", "please never", "call me", "refer to me as", "address me as", "going forward", "in the future",
-        "from here on", "every time", "whenever you", "instead of", "rather than", "be more", "be less", "stop being",
-    ]
-
-    private static let undoPhrases: Set<String> = [
-        "forget that", "forget it", "forget about it", "never mind", "nevermind", "never mind that", "undo that", "undo",
-        "undo it", "scratch that", "cancel that", "take that back", "actually never mind", "actually forget that",
-        "ignore that", "disregard that", "please forget that", "please undo that", "forget that please", "undo that please",
-        "never mind please", "oh never mind", "ok never mind", "okay never mind",
-    ]
-
-    static func folded(_ text: String) -> String {
-        text.lowercased()
-            .replacingOccurrences(of: "\u{2019}", with: "'")
-            .replacingOccurrences(of: "\u{2018}", with: "'")
-    }
-
-    static func hits(_ text: String) -> Bool {
-        let value = folded(text)
-        return markers.contains { marker in
-            let escaped = NSRegularExpression.escapedPattern(for: marker)
-            return value.range(of: "(?<![a-z'])" + escaped + "(?![a-z'])", options: .regularExpression) != nil
-        } || value.range(of: "(?<![a-z'])use(?![a-z']).*(?<![a-z'])instead(?![a-z'])", options: .regularExpression) != nil
-    }
-
-    static func isUndo(_ text: String) -> Bool {
-        let value = folded(text).unicodeScalars.map { CharacterSet.punctuationCharacters.subtracting(CharacterSet(charactersIn: "'")).contains($0) ? " " : Character($0) }
-        let phrase = String(value).split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        return undoPhrases.contains(phrase)
-    }
-}
-
 enum NativePreferenceRecognizer {
     static let emDash = "\u{2014}"
     static let enDash = "\u{2013}"
@@ -697,101 +660,78 @@ enum NativePreferenceRecognizer {
         if !phrases.isEmpty { check.forbidPhrases = phrases }
         return check.isEmpty || !check.isValid ? nil : check
     }
-
-    static func statement(for check: NativePreferenceCheck) -> String? {
-        var uses: [String] = []
-        for character in check.forbidChars ?? [] {
-            switch character {
-            case emDash: uses.append("em dashes")
-            case enDash: uses.append("en dashes as dashes")
-            case "!": uses.append("exclamation marks")
-            default: uses.append("\"" + character + "\"")
-            }
-        }
-        if check.forbidEmoji == true { uses.append("emoji") }
-        var parts: [String] = []
-        if !uses.isEmpty { parts.append("Don't use " + list(uses) + ".") }
-        let phrases = (check.forbidPhrases ?? []).map { "\"" + $0 + "\"" }
-        if !phrases.isEmpty { parts.append("Don't say " + list(phrases) + ".") }
-        if let limit = check.maxCharacters { parts.append("Keep every reply under \(limit) characters.") }
-        return NativePreferenceStore.cleanStatement(parts.joined(separator: " "))
-    }
-
-    static let fallbackCharacters = 160
-    private static let quoteCharacters: Set<Character> = ["\"", "'", "\u{201C}", "\u{201D}", "\u{2018}", "\u{2019}", "`"]
-
-    static let temporaryScopes = [
-        "this time", "for now", "today", "tonight", "this once", "just once", "just this once", "right now", "in this reply",
-        "in this message", "here", "for this one", "this answer", "for this conversation",
-    ]
-
-    static func hasTemporaryScope(_ text: String) -> Bool {
-        let value = NativePreferenceDetector.folded(text).replacingOccurrences(of: "from here on", with: " ")
-        return temporaryScopes.contains { scope in
-            value.range(of: "(?<![a-z'])" + NSRegularExpression.escapedPattern(for: scope) + "(?![a-z'])", options: .regularExpression) != nil
-        }
-    }
-
-    static func fallback(for text: String) -> NativePreferenceProposal? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= fallbackCharacters, !trimmed.contains(where: \.isNewline),
-              !trimmed.contains("```"), let first = clauses(trimmed).first,
-              let lead = prohibitions(in: first).first, lead.object == prohibitions(in: trimmed).first?.object,
-              !hasTemporaryScope(trimmed), let check = check(for: trimmed) else { return nil }
-        var unquoted = trimmed.replacingOccurrences(of: "(?<=[A-Za-z])[\u{2019}'](?=[A-Za-z])", with: "", options: .regularExpression)
-        for phrase in (check.forbidPhrases ?? []) + (check.forbidChars ?? []) {
-            for (open, close) in [("\"", "\""), ("'", "'"), ("\u{201C}", "\u{201D}"), ("\u{2018}", "\u{2019}")] {
-                unquoted = unquoted.replacingOccurrences(of: open + phrase + close, with: " ")
-            }
-        }
-        guard !unquoted.contains(where: { quoteCharacters.contains($0) }) else { return nil }
-        return proposal(for: trimmed, check: check)
-    }
-
-    static func proposal(for text: String, check: NativePreferenceCheck) -> NativePreferenceProposal? {
-        guard let statement = statement(for: check) else { return nil }
-        let negators = Set(prohibitions(in: text).map(\.negator))
-        let hard = !negators.isDisjoint(with: ["never", "don't", "dont", "do not", "stop", "no more"])
-        return NativePreferenceProposal(statement: statement, kind: .style, strength: hard ? .hard : .standing, check: check)
-    }
-
-    private static func list(_ items: [String]) -> String {
-        guard items.count > 1 else { return items.first ?? "" }
-        if items.count == 2 { return items[0] + " or " + items[1] }
-        return items.dropLast().joined(separator: ", ") + ", or " + (items.last ?? "")
-    }
 }
 
 enum NativePreferenceClassifier {
     static let marker = "standing preference classifier"
     static let excerptLimit = 2_000
+    static let unclear = "unclear"
 
-    static func messages(for text: String) -> [NativeChatMessage] {
-        let system = """
-            You are a \(marker). Decide whether the person's message sets a standing preference for how the assistant should write or behave from now on.
-            Reply with one JSON object and nothing else.
-            If it does not set a lasting preference, reply {"preference": null}.
-            If it does, reply {"preference": {"statement": "...", "kind": "style", "strength": "hard", "check": null}}.
-            statement: one short sentence addressed to the assistant in plain words, such as "Never use em dashes."
-            kind: "style" for tone, formatting, wording or characters. "action" for things to do or not do. "other" for anything else.
-            strength: "hard" when the person says never or always or is repeating a correction. "standing" otherwise.
-            check: null, or an object with any of "forbidChars" (a list of single characters never to write), "forbidPhrases" (a list of exact phrases never to write), "forbidEmoji" (true to never write emoji), "maxCharacters" (a whole number length limit for every reply).
-            Reject anything that is not a lasting preference about the assistant. These are not preferences: "I never thought about it", "don't worry about it", "stop, I need to think", and a one-off instruction about this message only, such as "don't include an intro this time". Anything limited to a moment is one-off, for example "this time", "for now", "today", "tonight", "this once", "just this once", "right now", "in this reply", "in this message", "here", "for this one", "this answer" or "for this conversation". Statements about the person's own life are not preferences either.
-            """
-        let body = "Message:\n" + String(text.prefix(excerptLimit))
-        return [NativeChatMessage(role: "system", content: system), NativeChatMessage(role: "user", content: body)]
+    static let instructions = """
+        You are a \(marker). You read one message a person typed to their assistant, together with the standing preferences they have already saved, and decide whether the message changes those preferences.
+        A standing preference is how the person wants the assistant to write or behave with them in general, from now on: tone, length, formatting, wording, characters, how to address them, how to structure answers. The person can put it any way at all: an instruction, a like or a dislike, a complaint about how the assistant has been answering, or a description of what suits them. Judge what they mean, not which words they use.
+        It is not a standing preference when the wish only covers the current answer, request or moment, when the person is asking a question, when they are quoting or passing on what someone else said or wrote, or when they are describing themselves or the world rather than telling the assistant how to treat them. If the message could be read either way, prefer the reading a careful person would take, and when it is still unsure, do not save it.
+        Reply with one JSON object and nothing else, in exactly one of these forms.
+        {"preference": null} when the message neither sets nor removes a standing preference.
+        {"preference": {"statement": "...", "kind": "style", "strength": "standing", "check": null}} when the person sets a standing preference.
+        {"remove": N} when the person wants one of their saved preferences dropped and it is clear which one. N is that preference's number in the saved list.
+        {"remove": "\(unclear)"} when the person wants a saved preference dropped but it is not clear which one, or none of the saved ones matches.
+        {"permission": true} when the message asks to change what the assistant may do on the person's behalf, such as acting without asking first or being allowed to send, delete, pay for or connect something. Those are permissions, not preferences, and are never saved here.
+        statement: one short sentence addressed to the assistant in plain words that keeps the person's meaning and makes clear it applies from now on.
+        kind: "style" for tone, formatting, wording or characters. "action" for habits in how the assistant answers or works, such as always citing sources. "other" for anything else.
+        strength: "hard" when the person insists it must always or never happen, or is repeating a correction. "standing" otherwise.
+        check: null, or an object with any of "forbidChars" (a list of single characters never to write), "forbidPhrases" (a list of exact phrases never to write), "forbidEmoji" (true to never write emoji), "maxCharacters" (a whole number length limit for every reply). Only include a check the person clearly asked for.
+        """
+
+    struct Saved: Equatable, Sendable {
+        let id: String
+        let statement: String
+        let fromPreviousMessage: Bool
+    }
+
+    static func body(text: String, saved: [Saved]) -> String {
+        var lines = ["Saved preferences:"]
+        if saved.isEmpty { lines.append("none") }
+        for (index, item) in saved.enumerated() {
+            lines.append("\(index + 1). " + item.statement + (item.fromPreviousMessage ? " (saved from the person's previous message)" : ""))
+        }
+        lines.append("")
+        lines.append("Message:")
+        lines.append(String(text.prefix(excerptLimit)))
+        return lines.joined(separator: "\n")
+    }
+
+    static func messages(for body: String) -> [NativeChatMessage] {
+        [NativeChatMessage(role: "system", content: instructions), NativeChatMessage(role: "user", content: body)]
     }
 
     enum Classification: Equatable, Sendable {
         case preference(NativePreferenceProposal)
         case rejected
+        case remove(Int)
+        case removeUnclear
+        case permission
         case tooLong
         case invalid
     }
 
-    static func classify(_ raw: String?) -> Classification {
-        guard let raw, let object = jsonObject(raw), object.count == 1, object.keys.first == "preference",
-              let value = object["preference"] else { return .invalid }
+    static func classify(_ raw: String?, savedCount: Int = 0) -> Classification {
+        guard let raw, let object = jsonObject(raw), object.count == 1, let key = object.keys.first,
+              let value = object[key] else { return .invalid }
+        switch key {
+        case "remove":
+            if let word = value as? String { return word == unclear ? .removeUnclear : .invalid }
+            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  let index = Int(exactly: number.doubleValue), index >= 1, index <= savedCount else { return .invalid }
+            return .remove(index)
+        case "permission":
+            guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID(), number.boolValue else { return .invalid }
+            return .permission
+        case "preference":
+            break
+        default:
+            return .invalid
+        }
         if value is NSNull { return .rejected }
         guard let fields = fields(value) else { return .invalid }
         guard let clean = NativePreferenceStore.cleanStatement(fields.statement) else {
@@ -828,9 +768,9 @@ enum NativePreferenceClassifier {
         case timedOut
     }
 
-    static func request(transport: any NativeChatTransport, model: String, text: String,
+    static func request(transport: any NativeChatTransport, model: String, body: String,
                         timeout: Duration = .seconds(30)) async -> String? {
-        let prompt = messages(for: text)
+        let prompt = messages(for: body)
         let outcome = await withTaskGroup(of: Outcome.self) { group -> Outcome in
             group.addTask {
                 do {
@@ -866,6 +806,8 @@ enum NativePreferenceCaptureOutcome: Equatable, Sendable {
     case unavailable
     case removed(String)
     case removalFailed
+    case removalUnclear
+    case permission
 
     var note: String? {
         switch self {
@@ -879,11 +821,15 @@ enum NativePreferenceCaptureOutcome: Equatable, Sendable {
         case .tooLong:
             return "The person asked for a preference but it was too long to save as one. Tell them it was not saved and suggest saying it more briefly or adding it in Settings."
         case .unavailable:
-            return "The person asked for a preference but it couldn't be saved right now. Tell them plainly it was not saved and they can try again or add it in Settings."
+            return "The person's saved preferences were not changed by this message, because it couldn't be checked right now. Only if the message asked to set or remove a standing preference, tell them plainly it didn't go through and they can try again or change it in Settings. Otherwise don't mention it."
         case .removed(let statement):
             return "The preference \(NativePreferencePrompt.quoted(statement)) was removed at the person's request. Confirm briefly."
         case .removalFailed:
             return "The person asked to remove a preference but it could not be removed. Tell them plainly it is still saved."
+        case .removalUnclear:
+            return "The person seems to want a saved preference removed, but it isn't clear which one, so nothing was removed. Ask which preference they mean."
+        case .permission:
+            return "The person asked to change what the assistant is allowed to do. That isn't a preference, and nothing was saved. Tell them plainly it wasn't saved and that what the assistant may do is set in Settings, Rules."
         }
     }
 }
@@ -903,27 +849,17 @@ enum NativePreferenceCapture {
         if let existing = try? store.capture(turnID: key.turnID, userMessageID: key.userMessageID) {
             return replayed(existing, store: store)
         }
-        if NativePreferenceDetector.isUndo(request.text) {
-            guard let previous = request.previousUserMessageID,
-                  let earlier = try? store.capture(conversationID: key.conversationID, userMessageID: previous),
-                  earlier.outcome == .saved, let preferenceID = earlier.preferenceID,
-                  let target = try? store.preference(id: preferenceID), target.status == .active else { return .none }
-            guard !Task.isCancelled, await isCurrent() else { return .none }
-            do {
-                try store.removeCaptured(preferenceID: preferenceID, key: key, stillCurrent: stillCurrent)
-            } catch let error as NativePreferenceStoreError where error.reason == .stopped {
-                return .none
-            } catch {
-                return .removalFailed
-            }
-            guard let after = try? store.preference(id: preferenceID), after.status == .removed else { return .removalFailed }
-            return .removed(target.statement)
+        guard let active = try? store.active() else { return .unavailable }
+        var justSaved: String?
+        if let previous = request.previousUserMessageID,
+           let earlier = try? store.capture(conversationID: key.conversationID, userMessageID: previous), earlier.outcome == .saved {
+            justSaved = earlier.preferenceID
         }
-        guard NativePreferenceDetector.hits(request.text) else { return .none }
-        let raw = await classify(request.text)
+        let saved = active.map { NativePreferenceClassifier.Saved(id: $0.id, statement: $0.statement, fromPreviousMessage: $0.id == justSaved) }
+        let raw = await classify(NativePreferenceClassifier.body(text: request.text, saved: saved))
         guard !Task.isCancelled, await isCurrent() else { return .none }
         var proposal: NativePreferenceProposal
-        switch NativePreferenceClassifier.classify(raw) {
+        switch NativePreferenceClassifier.classify(raw, savedCount: saved.count) {
         case .preference(let classified):
             proposal = classified
             proposal.check = NativePreferenceCheck.merge(
@@ -931,11 +867,18 @@ enum NativePreferenceCapture {
         case .rejected:
             try? store.recordNoCapture(key)
             return .none
+        case .permission:
+            try? store.recordNoCapture(key)
+            return .permission
+        case .removeUnclear:
+            try? store.recordNoCapture(key)
+            return .removalUnclear
+        case .remove(let number):
+            return remove(saved[number - 1].id, key: key, store: store, stillCurrent: stillCurrent)
         case .tooLong:
             return .tooLong
         case .invalid:
-            guard let fallback = NativePreferenceRecognizer.fallback(for: request.text) else { return .unavailable }
-            proposal = fallback
+            return .unavailable
         }
         let id: String
         do {
@@ -952,6 +895,26 @@ enum NativePreferenceCapture {
         }
         guard let stored = store.readBack(id: id, statement: proposal.statement) else { return .failed }
         return .saved(stored.statement)
+    }
+
+    private static func remove(_ preferenceID: String, key: NativePreferenceCaptureKey, store: NativePreferenceStore,
+                               stillCurrent: @escaping @Sendable (Database) throws -> Bool) -> NativePreferenceCaptureOutcome {
+        do {
+            try store.removeCaptured(preferenceID: preferenceID, key: key, stillCurrent: stillCurrent)
+        } catch let error as NativePreferenceStoreError where error.reason == .stopped {
+            return .none
+        } catch {
+            if let existing = try? store.capture(turnID: key.turnID, userMessageID: key.userMessageID) {
+                return replayed(existing, store: store)
+            }
+            if let error = error as? NativePreferenceStoreError, error.reason == .missing,
+               let after = try? store.preference(id: preferenceID), after.status == .removed {
+                return .removed(after.statement)
+            }
+            return .removalFailed
+        }
+        guard let after = try? store.preference(id: preferenceID), after.status == .removed else { return .removalFailed }
+        return .removed(after.statement)
     }
 
     private static func replayed(_ record: NativePreferenceCaptureRecord, store: NativePreferenceStore) -> NativePreferenceCaptureOutcome {

@@ -56,7 +56,7 @@ extension ChatStore {
             classify = preferenceClassifier
         } else if !model.isEmpty {
             let timeout = preferenceClassifierTimeout
-            classify = { text in await NativePreferenceClassifier.request(transport: transport, model: model, text: text, timeout: timeout) }
+            classify = { body in await NativePreferenceClassifier.request(transport: transport, model: model, body: body, timeout: timeout) }
         } else {
             classify = { _ in nil }
         }
@@ -71,7 +71,7 @@ extension ChatStore {
         case .saved, .removed:
             preferencesRevision += 1
             refreshPreferenceMarkers(conversationID: turn.conversationID)
-        case .none, .failed, .full, .tooLong, .unavailable, .removalFailed: break
+        case .none, .failed, .full, .tooLong, .unavailable, .removalFailed, .removalUnclear, .permission: break
         }
         return outcome
     }
