@@ -85,6 +85,75 @@ struct NativeMCPJSONSchema: Sendable {
         return "The arguments do not match this tool's schema"
     }
 
+    func problems(_ value: NativeJSONValue, limit: Int = 4) -> [NativeSchemaProblem] {
+        var found: [NativeSchemaProblem] = []
+        var budget = 50_000
+        do {
+            var nodes = 0
+            var bytes = 0
+            try Self.measure(value, depth: 0, nodes: &nodes, bytes: &bytes)
+            try collect(value, schema: schema, path: "", depth: 0, limit: max(1, limit), into: &found, budget: &budget)
+        } catch {
+            return []
+        }
+        return found
+    }
+
+    private func collect(_ value: NativeJSONValue, schema: NativeJSONValue, path: String, depth: Int, limit: Int,
+                         into found: inout [NativeSchemaProblem], budget: inout Int) throws {
+        guard found.count < limit else { return }
+        if try matches(value, schema: schema, depth: depth, budget: &budget) { return }
+        var target = schema
+        if case .object(let object) = schema, let ref = object["$ref"] { target = try reference(ref).1 }
+        let before = found.count
+        if case .object(let object) = target {
+            switch value {
+            case .object(let properties):
+                let declared: [String: NativeJSONValue]
+                if case .object(let schemas)? = object["properties"] { declared = schemas } else { declared = [:] }
+                if let required = object["required"] {
+                    for name in try strings(required) where Self.exactValue(name, in: properties) == nil && found.count < limit {
+                        found.append(NativeSchemaProblem(path: Self.joined(path, name), expected: "is required"))
+                    }
+                }
+                for name in properties.keys.sorted() where found.count < limit {
+                    guard let item = properties[name] else { continue }
+                    if let child = Self.exactValue(name, in: declared) {
+                        try collect(item, schema: child, path: Self.joined(path, name), depth: depth + 1, limit: limit, into: &found, budget: &budget)
+                    } else if object["additionalProperties"] == .bool(false) {
+                        found.append(NativeSchemaProblem(path: Self.joined(path, name), expected: "is not a field this call accepts"))
+                    } else if let child = object["additionalProperties"] {
+                        try collect(item, schema: child, path: Self.joined(path, name), depth: depth + 1, limit: limit, into: &found, budget: &budget)
+                    }
+                }
+            case .array(let items):
+                let prefix: [NativeJSONValue]
+                if case .array(let schemas)? = object["prefixItems"] { prefix = schemas } else { prefix = [] }
+                if Self.within(items.count, object) {
+                    for (index, item) in items.enumerated() where found.count < limit {
+                        guard let child = index < prefix.count ? prefix[index] : object["items"] else { continue }
+                        try collect(item, schema: child, path: path + "[\(index)]", depth: depth + 1, limit: limit, into: &found, budget: &budget)
+                    }
+                }
+            default: break
+            }
+        }
+        if found.count == before, found.count < limit {
+            found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: Self.expectation(value, target)))
+        }
+    }
+
+    private static func within(_ count: Int, _ object: [String: NativeJSONValue]) -> Bool {
+        if case .number(let bound)? = object["minItems"], Double(count) < bound { return false }
+        if case .number(let bound)? = object["maxItems"], Double(count) > bound { return false }
+        return true
+    }
+
+    private static func joined(_ path: String, _ name: String) -> String {
+        let shown = String(name.prefix(64))
+        return path.isEmpty ? shown : path + "." + shown
+    }
+
     private static func expectation(_ value: NativeJSONValue, _ schema: NativeJSONValue) -> String {
         guard case .object(let object) = schema else { return "is not accepted" }
         if case .string(let type)? = object["type"] {
@@ -377,6 +446,11 @@ struct NativeMCPJSONSchema: Sendable {
 }
 
 typealias NativeJSONSchema = NativeMCPJSONSchema
+
+struct NativeSchemaProblem: Codable, Equatable, Sendable {
+    let path: String
+    let expected: String
+}
 
 final class NativeToolSchemaCache: @unchecked Sendable {
     static let shared = NativeToolSchemaCache()

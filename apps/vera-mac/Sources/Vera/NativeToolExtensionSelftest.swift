@@ -142,8 +142,12 @@ extension SelfTest {
             registry, rounds: [NativeWebToolsSelftest.call("call-missing", "shelf_missing", arguments), NativeWebToolsSelftest.reply("No shelf.")],
             enabled: [shelf.id])
         let refusal = extensionParsed(extensionResults(missingTransport)["call-missing"])
+        var refusedFields: [String: NativeJSONValue] = [:]
+        if case .object(let fields)? = refusal { refusedFields = fields }
         try require(log.all.isEmpty && missing?.activities.first?.state == .failed
-                    && refusal == .object(["error": .string(NativeToolError.unavailable.localizedDescription)]),
+                    && refusedFields["error"] == NativeJSONValue.string(NativeToolError.unavailable.localizedDescription)
+                    && refusedFields["fault"] == NativeJSONValue.string(NativeToolCallFault.unknownTool.rawValue)
+                    && refusedFields["not_run"] == NativeJSONValue.bool(true),
                     "A call to a name that was never registered is refused as not available and runs nothing: \(String(describing: refusal))")
 
         log.clear()
@@ -366,7 +370,10 @@ extension SelfTest {
                     && extensionParsed(results["work-slow"]) == extensionEcho(slow)
                     && extensionParsed(results["work-several"]) == extensionEcho(several),
                     "Each handed-off result sits under its own call id with its own content")
-        try require(extensionParsed(results["work-wordy"]) == .object(["error": .string("Unknown tool. Use only the tools offered.")])
+        var withheldFields: [String: NativeJSONValue] = [:]
+        if case .object(let fields)? = extensionParsed(results["work-wordy"]) { withheldFields = fields }
+        try require(withheldFields["error"] == NativeJSONValue.string("Unknown tool. Use only the tools offered.")
+                    && withheldFields["fault"] == NativeJSONValue.string(NativeToolCallFault.unknownTool.rawValue)
                     && !log.finished.contains("Onions"),
                     "A call to a withheld tool is refused and its handler never runs")
         return "handed-off work keeps call ids for a simple call, a several-input call and a slower call, and a withheld tool cannot be called"

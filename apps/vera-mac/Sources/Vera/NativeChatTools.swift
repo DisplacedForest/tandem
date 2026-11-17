@@ -237,6 +237,7 @@ struct NativeToolDefinition: Sendable {
     var chatDecision: (@Sendable ([String: NativeJSONValue]) -> NativeChatDecision)? = nil
     var marksEffect = false
     var outputSchema: NativeJSONValue? = nil
+    var checksOwnResult = false
     var examples: [[String: NativeJSONValue]] = []
 
     var demandsConfirmation: Bool { confirmation == .required && confirmationFor == nil && ruleDecision == nil && !governed }
@@ -254,6 +255,23 @@ struct NativeToolDefinition: Sendable {
         return object["type"] == nil
     }
 
+    func withoutSpareNulls(_ given: [String: NativeJSONValue]) -> [String: NativeJSONValue] {
+        guard argumentValidator == nil, case .object(let schema) = parameters else { return given }
+        let properties: [String: NativeJSONValue]
+        if case .object(let declared)? = schema["properties"] { properties = declared } else { properties = [:] }
+        let required: Set<String>
+        if case .array(let names)? = schema["required"] {
+            required = Set(names.compactMap { if case .string(let value) = $0 { value } else { nil } })
+        } else {
+            required = []
+        }
+        var values = given
+        for (name, value) in given where value == .null && !required.contains(name) && properties[name] != nil && !Self.acceptsNull(properties[name]) {
+            values[name] = nil
+        }
+        return values
+    }
+
     func validatedArguments(_ raw: String) throws -> [String: NativeJSONValue] {
         guard let data = raw.data(using: .utf8),
               let any = try? JSONSerialization.jsonObject(with: data),
@@ -266,7 +284,7 @@ struct NativeToolDefinition: Sendable {
             do { try argumentValidator(values) } catch { throw NativeToolError.invalidArguments("Arguments do not match the connected service schema") }
             return values
         }
-        var values = try object.mapValues { try NativeJSONValue(any: $0) }
+        let values = withoutSpareNulls(try object.mapValues { try NativeJSONValue(any: $0) })
         guard case .object(let schema) = parameters else { return values }
         let properties: [String: NativeJSONValue]
         if case .object(let declared)? = schema["properties"] { properties = declared } else { properties = [:] }
@@ -275,9 +293,6 @@ struct NativeToolDefinition: Sendable {
             required = Set(names.compactMap { if case .string(let value) = $0 { value } else { nil } })
         } else {
             required = []
-        }
-        for (name, value) in values where value == .null && !required.contains(name) && properties[name] != nil && !Self.acceptsNull(properties[name]) {
-            values[name] = nil
         }
         if let validator = NativeToolSchemaCache.shared.validator(parameters) {
             if let message = validator.violation(.object(values)) { throw NativeToolError.invalidArguments(message) }
@@ -754,6 +769,9 @@ struct NativeToolLoop: Sendable {
                     var issuedCallIDs: Set<String> = []
                     var searchResults: [String: NativeJSONValue] = [:]
                     var turnSources: [String: Int] = [:]
+                    var repairs = NativeToolRepairs()
+                    var unconfirmedWrites: Set<String> = []
+                    var repairsSpent = false
                     for round in 1...Self.maximumRounds {
                         try await checkAuthorization()
                         let active = registry.active(enabledIDs: enabledToolIDs)
@@ -850,13 +868,30 @@ struct NativeToolLoop: Sendable {
                                     throw NativeToolError.failed("The lookup limit was reached. This call was not run.")
                                 }
                                 callCount += 1
+                                let repairKey = definitions[call.name] == nil ? NativeToolRepairs.unknownKey : call.name
+                                guard !repairs.isClosed(repairKey) else {
+                                    repairsSpent = true
+                                    throw NativeToolRepair.closed(key: repairKey, unknown: NativeToolError.unavailable.localizedDescription)
+                                }
                                 guard let definition = definitions[call.name], definition.isAvailable() else {
-                                    throw NativeToolError.unavailable
+                                    let answer = repairs.answer(NativeToolRepair.unknown(NativeToolError.unavailable.localizedDescription,
+                                                                                         offered: offered.filter { $0.isAvailable() }.map(\.name)), key: repairKey)
+                                    repairsSpent = repairsSpent || repairs.isClosed(repairKey)
+                                    throw answer
                                 }
                                 guard !call.id.isEmpty, !call.name.isEmpty else {
                                     throw NativeToolError.invalidArguments("Tool call identifier and name are required")
                                 }
-                                let arguments = try definition.validatedArguments(call.arguments)
+                                let arguments: [String: NativeJSONValue]
+                                do {
+                                    arguments = try definition.validatedArguments(call.arguments)
+                                    repairs.settled(repairKey)
+                                } catch {
+                                    guard let problem = NativeToolRepair.problem(definition, raw: call.arguments, error: error) else { throw error }
+                                    let answer = repairs.answer(problem, key: repairKey)
+                                    repairsSpent = repairsSpent || repairs.isClosed(repairKey)
+                                    throw answer
+                                }
                                 let isSearch = definition.id == NativeWebTools.searchToolID && definition.name == NativeWebTools.searchToolName
                                 let cacheKey = isSearch && definition.confirmation == .none
                                     ? try Self.serializedResult(.object(arguments)) : nil
@@ -871,6 +906,9 @@ struct NativeToolLoop: Sendable {
                                         throw NativeToolError.failed("The lookup limit was reached. This call was not run.")
                                     }
                                     let recording = effects.flatMap { NativeChatEffects.records(definition, arguments) ? $0 : nil }
+                                    let writeKey = NativeChatEffects.records(definition, arguments)
+                                        ? definition.name + "\u{0}" + (try Self.serializedResult(.object(arguments))) : nil
+                                    if let writeKey, unconfirmedWrites.contains(writeKey) { throw NativeToolRepair.repeatedWrite() }
                                     let revisions = recording?.revisions()
                                     var needsConfirmation = definition.confirmationFor?(arguments) ?? (definition.confirmation == .required)
                                     var cleared: String?
@@ -983,11 +1021,19 @@ struct NativeToolLoop: Sendable {
                                             }
                                         }
                                     } catch {
-                                        if let recording, let ticket {
-                                            await recording.settle(ticket, NativeChatEffects.settlement(for: error, boundary: boundary,
-                                                                                                        marks: NativeChatEffects.marksBoundary(definition)))
+                                        let outcome = NativeChatEffects.settlement(for: error, boundary: boundary,
+                                                                                   marks: NativeChatEffects.marksBoundary(definition))
+                                        if let recording, let ticket { await recording.settle(ticket, outcome) }
+                                        if let writeKey, case .uncertain(let reason) = outcome, reason == "timeout" || boundary.reached,
+                                           !(error is CancellationError), !(error is NativeRuleRefusal) {
+                                            unconfirmedWrites.insert(writeKey)
+                                            throw NativeToolRepair.uncertain(error.localizedDescription)
                                         }
                                         throw error
+                                    }
+                                    if let fault = NativeToolRepair.resultProblem(definition, value, write: writeKey != nil) {
+                                        value = fault.value
+                                        if let writeKey { unconfirmedWrites.insert(writeKey) }
                                     }
                                     if let recording, let ticket {
                                         await recording.settle(ticket, NativeChatEffects.settlement(for: value, toolName: call.name))
@@ -1010,6 +1056,9 @@ struct NativeToolLoop: Sendable {
                                 why = refusal.why
                                 result = try NativeToolResultBudget.serializedError(RefusalCopy.forModel(refusal.why), maximumBytes: resultBudget)
                                 state = .failed
+                            } catch let problem as NativeToolCallProblem {
+                                result = try NativeToolResultBudget.serialized(problem.value, maximumBytes: resultBudget)
+                                state = .failed
                             } catch {
                                 result = try NativeToolResultBudget.serializedError(error.localizedDescription, maximumBytes: resultBudget)
                                 state = .failed
@@ -1025,7 +1074,7 @@ struct NativeToolLoop: Sendable {
                             history.append(NativeChatMessage(role: "tool", content: result, toolCallID: call.id))
                             continuation.yield(NativeToolTurnSnapshot(content: content, activities: activities))
                         }
-                        if stopped || (webSearchCount > 0 && webSearchCount >= maximumWebSearchCalls) || callCount >= Self.maximumCalls || round == Self.maximumRounds {
+                        if stopped || repairsSpent || (webSearchCount > 0 && webSearchCount >= maximumWebSearchCalls) || callCount >= Self.maximumCalls || round == Self.maximumRounds {
                             let answer = try await synthesize(history: history, model: model, activities: activities)
                             try Task.checkCancellation()
                             continuation.yield(NativeToolTurnSnapshot(content: Self.join(content, answer.text), activities: activities, isPartial: answer.isPartial))

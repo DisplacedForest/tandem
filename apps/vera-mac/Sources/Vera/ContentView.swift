@@ -931,7 +931,7 @@ struct NativeToolActivityChip: View {
     static let incomplete = "The request was incomplete, so nothing ran."
     static let unavailable = "This isn't available in this chat."
     static let cutShort = "The rest of this message was cut off."
-    static let errorExtras: Set<String> = ["truncated", "truncation_reason"]
+    static let errorExtras: Set<String> = NativeToolRepair.hidden.union(["truncated", "truncation_reason"])
 
     static func fields(_ json: String) -> [String: NativeJSONValue]? {
         guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return nil }

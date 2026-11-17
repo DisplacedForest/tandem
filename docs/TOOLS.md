@@ -42,9 +42,42 @@ Before anything is offered, the registry (`NativeToolRegistry`) checks each defi
 
 ## How arguments are checked
 
-Every call is parsed as a JSON object and checked against `parameters` before the handler runs. A call that doesn't fit gets a short message back, such as `Missing required field 'packet'`, and nothing runs. A `null` for an optional field that doesn't accept null is dropped rather than refused.
+Every call is parsed as a JSON object and checked against `parameters` before the handler runs. A call that doesn't fit runs nothing and gets a corrective result back that says what was wrong and where, such as `Missing required field 'packet'` (see [When a call is wrong](#when-a-call-is-wrong)). A `null` for an optional field that doesn't accept null is dropped rather than refused.
 
 The validator supports these keywords: `type`, `properties`, `required`, `additionalProperties`, `items`, `prefixItems`, `enum`, `const`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `minLength`, `maxLength`, `minItems`, `maxItems`, `minProperties`, `maxProperties`, `uniqueItems`, `allOf`, `anyOf`, `oneOf`, `not`, `$ref`, `$defs` and `$schema` (the 2020-12 or draft-07 identifier). It ignores the annotations `title`, `description`, `$comment`, `default`, `examples`, `deprecated`, `readOnly` and `writeOnly`. Any other keyword, `pattern` and `format` included, means the tool isn't offered and is reported instead. Put a check like that in the handler.
+
+## When a call is wrong
+
+The shared policy lives in `NativeToolRepair.swift` and both transports use it. When a call can't run, the model gets a JSON object instead of a result. `error` is the sentence it always got, and the other fields tell it how to recover. Each one names a `fault`:
+
+- `malformed_arguments`: the arguments aren't valid JSON, for example a call cut off mid-stream.
+- `unknown_tool`: the name isn't one of the tools offered for this request. `offered` lists the names it can use.
+- `invalid_arguments`: the arguments are JSON but don't fit `parameters`. `problems` lists up to four, each with `at` (a path such as `filters.shelf` or `items[1].name`) and `expected`.
+- `unsupported_value`: the arguments hold something the app can't check or carry, such as a value too large to validate.
+- `invalid_result`: the handler ran but returned `null`, blank text, or a result that doesn't fit the tool's declared `outputSchema`.
+
+For a call to `shelf_lookup` that leaves out its required `packet`, the model gets:
+
+```json
+{
+  "error": "The tool arguments are invalid: Missing required field 'packet'",
+  "fault": "invalid_arguments",
+  "fix": "Nothing ran. Correct the arguments and send this call again.",
+  "not_run": true,
+  "problems": [{"at": "packet", "expected": "is required"}],
+  "repairs_left": 2
+}
+```
+
+Each tool name gets two repairs, counted per answer in chat and per run in handed-off work (unknown names share one count). The first failure says `repairs_left: 2`, the second `1`. A third failure closes that name: the result has `closed: true`, `repairs_left: 0` and a `fix` telling the model not to send it again and to say plainly what couldn't be done. In chat the rest of that round still runs, then the answer is written without tools. In handed-off work the run goes to its closing write-up, and the counts are saved with the work so a restart doesn't reset them. A call that passes resets its name's count, unless the name is already closed.
+
+Repairs aren't free. Every attempt spends the same rounds and calls as any other call, so the chat limits of four rounds and eight calls still hold.
+
+In chat, a write whose outcome isn't known, because it timed out or failed after it may have taken effect, comes back with `outcome: "uncertain"` and a `fix` telling the model to say it couldn't be confirmed. The same tool with the same arguments isn't run again for the rest of that answer; the model gets `not_run: true` instead. Different arguments still run, and a read that fails or times out can always be called again.
+
+A result of `null`, blank text, or one that doesn't match a declared `outputSchema` counts as an error, not a success. For a write it means the outcome is uncertain, and handed-off work checks what happened before going on. Set `checksOwnResult` on a definition whose handler already checks its own results, as connected services do.
+
+None of this retries a handler. The app only tells the model what went wrong; any second attempt is a new call the model chooses to send, checked like the first one.
 
 ## Transports
 
