@@ -76,24 +76,6 @@ REGISTRY: dict[str, dict] = {
                  "Experimental: the miners are unvalidated at scale.")},
         ],
     },
-    "grocy": {
-        "display_name": "Grocy",
-        "fields": [
-            {"id": "url", "env": "GROCY_BASE", "label": "Base URL", "secret": False},
-            {"id": "api_key", "env": "GROCY_KEY", "label": "API key", "secret": True},
-        ],
-        "unlocks": ["kitchen inventory and expiry tracking", "shopping list", "stock adjustments from chat"],
-        "paired_with": {"id": "mealie", "label": "recipe suggestions from expiring inventory"},
-    },
-    "mealie": {
-        "display_name": "Mealie",
-        "fields": [
-            {"id": "url", "env": "MEALIE_BASE", "label": "Base URL", "secret": False},
-            {"id": "api_key", "env": "MEALIE_KEY", "label": "API token", "secret": True},
-        ],
-        "unlocks": ["recipe import and browse", "recipe classification"],
-        "paired_with": {"id": "grocy", "label": "recipe suggestions from expiring inventory"},
-    },
     "overseerr": {
         "display_name": "Overseerr",
         "fields": [

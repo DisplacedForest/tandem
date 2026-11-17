@@ -48,8 +48,8 @@ def test_display_name_prefers_registry_then_friendly_then_id():
     assert hn.display_name(st("device_tracker.server_2", "Server Server"), NAMES) == "Server"
     assert hn.display_name(st("switch.desk_lamp", "Desk Lamp"), {}) == "Desk Lamp"
     assert hn.display_name(st("switch.desk_lamp", "Desk Lamp")) == "Desk Lamp"
-    assert hn.display_name(st("light.kitchen_ceiling"), {}) == "Kitchen Ceiling"
-    assert hn.display_name(st("light.kitchen_ceiling", ""), {}) == "Kitchen Ceiling"
+    assert hn.display_name(st("light.hallway_ceiling"), {}) == "Hallway Ceiling"
+    assert hn.display_name(st("light.hallway_ceiling", ""), {}) == "Hallway Ceiling"
     print("ok test_display_name_prefers_registry_then_friendly_then_id")
 
 
