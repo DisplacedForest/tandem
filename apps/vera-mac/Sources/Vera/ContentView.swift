@@ -227,25 +227,25 @@ struct ChatPane: View {
         followBox.state.scope(conversationID, sends: store.composerSend.count)
         change(&followBox.state)
         if showsJump != followBox.state.showsJump { showsJump = followBox.state.showsJump }
-        let count = followBox.state.unseenCount(replyIDs)
-        if unseenReplies != count {
-            if unseenReplies == 0, count > 0 {
-                AccessibilityNotification.Announcement(NewReplyMarker.title(count)).post()
+        let waiting = followBox.state.unseenReplies(followBox.replies)
+        if unseenReplies != waiting.count {
+            if unseenReplies == 0, !waiting.isEmpty {
+                AccessibilityNotification.Announcement(NewReplyMarker.title(waiting.count)).post()
             }
-            unseenReplies = count
+            unseenReplies = waiting.count
         }
-        let first = count > 0 ? followBox.state.firstUnseen : nil
-        if firstUnseenReply != first { firstUnseenReply = first }
+        if firstUnseenReply != waiting.first { firstUnseenReply = waiting.first }
         return followBox.state
     }
 
-    private var replyIDs: [UUID] {
-        (conversation?.messages ?? []).filter(NewReplyMarker.counts).map(\.id)
+    private func answeredReplies(_ convo: Conversation) -> [UUID] {
+        convo.messages.filter(NewReplyMarker.counts).map(\.id)
     }
 
-    private func noteReplies(_ conversationID: String) {
-        let ids = replyIDs
-        follow(conversationID) { $0.replies(ids) }
+    private func noteReplies(_ conversationID: String, _ replies: [UUID]) {
+        let rows = conversation?.messages.map(\.id) ?? []
+        followBox.replies = replies
+        follow(conversationID) { $0.replies(replies, rows: rows) }
     }
 
     private func followSend(_ conversationID: String) {
@@ -426,13 +426,14 @@ struct ChatPane: View {
                             transcriptContinuity.observe(visible: visible, ordered: convo.messages.map(\.id), conversationID: convo.id)
                         }
                     }
+                    .onChange(of: answeredReplies(convo)) { (_: [UUID], replies: [UUID]) in
+                        noteReplies(convo.id, replies)
+                    }
                     .onChange(of: convo.messages.last?.text ?? "") {
-                        noteReplies(convo.id)
                         if follow(convo.id).following { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
                     .onChange(of: convo.messages.count) {
                         followSend(convo.id)
-                        noteReplies(convo.id)
                         guard follow(convo.id).following else { return }
                         if store.isVeraThread(convo.id) || reduceMotion {
                             proxy.scrollTo("bottom", anchor: .bottom)
@@ -455,7 +456,7 @@ struct ChatPane: View {
                     .overlay(alignment: .bottom) {
                         if unseenReplies > 0, let target = firstUnseenReply {
                             NewReplyMarker(count: unseenReplies) {
-                                follow(convo.id) { $0.jumpToLatest() }
+                                follow(convo.id) { $0.jumpToReply() }
                                 if store.isVeraThread(convo.id) { transcriptContinuity.follows(true, conversationID: convo.id) }
                                 if reduceMotion { proxy.scrollTo(target, anchor: .top) }
                                 else { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(target, anchor: .top) } }
@@ -482,7 +483,7 @@ struct ChatPane: View {
                         follow(convo.id) {
                             if anchor != nil || store.pendingHighlightMessageID != nil || store.pendingTaskReveal != nil { $0.hold() }
                         }
-                        noteReplies(convo.id)
+                        noteReplies(convo.id, answeredReplies(convo))
                         await Task.yield()
                         guard !Task.isCancelled else { return }
                         if let anchor { proxy.scrollTo(anchor, anchor: .top) }

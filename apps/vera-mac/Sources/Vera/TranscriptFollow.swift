@@ -21,32 +21,47 @@ struct TranscriptFollow: Equatable {
     private(set) var atLatest = true
     private(set) var holding = false
     private(set) var readerScrolling = false
-    private(set) var firstUnseen: UUID?
     private var last: TranscriptGeometry?
     private var seenSends = 0
-    private var known: [UUID]?
+    private var knownRows: Set<UUID>?
+    private var lastRow: UUID?
+    private var seen: Set<UUID> = []
+    private var unseen: Set<UUID> = []
 
     var showsJump: Bool { !following && !atLatest }
 
-    func unseenCount(_ replies: [UUID]) -> Int {
-        guard !following, let firstUnseen, let start = replies.firstIndex(of: firstUnseen) else { return 0 }
-        return replies.count - start
+    func unseenReplies(_ replies: [UUID]) -> [UUID] {
+        following ? [] : replies.filter { unseen.contains($0) }
     }
 
-    mutating func replies(_ ids: [UUID]) {
-        defer { known = ids }
-        guard let known else { return }
-        let seen = Set(known)
-        let lastKnown = known.last.flatMap { ids.firstIndex(of: $0) } ?? -1
-        guard !following, firstUnseen == nil,
-              let arrived = ids.enumerated().first(where: { $0.offset > lastKnown && !seen.contains($0.element) })?.element else { return }
-        firstUnseen = arrived
+    mutating func replies(_ replies: [UUID], rows: [UUID]) {
+        defer {
+            knownRows = (knownRows ?? []).union(rows)
+            lastRow = rows.last
+        }
+        guard let knownRows else {
+            seen = Set(replies)
+            return
+        }
+        let lastIndex = lastRow.flatMap { rows.firstIndex(of: $0) } ?? -1
+        let position = Dictionary(rows.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        for id in replies where !seen.contains(id) && !unseen.contains(id) {
+            let answeredPlaceholder = knownRows.contains(id)
+            let appended = (position[id] ?? -1) > lastIndex
+            if !following, answeredPlaceholder || appended {
+                unseen.insert(id)
+            } else {
+                seen.insert(id)
+            }
+        }
+        unseen.formIntersection(replies)
     }
 
     private mutating func resume() {
         following = true
         holding = false
-        firstUnseen = nil
+        seen.formUnion(unseen)
+        unseen = []
     }
 
     mutating func scope(_ id: String, sends: Int) {
@@ -85,6 +100,11 @@ struct TranscriptFollow: Equatable {
         resume()
     }
 
+    mutating func jumpToReply() {
+        resume()
+        holding = true
+    }
+
     mutating func hold() {
         following = false
         holding = true
@@ -102,6 +122,7 @@ struct TranscriptFollow: Equatable {
 @MainActor
 final class TranscriptFollowBox {
     var state = TranscriptFollow()
+    var replies: [UUID] = []
 }
 
 struct JumpToLatestButton: View {
@@ -246,57 +267,89 @@ extension SelfTest {
         func at(_ offset: CGFloat, content: CGFloat = 2000) -> TranscriptGeometry {
             TranscriptGeometry(offset: offset, contentHeight: content, containerHeight: 600)
         }
-        let earlier = [UUID(), UUID()]
-        let first = UUID()
-        let second = UUID()
+        func scroll(_ follow: inout TranscriptFollow, from: CGFloat, to: CGFloat, content: CGFloat = 2000) {
+            follow.scrollPhase(reader: true)
+            follow.geometry(at(from, content: content))
+            follow.geometry(at(to, content: content))
+            follow.scrollPhase(reader: false)
+        }
+        let asked = UUID()
+        let earlier = UUID()
+        var rows = [asked, earlier]
+        var replies = [earlier]
         var follow = TranscriptFollow()
         follow.scope("m", sends: 0)
         follow.geometry(at(1400))
-        follow.replies(earlier)
-        try require(follow.firstUnseen == nil && follow.unseenCount(earlier) == 0, "Replies already there when the chat opens are seen")
-        follow.replies(earlier + [first])
-        try require(follow.firstUnseen == nil && follow.unseenCount(earlier + [first]) == 0, "At the bottom and following, a new reply shows no marker")
-        follow.scrollPhase(reader: true)
-        follow.geometry(at(1000))
-        follow.scrollPhase(reader: false)
+        follow.replies(replies, rows: rows)
+        try require(follow.unseenReplies(replies).isEmpty, "Replies already there when the chat opens are seen")
+        let followed = UUID()
+        rows.append(followed)
+        replies.append(followed)
+        follow.replies(replies, rows: rows)
+        try require(follow.unseenReplies(replies).isEmpty, "At the bottom and following, a new reply shows no marker")
+        scroll(&follow, from: 1400, to: 1000)
         try require(!follow.following, "Scrolling up stops following")
-        let one = earlier + [first, second]
-        follow.replies(one)
-        try require(follow.firstUnseen == second && follow.unseenCount(one) == 1, "A reply while scrolled up is the first unseen one")
-        let two = one + [UUID()]
-        follow.replies(two)
-        try require(follow.firstUnseen == second && follow.unseenCount(two) == 2, "Two replies count two and still point at the first of them")
-        follow.replies([UUID()] + two)
-        try require(follow.unseenCount([UUID()] + two) == 2, "Older rows filled in above never count")
-        follow.jumpToLatest()
-        try require(follow.firstUnseen == nil && follow.unseenCount(two) == 0, "The marker turns following back on and clears")
+        let first = UUID()
+        let second = UUID()
+        rows += [first]
+        replies += [first]
+        follow.replies(replies, rows: rows)
+        try require(follow.unseenReplies(replies) == [first], "A reply while scrolled up is the first unseen one")
+        rows += [second]
+        replies += [second]
+        follow.replies(replies, rows: rows)
+        try require(follow.unseenReplies(replies) == [first, second], "Two replies count two and point at the first of them")
+        let older = UUID()
+        follow.replies([older] + replies, rows: [older] + rows)
+        rows = [older] + rows
+        replies = [older] + replies
+        try require(follow.unseenReplies(replies) == [first, second], "Older rows filled in above never count")
+        replies.removeAll { $0 == first }
+        follow.replies(replies, rows: rows)
+        try require(follow.unseenReplies(replies) == [second], "When the first marked reply stops showing, the next unread one is the target")
+        let third = UUID()
+        rows.append(third)
+        replies.append(third)
+        follow.replies(replies, rows: rows)
+        try require(follow.unseenReplies(replies) == [second, third], "A later arrival still adds to the marker after the target changed")
+        follow.jumpToReply()
+        try require(follow.following && follow.unseenReplies(replies).isEmpty, "The marker turns following back on and clears")
+        follow.geometry(at(1000, content: 2000))
+        follow.geometry(at(700, content: 2000))
+        try require(follow.following, "The marker's own scroll up to the reply is not taken as scrolling away")
         follow.scrollPhase(reader: true)
-        follow.geometry(at(1200, content: 2400))
         follow.geometry(at(900, content: 2400))
+        follow.geometry(at(600, content: 2400))
         follow.scrollPhase(reader: false)
-        let three = two + [UUID()]
-        follow.replies(three)
-        try require(follow.unseenCount(three) == 1, "Scrolled up again, the next reply shows")
-        follow.scrollPhase(reader: true)
-        follow.geometry(at(1800, content: 2400))
-        follow.scrollPhase(reader: false)
-        try require(follow.following && follow.unseenCount(three) == 0, "Scrolling back to the bottom by hand clears it")
+        try require(!follow.following, "The reader scrolling up afterwards still stops following")
+        let placeholder = UUID()
+        let interjection = UUID()
+        follow.sent(1)
+        rows += [placeholder, interjection]
+        replies.append(interjection)
+        follow.replies(replies, rows: rows)
         follow.hold()
-        let four = three + [UUID()]
-        follow.replies(four)
-        try require(follow.unseenCount(four) == 1, "After a work card holds the view, a later reply shows the marker and is never silent")
-        try require(follow.sent(1) && follow.unseenCount(four) == 0, "Sending a message clears it")
+        replies.insert(placeholder, at: replies.count - 1)
+        follow.replies(replies, rows: rows)
+        try require(follow.unseenReplies(replies) == [placeholder],
+                    "After a work card holds the view, words arriving in an earlier empty reply show the marker even with a later row below it")
+        scroll(&follow, from: 600, to: 1800, content: 2400)
+        try require(follow.following && follow.unseenReplies(replies).isEmpty, "Scrolling back to the bottom by hand clears it")
         follow.hold()
-        follow.replies(four + [UUID()])
-        follow.scope("other", sends: 1)
-        try require(follow.firstUnseen == nil, "Another conversation starts with no marker")
-        follow.replies([UUID()])
+        let fourth = UUID()
+        rows.append(fourth)
+        replies.append(fourth)
+        follow.replies(replies, rows: rows)
+        try require(follow.unseenReplies(replies) == [fourth], "A held view shows the marker for a later reply, never silent")
+        try require(follow.sent(2) && follow.unseenReplies(replies).isEmpty, "Sending a message clears it")
         follow.hold()
-        try require(follow.unseenCount([UUID()]) == 0, "A held view with no new reply shows no marker")
-        let placeholder = Message(role: .assistant, text: "", state: .streaming)
-        var answered = placeholder
+        follow.scope("other", sends: 2)
+        follow.replies([UUID()], rows: [UUID()])
+        try require(follow.unseenReplies(replies).isEmpty, "Another conversation starts with no marker")
+        let empty = Message(role: .assistant, text: "", state: .streaming)
+        var answered = empty
         answered.text = "15"
-        try require(!NewReplyMarker.counts(placeholder) && NewReplyMarker.counts(answered)
+        try require(!NewReplyMarker.counts(empty) && NewReplyMarker.counts(answered)
                     && !NewReplyMarker.counts(Message(role: .user, text: "what's 7 plus 8")),
                     "A reply counts once it has words, never as an empty placeholder or a message the person sent")
         try require(NewReplyMarker.title(1) == "New reply" && NewReplyMarker.title(2) == "2 new replies", "The marker says New reply, or how many")
