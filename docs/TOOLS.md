@@ -48,7 +48,7 @@ The validator supports these keywords: `type`, `properties`, `required`, `additi
 
 ## When a call is wrong
 
-The shared policy lives in `NativeToolRepair.swift` and both transports use it. When a call can't run, the model gets a JSON object instead of a result. `error` is the sentence it always got, and the other fields tell it how to recover. Each one names a `fault`:
+The shared policy lives in `NativeToolRepair.swift` and both transports use it. When a call can't run, the model gets a JSON object instead of a result. `error` is one plain sentence about what went wrong, and the other fields tell it how to recover. When a field has the wrong value, the sentence names that field's path and what it must be, such as its limit, and for a length or a count it also says how many were sent. A missing or undeclared field keeps the short form shown below. The result also names the action in plain words from the call's own values, such as `Write the document "Week's plans"`, so the final answer can say what never ran; a tool can supply its own wording by setting `summary` on its definition. Each object names a `fault`:
 
 - `malformed_arguments`: the arguments aren't valid JSON, for example a call cut off mid-stream.
 - `unknown_tool`: the name isn't one of the tools offered for this request. `offered` lists the names it can use.
@@ -56,10 +56,11 @@ The shared policy lives in `NativeToolRepair.swift` and both transports use it. 
 - `unsupported_value`: the arguments hold something the app can't check or carry, such as a value too large to validate, or they were refused outright by a connected service's own check, for example a name repeated in one object or arguments over 16 KB.
 - `invalid_result`: the handler ran but returned `null`, blank text, or a result that doesn't fit the tool's declared `outputSchema`.
 
-For a call to `shelf_lookup` that leaves out its required `packet`, the model gets:
+For a call to `shelf_lookup` (titled "Look up a shelf") that leaves out its required `packet`, the model gets:
 
 ```json
 {
+  "action": "Look up a shelf",
   "error": "The tool arguments are invalid: Missing required field 'packet'",
   "fault": "invalid_arguments",
   "fix": "Nothing ran. Correct the arguments and send this call again.",
@@ -69,11 +70,27 @@ For a call to `shelf_lookup` that leaves out its required `packet`, the model ge
 }
 ```
 
-Each tool name gets two repairs, counted per answer in chat and per run in handed-off work (unknown names share one count). The first failure says `repairs_left: 2`, the second `1`. A third failure closes that name: the result has `closed: true`, `repairs_left: 0` and a `fix` telling the model not to send it again and to say plainly what couldn't be done. In chat the rest of that round still runs, then the answer is written without tools. In handed-off work the run goes to its closing write-up, and the counts are saved with the work so a restart doesn't reset them. A call that passes resets its name's count, unless the name is already closed.
+For a call to `create_background_task` whose `title` is 231 letter t's, the sentence names the field, its limit and what was sent:
+
+```json
+{
+  "action": "Write the document \"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt...\"",
+  "error": "The tool arguments are invalid: Field 'title' must be at most 200 characters, and this one has 231",
+  "fault": "invalid_arguments",
+  "fix": "Nothing ran. Correct the arguments and send this call again.",
+  "not_run": true,
+  "problems": [{"at": "title", "expected": "must be at most 200 characters, and this one has 231"}],
+  "repairs_left": 2
+}
+```
+
+Inside a list the path names the item, such as `notes[1]`.
+
+Each tool name gets two repairs, counted per answer in chat and per run in handed-off work (unknown names share one count). The first failure says `repairs_left: 2`, the second `1`. A third failure closes that name: the result has `closed: true`, `repairs_left: 0` and a `fix` saying that nothing was started, saved or sent, telling the model not to send it again and to say plainly what couldn't be done. In chat the rest of that round still runs, then the answer is written without tools. Whenever any call in the turn never ran, the request for that final answer is told the same thing, so it can't describe refused work as done. In handed-off work the run goes to its closing write-up, and the counts are saved with the work so a restart doesn't reset them. The report then ends with a line such as `Not run: Write the document "Week's plans".` followed by why: the request couldn't be corrected, or the step isn't available in that work. A call that passes resets its name's count, unless the name is already closed.
 
 Repairs aren't free. Every attempt spends the same rounds and calls as any other call, so the chat limits of four rounds and eight calls still hold.
 
-In chat, a write whose outcome isn't known, because it timed out or failed after it may have taken effect, comes back with `outcome: "uncertain"` and a `fix` telling the model to say it couldn't be confirmed. The same tool with the same arguments isn't run again for the rest of that answer; the model gets `not_run: true` instead. Different arguments still run, and a read that fails or times out can always be called again.
+In chat, a write whose outcome isn't known, because it timed out or failed after it may have taken effect, comes back with `outcome: "uncertain"` and a `fix` telling the model to say it couldn't be confirmed. The same tool with the same arguments isn't run again for the rest of that answer; the model gets `not_run: true` instead. Different arguments still run, and a read that fails or times out can always be called again. A call the person declined is treated the same way: sent again unchanged in the same answer, it isn't asked about or run, and the model is told it wasn't approved.
 
 A result of `null`, blank text, or one that doesn't match a declared `outputSchema` counts as an error, not a success. For a write it means the outcome is uncertain, and handed-off work checks what happened before going on. Set `checksOwnResult` on a definition whose handler already checks its own results, as connected services do.
 

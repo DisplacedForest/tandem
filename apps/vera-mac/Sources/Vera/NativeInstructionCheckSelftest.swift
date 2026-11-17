@@ -287,9 +287,9 @@ extension SelfTest {
         let shared = NativeInstructionUses()
         let repeated = try await drive(tools(uses: shared), [round("first", "send_notes", send), round("second", "send_notes", send), finished],
                                        enabled: enabled, said: told, answerer: once.answerer, confirm: refuse)
-        try require(repeated.count == 2 && repeated.allSatisfy { $0.state == .failed && $0.confirmationRequired } && once.count == 1
-                        && cards.count == 2 && sent.count == 0,
-                    "After a no the same send asks again with no second check")
+        try require(repeated.count == 2 && repeated.allSatisfy { $0.state == .failed } && repeated[0].confirmationRequired && once.count == 1
+                        && cards.count == 1 && sent.count == 0,
+                    "After a no the same send is not asked again and no second check runs")
         let toBo = "{\"to\":\"bo@greenhouse.test\"}"
         let other = try await drive(tools(typed: "Send the notes to bo@greenhouse.test", uses: shared), [round("bo", "send_notes", toBo), finished],
                                     enabled: enabled, said: "Send the notes to bo@greenhouse.test", answerer: once.answerer, confirm: refuse)

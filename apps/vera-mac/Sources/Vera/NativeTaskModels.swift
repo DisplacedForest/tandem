@@ -49,9 +49,34 @@ struct NativeTaskEngineIdentity: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+enum NativeTaskInputSize {
+    static func over(_ texts: [String], characters: Int, bytes: Int) -> (sent: String, allowed: String)? {
+        let count = texts.reduce(0) { $0 + $1.count }
+        let size = texts.reduce(0) { $0 + $1.utf8.count }
+        guard count > characters || size > bytes else { return nil }
+        var allowed = characters
+        if size > bytes, size > 0 { allowed = min(characters, count * bytes / size / 100 * 100) }
+        return (grouped(count), grouped(allowed))
+    }
+
+    static func grouped(_ number: Int) -> String {
+        var digits = String(number)
+        var parts: [String] = []
+        while digits.count > 3 {
+            parts.insert(String(digits.suffix(3)), at: 0)
+            digits = String(digits.dropLast(3))
+        }
+        return ([digits] + parts).joined(separator: ",")
+    }
+}
+
 struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
     static let workerTypes: Set<String> = ["research", "document", "companion"]
     static let chatWorkerTypes: Set<String> = ["research", "document"]
+    static let documentInputBytes = NativeDocumentWorker.promptBytes - 8000
+    static let researchInputBytes = 24000
+    static let documentInputCharacters = 14000
+    static let researchInputCharacters = 20000
 
     let objective: String
     let deliverables: [String]
@@ -85,15 +110,18 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
             throw NativeTaskError.invalidRequest("This needs an assignment.")
         }
         let work = workerType == "document" ? "document brief" : workerType == "companion" ? "assignment" : "research objective"
-        guard !trimmed.isEmpty, trimmed.unicodeScalars.count <= 5000 else {
-            throw NativeTaskError.invalidRequest("The \(work) must contain 1 to 5,000 characters.")
+        guard !trimmed.isEmpty else {
+            throw NativeTaskError.invalidRequest("The \(work) is empty. Nothing was started.")
         }
-        guard (workerType == "companion" ? 0...5 : 1...5).contains(deliverables.count) else {
-            throw NativeTaskError.invalidRequest(workerType == "document" ? "Provide 1 to 5 document inputs." : "Provide 1 to 5 research deliverables.")
-        }
-        let items = deliverables.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard items.allSatisfy({ !$0.isEmpty && $0.unicodeScalars.count <= 500 }) else {
-            throw NativeTaskError.invalidRequest("Each item must contain 1 to 500 characters.")
+        let items = deliverables.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if workerType != "companion" {
+            let document = workerType == "document"
+            if let room = NativeTaskInputSize.over([trimmed] + items, characters: document ? Self.documentInputCharacters : Self.researchInputCharacters,
+                                                   bytes: document ? Self.documentInputBytes : Self.researchInputBytes) {
+                throw NativeTaskError.invalidRequest(document
+                    ? "The brief and the things to include are \(room.sent) characters together, and a document can take about \(room.allowed) for now. Nothing was started. Shorten them, or split this into more than one document."
+                    : "The question and the things to cover are \(room.sent) characters together, and research can take about \(room.allowed) for now. Nothing was started. Shorten them, or split this into more than one request.")
+            }
         }
         let cleanTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let cleanTitle, !cleanTitle.isEmpty {
@@ -166,6 +194,8 @@ struct NativeCompanionCarried: Codable, Equatable, Hashable, Sendable {
 struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     static let modes: Set<String> = ["manual", "scheduled", "proactive"]
     static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding", "schedule_id", "said", "carried"]
+    static let assignmentBytes = 60000
+    static let assignmentCharacters = 50000
     static let saidLimit = 5000
 
     let assignment: String
@@ -183,8 +213,11 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     init(assignment: String, mode: String, connectedToolIDs: [String]? = nil, scheduleID: String? = nil, said: String? = nil,
          carried: NativeCompanionCarried? = nil) throws {
         let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanAssignment.isEmpty, cleanAssignment.unicodeScalars.count <= 5000 else {
-            throw NativeTaskError.invalidRequest("The assignment must contain 1 to 5,000 characters.")
+        guard !cleanAssignment.isEmpty else {
+            throw NativeTaskError.invalidRequest("The assignment is empty. Nothing was started.")
+        }
+        if let room = NativeTaskInputSize.over([cleanAssignment], characters: Self.assignmentCharacters, bytes: Self.assignmentBytes) {
+            throw NativeTaskError.invalidRequest("The assignment is \(room.sent) characters, and this can take about \(room.allowed) for now. Nothing was started. Shorten it, or split it into more than one request.")
         }
         guard Self.modes.contains(mode) else {
             throw NativeTaskError.invalidRequest("This must start manually, on a schedule or on its own.")

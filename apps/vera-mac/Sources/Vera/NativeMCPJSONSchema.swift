@@ -85,6 +85,9 @@ struct NativeMCPJSONSchema: Sendable {
         return "The arguments do not match this tool's schema"
     }
 
+    static let required = "is required"
+    static let undeclared = "is not a field this call accepts"
+
     func problems(_ value: NativeJSONValue, limit: Int = 4) -> [NativeSchemaProblem] {
         var found: [NativeSchemaProblem] = []
         var budget = 50_000
@@ -113,7 +116,7 @@ struct NativeMCPJSONSchema: Sendable {
                 if case .object(let schemas)? = object["properties"] { declared = schemas } else { declared = [:] }
                 if let required = object["required"] {
                     for name in try strings(required) where Self.exactValue(name, in: properties) == nil && found.count < limit {
-                        found.append(NativeSchemaProblem(path: Self.joined(path, name), expected: "is required"))
+                        found.append(NativeSchemaProblem(path: Self.joined(path, name), expected: Self.required))
                     }
                 }
                 for name in properties.keys.sorted() where found.count < limit {
@@ -121,7 +124,7 @@ struct NativeMCPJSONSchema: Sendable {
                     if let child = Self.exactValue(name, in: declared) {
                         try collect(item, schema: child, path: Self.joined(path, name), depth: depth + 1, limit: limit, into: &found, budget: &budget)
                     } else if object["additionalProperties"] == .bool(false) {
-                        found.append(NativeSchemaProblem(path: Self.joined(path, name), expected: "is not a field this call accepts"))
+                        found.append(NativeSchemaProblem(path: Self.joined(path, name), expected: Self.undeclared))
                     } else if let child = object["additionalProperties"] {
                         try collect(item, schema: child, path: Self.joined(path, name), depth: depth + 1, limit: limit, into: &found, budget: &budget)
                     }
@@ -158,7 +161,7 @@ struct NativeMCPJSONSchema: Sendable {
             }
         }
         if found.count == before, found.count < limit {
-            found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: Self.expectation(value, target)))
+            found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: Self.expectation(value, target) + Self.measured(value, target)))
         }
     }
 
@@ -173,6 +176,22 @@ struct NativeMCPJSONSchema: Sendable {
         if case .number(let bound)? = object["minItems"], Double(count) < bound { return false }
         if case .number(let bound)? = object["maxItems"], Double(count) > bound { return false }
         return true
+    }
+
+    private static func measured(_ value: NativeJSONValue, _ schema: NativeJSONValue) -> String {
+        guard case .object(let object) = schema else { return "" }
+        func outside(_ count: Int, _ low: String, _ high: String) -> Bool {
+            if case .number(let bound)? = object[low], Double(count) < bound { return true }
+            if case .number(let bound)? = object[high], Double(count) > bound { return true }
+            return false
+        }
+        switch value {
+        case .string(let text) where outside(text.unicodeScalars.count, "minLength", "maxLength"):
+            return ", and this one has \(text.unicodeScalars.count)"
+        case .array(let items) where outside(items.count, "minItems", "maxItems"):
+            return ", and this one has \(items.count)"
+        default: return ""
+        }
     }
 
     private static func joined(_ path: String, _ name: String) -> String {

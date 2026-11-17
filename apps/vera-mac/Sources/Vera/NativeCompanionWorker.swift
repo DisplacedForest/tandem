@@ -193,6 +193,7 @@ enum NativeCompanionWorker {
     static let stepTimeoutSeconds: Double = 1800
     static let reportScalars = 40000
     static let noteScalars = 240
+    static let stoppedShortFallback = "I couldn't finish this."
     static let outOfRoomLead = "I ran out of room to keep reading before I finished. Here's what I found so far."
     static let outOfRoomFallback = "I ran out of room to keep reading before I finished, and I couldn't write it up."
     static let summaryCharacters = 280
@@ -653,8 +654,8 @@ extension NativeCompanionWorker {
         let covered = { (note: NativeCompanionEffectNote) in
             note.outcome.hasPrefix("done") || note.outcome == "failed" || note.outcome == "unconfirmed"
         }
-        let others = checkpoint.effects.filter { !covered($0) }
-        var sections = [outOfRoomFallback]
+        let others = checkpoint.effects.filter { !covered($0) && $0.outcome != NativeToolRepair.neverRanOutcome }
+        var sections = [checkpoint.stoppedOnRepairs ? stoppedShortFallback : outOfRoomFallback]
         if !others.isEmpty {
             sections.append(others.map { "- \($0.title): \($0.outcome)" + ($0.reason.map { ". " + $0 } ?? "") }.joined(separator: "\n"))
         }
@@ -1079,8 +1080,14 @@ private struct NativeCompanionRun {
             refuse(NativeToolRepair.closed(key: repairKey, unknown: NativeCompanionWorker.unknownTool))
             return nil
         }
+        func count(_ problem: NativeToolCallProblem, title: String) {
+            let answer = repairs.answer(problem, key: repairKey)
+            if repairs.isClosed(repairKey) { checkpoint.note(title, NativeToolRepair.neverRanOutcome, reason: NativeToolRepair.reason(problem.fault)) }
+            refuse(answer)
+        }
         guard let definition = definition(named: call.name) else {
-            refuse(repairs.answer(NativeToolRepair.unknown(NativeCompanionWorker.unknownTool, offered: offered.map(\.name)), key: repairKey))
+            count(NativeToolRepair.named(NativeToolRepair.unknown(NativeCompanionWorker.unknownTool, offered: offered.map(\.name)), nil, raw: call.arguments),
+                  title: NativeToolRepair.unknownStep)
             return nil
         }
         if let refusal = readOnlyRefusal(definition) {
@@ -1098,7 +1105,8 @@ private struct NativeCompanionRun {
             }
         } catch {
             checkpoint.calls += 1
-            refuse(repairs.answer(NativeToolRepair.problem(definition, raw: call.arguments, error: error), key: repairKey))
+            count(NativeToolRepair.named(NativeToolRepair.problem(definition, raw: call.arguments, error: error), definition, raw: call.arguments),
+                  title: NativeToolRepair.described(definition, raw: call.arguments))
             return nil
         }
         if definition.effect == .read {
