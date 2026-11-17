@@ -83,7 +83,8 @@ extension SelfTest {
             ProjectRecord(id: id, name: name, instructions: "", grants: grants, files: files, createdAt: Date(), updatedAt: Date())
         }
         func rows(_ conversations: [Conversation], _ projects: [ProjectRecord] = [], name: String? = "Ada") -> [SharedFolderRow] {
-            SharedFolderRows.rows(conversations: conversations, projects: projects, companionThreadID: thread, name: name)
+            SharedFolderRows.rows(conversations: conversations, projects: projects, companionThreadID: thread, name: name,
+                                  availability: { _ in .usable })
         }
 
         let seedlings = FolderGrant(id: "g-seedlings", path: "/garden/Seedlings")

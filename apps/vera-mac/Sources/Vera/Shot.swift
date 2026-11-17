@@ -636,7 +636,7 @@ enum Shot {
                 section = .vera
                 store.ensureVeraThread()
                 store.openVeraThread()
-            case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-jump", "chats-folder", "chats-command", "chats-schedule",
+            case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-jump", "chats-folder", "chats-folder-missing", "chats-folder-offline", "chats-folder-denied", "chats-command", "chats-schedule",
                  "conversation-work", "conversation-narrow": section = .chat
             case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty",
@@ -663,7 +663,9 @@ enum Shot {
                          needsConnection: view == "companion-connection",
                          attachDemo: view == "attach",
                          streaming: view == "chats-streaming",
-                         folder: view == "chats-folder",
+                         folder: view.hasPrefix("chats-folder"),
+                         folderState: view == "chats-folder-missing" ? .missing : view == "chats-folder-offline" ? .offline("Notes")
+                             : view == "chats-folder-denied" ? .denied : .usable,
                          command: view == "chats-command",
                          schedule: view == "chats-schedule",
                          collapsedSidebar: view == "sidebar-collapsed" || view == "chat-collapsed" || view == "artifacts-collapsed" || view == "chat-fullscreen",

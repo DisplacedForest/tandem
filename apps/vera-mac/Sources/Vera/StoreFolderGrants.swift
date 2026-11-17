@@ -477,7 +477,50 @@ extension ChatStore {
     }
 
     var sharedFolderRows: [SharedFolderRow] {
-        SharedFolderRows.rows(conversations: conversations, projects: projects, companionThreadID: veraThreadID, name: companionName)
+        let known = folderStates
+        return SharedFolderRows.rows(conversations: conversations, projects: projects, companionThreadID: veraThreadID, name: companionName,
+                                     availability: { known[Self.folderStateKey($0)] ?? .usable })
+    }
+
+    nonisolated static func folderStateKey(_ grant: FolderGrant) -> String {
+        let identity = grant.identity.map { "\($0.device)|\($0.inode)" } ?? ""
+        return grant.id + "|" + grant.path + "|" + identity
+    }
+
+    nonisolated static func folderStates(_ grants: [FolderGrant]) -> [String: FolderAvailability] {
+        var states: [String: FolderAvailability] = [:]
+        for grant in grants { states[folderStateKey(grant)] = grant.availability }
+        return states
+    }
+
+    var everySharedFolder: [FolderGrant] { conversations.flatMap(\.grants) + projects.flatMap(\.grants) }
+
+    func folderState(_ grant: FolderGrant) -> FolderAvailability { folderStates[Self.folderStateKey(grant)] ?? .usable }
+
+    func beginSharedFolderCheck() -> Int {
+        folderRefreshGeneration += 1
+        return folderRefreshGeneration
+    }
+
+    func applySharedFolderStates(_ next: [String: FolderAvailability], generation: Int) {
+        guard generation == folderRefreshGeneration else { return }
+        if next != folderStates { folderStates = next }
+    }
+
+    func checkSharedFoldersNow() {
+        let generation = beginSharedFolderCheck()
+        applySharedFolderStates(Self.folderStates(everySharedFolder), generation: generation)
+    }
+
+    func checkSharedFolders() {
+        let generation = beginSharedFolderCheck()
+        let grants = everySharedFolder
+        Task.detached(priority: .utility) { [weak self, grants, generation] in
+            let next = ChatStore.folderStates(grants)
+            await MainActor.run { [weak self] in
+                self?.applySharedFolderStates(next, generation: generation)
+            }
+        }
     }
 
     @discardableResult
@@ -495,6 +538,55 @@ extension ChatStore {
             grantError = chatLine
             projectError = projectLine
             rulesNotice = SharedFolderRows.failed
+        }
+        return saved
+    }
+
+    @discardableResult
+    func chooseAgain(_ row: SharedFolderRow, url: URL) -> Bool {
+        let chosen: FolderGrant
+        do { chosen = try FolderGrant.make(url: url) } catch {
+            rulesNotice = error.localizedDescription
+            return false
+        }
+        func placed(_ grants: [FolderGrant], _ grantID: String) -> [FolderGrant]? {
+            guard let index = grants.firstIndex(where: { $0.id == grantID }) else { return nil }
+            let others = grants.filter { $0.id != grantID }.flatMap { [$0.path] + ($0.current().map { [$0.path] } ?? []) }
+            guard !others.contains(where: { NativeFolderAccess.contains(root: $0, path: chosen.path) || NativeFolderAccess.contains(root: chosen.path, path: $0) }) else {
+                rulesNotice = SharedFolderRows.alreadyShared(chosen.name)
+                return nil
+            }
+            var next = grants
+            next[index] = FolderGrant(id: grantID, path: chosen.path, name: chosen.name, bookmark: chosen.bookmark, identity: chosen.identity,
+                                      readOnly: grants[index].readOnly)
+            return next
+        }
+        let saved: Bool
+        switch row.kind {
+        case .chat(let conversationID, let grantID):
+            guard let index = conversations.firstIndex(where: { $0.id == conversationID }),
+                  let next = placed(conversations[index].grants, grantID) else { return false }
+            let before = conversations[index]
+            let chatLine = grantError
+            conversations[index].grants = next
+            saved = persistGrants(index)
+            if !saved, let current = conversations.firstIndex(where: { $0.id == conversationID }) {
+                conversations[current].grants = before.grants
+                conversations[current].isPersisted = before.isPersisted
+                refreshConversationGrants(conversationID)
+                grantError = chatLine
+            }
+        case .project(let projectID, let grantID):
+            guard let record = project(projectID), let next = placed(record.grants, grantID) else { return false }
+            let projectLine = projectError
+            saved = replaceProjectFolders(projectID, grants: next)
+            if !saved { projectError = projectLine }
+        }
+        if saved {
+            checkSharedFolders()
+            if rulesNotice == SharedFolderRows.notMoved || rulesNotice == SharedFolderRows.failed { rulesNotice = nil }
+        } else {
+            rulesNotice = SharedFolderRows.notMoved
         }
         return saved
     }

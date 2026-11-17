@@ -10,6 +10,7 @@ struct ShotView: View {
     var attachDemo: Bool = false
     var streaming: Bool = false
     var folder: Bool = false
+    var folderState: FolderAvailability = .usable
     var command: Bool = false
     var schedule: Bool = false
     var chrome: ShotChrome = .window
@@ -591,7 +592,7 @@ struct ShotView: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 if folder || command || cardChat != nil {
-                    FolderGrantChips(grants: shotGrants, onRemove: { _ in })
+                    FolderGrantChips(grants: shotGrants, onRemove: { _ in }, availability: { _ in folderState })
                 }
                 if mentions {
                     ComposerMentionList(sections: shotMentionCatalog.sections(""), selection: 1, onHover: { _ in }, onPick: { _ in })
