@@ -68,63 +68,254 @@ struct NativeMCPJSONSchema: Sendable {
         } catch {}
         guard case .object(let schema) = self.schema, case .object(let values) = value else { return "Expected a JSON object" }
         if let required = schema["required"], let names = try? strings(required) {
-            for name in names where Self.exactValue(name, in: values) == nil { return "Missing required field '\(name)'" }
+            for name in names where Self.exactValue(name, in: values) == nil { return "Missing required field '\(Self.shown(name))'" }
         }
         let declared: [String: NativeJSONValue]
         if case .object(let properties)? = schema["properties"] { declared = properties } else { declared = [:] }
         if schema["additionalProperties"] == .bool(false),
            let name = values.keys.filter({ Self.exactValue($0, in: declared) == nil }).sorted().first {
-            return "Unknown field '\(name)'"
+            return "Unknown field '\(Self.shown(name))'"
         }
         for name in values.keys.sorted() {
             guard let item = values[name], let property = Self.exactValue(name, in: declared) else { continue }
             var budget = 50_000
             if (try? matches(item, schema: property, depth: 1, budget: &budget)) == true { continue }
-            return "Field '\(name)' " + Self.expectation(item, property)
+            return "Field '\(Self.shown(name))' " + Self.expectation(item, property)
         }
         return "The arguments do not match this tool's schema"
     }
 
-    private static func expectation(_ value: NativeJSONValue, _ schema: NativeJSONValue) -> String {
-        guard case .object(let object) = schema else { return "is not accepted" }
-        if case .string(let type)? = object["type"] {
-            switch (type, value) {
-            case ("string", .string(let text)):
-                if case .number(let minimum)? = object["minLength"], Double(text.unicodeScalars.count) < minimum {
-                    return minimum <= 1 ? "must be a non-empty string" : "must be at least \(plain(minimum)) characters"
+    static let vague = "does not match its schema"
+    static let itemBlame = "has an item that does not match its schema"
+    static let countedEndings = [" character", " characters", " item", " items", " field", " fields"]
+
+    static func counted(_ number: Double, _ noun: String) -> String {
+        plain(number) + " " + (number == 1 ? noun : noun + "s")
+    }
+
+    static let required = "is required"
+    static let undeclared = "is not a field this call accepts"
+
+    func problems(_ value: NativeJSONValue, limit: Int = 4) -> [NativeSchemaProblem] {
+        var found: [NativeSchemaProblem] = []
+        var budget = 50_000
+        do {
+            var nodes = 0
+            var bytes = 0
+            try Self.measure(value, depth: 0, nodes: &nodes, bytes: &bytes)
+            try collect(value, schema: schema, path: "", depth: 0, limit: max(1, limit), into: &found, budget: &budget)
+        } catch {
+            return []
+        }
+        return found
+    }
+
+    private func collect(_ value: NativeJSONValue, schema: NativeJSONValue, path: String, depth: Int, limit: Int,
+                         into found: inout [NativeSchemaProblem], budget: inout Int) throws {
+        guard found.count < limit else { return }
+        if try matches(value, schema: schema, depth: depth, budget: &budget) { return }
+        var target = schema
+        let before = found.count
+        if case .object(var object) = schema, let ref = object["$ref"] {
+            try collect(value, schema: reference(ref).1, path: path, depth: depth + 1, limit: limit, into: &found, budget: &budget)
+            guard found.count == before else { return }
+            object["$ref"] = nil
+            target = .object(object)
+        }
+        if case .object(let object) = target {
+            switch value {
+            case .object(let properties):
+                let declared: [String: NativeJSONValue]
+                if case .object(let schemas)? = object["properties"] { declared = schemas } else { declared = [:] }
+                if let required = object["required"] {
+                    for name in try strings(required) where Self.exactValue(name, in: properties) == nil && found.count < limit {
+                        found.append(NativeSchemaProblem(path: Self.joined(path, name), expected: Self.required))
+                    }
                 }
-                if case .number(let maximum)? = object["maxLength"], Double(text.unicodeScalars.count) > maximum {
-                    return "must be at most \(plain(maximum)) characters"
+                for name in properties.keys.sorted() where found.count < limit {
+                    guard let item = properties[name] else { continue }
+                    if let child = Self.exactValue(name, in: declared) {
+                        try collect(item, schema: child, path: Self.joined(path, name), depth: depth + 1, limit: limit, into: &found, budget: &budget)
+                    } else if object["additionalProperties"] == .bool(false) {
+                        found.append(NativeSchemaProblem(path: Self.joined(path, name), expected: Self.undeclared))
+                    } else if let child = object["additionalProperties"] {
+                        try collect(item, schema: child, path: Self.joined(path, name), depth: depth + 1, limit: limit, into: &found, budget: &budget)
+                    }
                 }
-            case ("string", _):
-                if case .number(let minimum)? = object["minLength"], minimum == 0 { return "must be a string" }
-                return "must be a non-empty string"
-            case ("boolean", .bool): break
-            case ("boolean", _): return "must be a boolean"
-            case ("integer", .number(let number)), ("number", .number(let number)):
-                if type == "integer", number.rounded(.towardZero) != number { return "must be a whole number" }
-                if case .number(let minimum)? = object["minimum"], number < minimum { return "must be at least \(plain(minimum))" }
-                if case .number(let maximum)? = object["maximum"], number > maximum { return "must be at most \(plain(maximum))" }
-            case ("integer", _): return "must be a whole number"
-            case ("number", _): return "must be a number"
-            case ("array", .array(let items)):
-                if case .number(let minimum)? = object["minItems"], Double(items.count) < minimum { return "must have at least \(plain(minimum)) items" }
-                if case .number(let maximum)? = object["maxItems"], Double(items.count) > maximum { return "must have at most \(plain(maximum)) items" }
-                return "has an item that does not match its schema"
-            case ("array", _): return "must be a list"
-            case ("object", .object): break
-            case ("object", _): return "must be an object"
+            case .array(let items):
+                let prefix: [NativeJSONValue]
+                if case .array(let schemas)? = object["prefixItems"] { prefix = schemas } else { prefix = [] }
+                if Self.within(items.count, object) {
+                    for (index, item) in items.enumerated() where found.count < limit {
+                        guard let child = index < prefix.count ? prefix[index] : object["items"] else { continue }
+                        try collect(item, schema: child, path: path + "[\(index)]", depth: depth + 1, limit: limit, into: &found, budget: &budget)
+                    }
+                }
             default: break
             }
         }
-        if case .array(let choices)? = object["enum"] {
+        if found.count == before, case .object(let object) = target, try typed(value, object) {
+            if case .array(let members)? = object["allOf"] {
+                for member in members where found.count < limit {
+                    try collect(value, schema: member, path: path, depth: depth + 1, limit: limit, into: &found, budget: &budget)
+                }
+            }
+            for key in ["anyOf", "oneOf"] where found.count == before {
+                guard case .array(let forms)? = object[key] else { continue }
+                var fitting = 0
+                for form in forms {
+                    if try matches(value, schema: form, depth: depth + 1, budget: &budget) { fitting += 1 }
+                }
+                if fitting == 0 {
+                    found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: "must fit one of the allowed forms"))
+                } else if key == "oneOf", fitting > 1 {
+                    found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: "must fit only one of the allowed forms"))
+                }
+            }
+        }
+        if found.count == before, found.count < limit {
+            var expected = Self.expectation(value, target)
+            if expected == Self.itemBlame { expected = Self.vague }
+            if case .string = value, expected == "must be a non-empty string" {
+                expected += Self.measured(value, target)
+            } else if Self.countedEndings.contains(where: { expected.hasSuffix($0) }) {
+                expected += Self.measured(value, target)
+            }
+            found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: expected))
+        }
+    }
+
+    private func typed(_ value: NativeJSONValue, _ object: [String: NativeJSONValue]) throws -> Bool {
+        guard let type = object["type"] else { return true }
+        let names: [String]
+        if case .string(let name) = type { names = [name] } else { names = try strings(type) }
+        return names.contains { isType(value, $0) }
+    }
+
+    private static func within(_ count: Int, _ object: [String: NativeJSONValue]) -> Bool {
+        if case .number(let bound)? = object["minItems"], Double(count) < bound { return false }
+        if case .number(let bound)? = object["maxItems"], Double(count) > bound { return false }
+        return true
+    }
+
+    private static func measured(_ value: NativeJSONValue, _ schema: NativeJSONValue) -> String {
+        guard case .object(let object) = schema else { return "" }
+        func outside(_ count: Int, _ low: String, _ high: String) -> Bool {
+            if case .number(let bound)? = object[low], Double(count) < bound { return true }
+            if case .number(let bound)? = object[high], Double(count) > bound { return true }
+            return false
+        }
+        switch value {
+        case .string(let text) where outside(text.unicodeScalars.count, "minLength", "maxLength"):
+            return ", and this one has \(text.unicodeScalars.count)"
+        case .array(let items) where outside(items.count, "minItems", "maxItems"):
+            return ", and this one has \(items.count)"
+        case .object(let fields) where outside(fields.count, "minProperties", "maxProperties"):
+            return ", and this one has \(fields.count)"
+        default: return ""
+        }
+    }
+
+    static func shown(_ name: String) -> String {
+        let clean = NativeToolRepair.plain(name).replacingOccurrences(of: "'", with: " ")
+        return String(String.UnicodeScalarView(clean.unicodeScalars.prefix(64)))
+    }
+
+    private static func joined(_ path: String, _ name: String) -> String {
+        let shown = Self.shown(name)
+        return path.isEmpty ? shown : path + "." + shown
+    }
+
+    private static func expectation(_ value: NativeJSONValue, _ schema: NativeJSONValue) -> String {
+        guard case .object(let object) = schema else { return "is not accepted" }
+        var declared: String?
+        if case .string(let name)? = object["type"] { declared = name }
+        if case .array(let names)? = object["type"] {
+            let kinds = names.compactMap { name -> String? in if case .string(let text) = name { text } else { nil } }
+            let fits = kinds.contains { kind in
+                switch (value, kind) {
+                case (.object, "object"), (.array, "array"), (.string, "string"), (.number, "number"), (.bool, "boolean"), (.null, "null"): return true
+                case (.number(let number), "integer"): return number.rounded(.towardZero) == number
+                default: return false
+                }
+            }
+            if !fits, !kinds.isEmpty { return "must be one of these kinds: " + kinds.joined(separator: ", ") }
+        }
+        let type: String
+        if let declared {
+            type = declared
+        } else {
+            switch value {
+            case .string: type = "string"
+            case .number: type = "number"
+            case .array: type = "array"
+            case .object: type = "object"
+            case .bool: type = "boolean"
+            case .null: type = "null"
+            }
+        }
+        switch (type, value) {
+        case ("string", .string(let text)):
+            if case .number(let minimum)? = object["minLength"], Double(text.unicodeScalars.count) < minimum {
+                return minimum <= 1 ? "must be a non-empty string" : "must be at least " + counted(minimum, "character")
+            }
+            if case .number(let maximum)? = object["maxLength"], Double(text.unicodeScalars.count) > maximum {
+                return "must be at most " + counted(maximum, "character")
+            }
+        case ("string", _):
+            if case .number(let minimum)? = object["minLength"], minimum >= 1 { return "must be a non-empty string" }
+            return "must be a string"
+        case ("boolean", .bool): break
+        case ("boolean", _): return "must be a boolean"
+        case ("integer", .number(let number)), ("number", .number(let number)):
+            if type == "integer", number.rounded(.towardZero) != number { return "must be a whole number" }
+            if case .number(let minimum)? = object["minimum"], number < minimum { return "must be at least \(plain(minimum))" }
+            if case .number(let maximum)? = object["maximum"], number > maximum { return "must be at most \(plain(maximum))" }
+            if case .number(let bound)? = object["exclusiveMinimum"], number <= bound { return "must be more than \(plain(bound))" }
+            if case .number(let bound)? = object["exclusiveMaximum"], number >= bound { return "must be less than \(plain(bound))" }
+        case ("integer", _): return "must be a whole number"
+        case ("number", _): return "must be a number"
+        case ("array", .array(let items)):
+            if case .number(let minimum)? = object["minItems"], Double(items.count) < minimum { return "must have at least " + counted(minimum, "item") }
+            if case .number(let maximum)? = object["maxItems"], Double(items.count) > maximum { return "must have at most " + counted(maximum, "item") }
+            if case .bool(true)? = object["uniqueItems"], Set(items.map(ExactValue.init)).count != items.count { return "must not repeat an item" }
+            if declared == "array", !items.isEmpty, object["items"] != nil || object["prefixItems"] != nil, object["const"] == nil, object["enum"] == nil {
+                return itemBlame
+            }
+        case ("array", _): return "must be a list"
+        case ("object", .object(let fields)):
+            if case .number(let minimum)? = object["minProperties"], Double(fields.count) < minimum { return "must have at least " + counted(minimum, "field") }
+            if case .number(let maximum)? = object["maxProperties"], Double(fields.count) > maximum { return "must have at most " + counted(maximum, "field") }
+        case ("object", _): return "must be an object"
+        case ("null", .null): break
+        case ("null", _): return "must be null"
+        default: break
+        }
+        if let fixed = object["const"], ExactValue(fixed) != ExactValue(value) {
+            switch fixed {
+            case .string(let text):
+                let simple = text.unicodeScalars.count <= 80 && !text.isEmpty && NativeToolRepair.plain(text) == text && !text.contains("\"")
+                return simple ? "must be exactly \"" + text + "\"" : "must be one fixed value"
+            case .number(let number): return "must be exactly \(plain(number))"
+            case .bool(let flag): return "must be exactly \(flag ? "true" : "false")"
+            case .null: return "must be null"
+            default: return "must be one fixed value"
+            }
+        }
+        if case .array(let choices)? = object["enum"], !choices.contains(where: { ExactValue($0) == ExactValue(value) }) {
             let names = choices.compactMap { choice -> String? in
-                if case .string(let text) = choice { return text }
-                return nil
+                switch choice {
+                case .string(let text): return text
+                case .number(let number): return plain(number)
+                case .bool(let flag): return flag ? "true" : "false"
+                case .null: return "null"
+                default: return nil
+                }
             }
             if names.count == choices.count, !names.isEmpty { return "must be one of: " + names.joined(separator: ", ") }
+            return "must be one of the listed values"
         }
-        return "does not match its schema"
+        return vague
     }
 
     private static func plain(_ number: Double) -> String {
@@ -133,7 +324,7 @@ struct NativeMCPJSONSchema: Sendable {
 
     private static func measure(_ value: NativeJSONValue, depth: Int, nodes: inout Int, bytes: inout Int) throws {
         nodes += 1
-        guard depth <= 48, nodes <= 8_192, bytes <= 1_048_576 else { throw Failure.resourceLimit }
+        guard depth <= 48, nodes <= 32_768, bytes <= 1_048_576 else { throw Failure.resourceLimit }
         switch value {
         case .object(let object):
             for (key, item) in object {
@@ -377,6 +568,11 @@ struct NativeMCPJSONSchema: Sendable {
 }
 
 typealias NativeJSONSchema = NativeMCPJSONSchema
+
+struct NativeSchemaProblem: Codable, Equatable, Sendable {
+    let path: String
+    let expected: String
+}
 
 final class NativeToolSchemaCache: @unchecked Sendable {
     static let shared = NativeToolSchemaCache()

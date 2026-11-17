@@ -407,6 +407,22 @@ extension SelfTest {
                     "A no then an approval runs it once and reads as approved")
 
         sent.reset(); cards.reset()
+        let once = NativeAuthorizationScript(.notAuthorized)
+        let shared = NativeInstructionUses(messageID: message, conversationID: authorizationChat)
+        let repeated = try await authorizationDrive(tools(uses: shared), [authorizationRound("first", "send_notes", authorizationSend),
+                                                                           authorizationRound("second", "send_notes", authorizationSend), authorizationFinished],
+                                                    enabled: enabled, request: request, authorizer: once.authorizer(), confirm: refuse)
+        try require(repeated.count == 2 && repeated.allSatisfy { $0.state == .failed } && repeated[0].confirmationRequired && once.calls == 1
+                        && cards.count == 1 && sent.count == 0,
+                    "After a no the same send is not asked again and no second check runs")
+        let toBo = "{\"to\":\"bo@greenhouse.test\"}"
+        let boTyped = "Send the notes to bo@greenhouse.test"
+        let other = try await authorizationDrive(tools(typed: boTyped, uses: shared), [authorizationRound("bo", "send_notes", toBo), authorizationFinished],
+                                                 enabled: enabled, request: try authorizationRequest(boTyped, message: message),
+                                                 authorizer: once.authorizer(), confirm: refuse)
+        try require(other.count == 1 && once.calls == 2, "A different typed target gets its own check")
+
+        sent.reset(); cards.reset()
         let none = try await authorizationDrive(tools(), [send, authorizationFinished], enabled: enabled, request: request, authorizer: nil, confirm: refuse)
         let unrequested = NativeAuthorizationScript(.authorized)
         let anonymous = try await authorizationDrive(tools(), [send, authorizationFinished], enabled: enabled, request: nil,
@@ -731,7 +747,13 @@ extension SelfTest {
                     "More work or a reply from the same message never asks the model again")
 
         let slow = try fixture.chat()
-        let slowEnvironment = fixture.environment(slow, tools: [fixture.device(slow.device)])
+        var slowEnvironment = fixture.environment(slow, tools: [fixture.device(slow.device)])
+        let failedChecks = NativeChatRulesCounter()
+        let answeredChecks = NativeChatRulesCounter()
+        slowEnvironment.checkObserved = { source in
+            if case .failed = source { failedChecks.hit() }
+            if source == .model { answeredChecks.hit() }
+        }
         let dropped = fixture.model()
         dropped.checks { throw URLError(.timedOut) }
         _ = try fixture.work(slow, index: 1, said: typed)
@@ -739,6 +761,8 @@ extension SelfTest {
         try require(droppedDone.state == .needsDecision && slow.device.count == 0
                         && !NativeInstructionUseStore(database: slow.repository.database).refused(slow.turn.userMessageID, signature: signature),
                     "A check that can't reach the model asks and remembers nothing")
+        try require(failedChecks.count == 1 && answeredChecks.count == 0,
+                    "A check from handed-off work that can't run is counted toward the Settings notice: \(failedChecks.count)")
 
         for mode in ["scheduled", "proactive"] {
             let unattended = try fixture.chat()

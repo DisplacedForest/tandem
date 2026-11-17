@@ -25,7 +25,7 @@ enum NativeScheduleTools {
                            now: @escaping @Sendable () -> Date = { Date() },
                            timeZone: @escaping @Sendable () -> TimeZone = { .current },
                            save: @escaping @Sendable (NativeScheduleDraft) async throws -> NativeSchedule) -> NativeToolDefinition {
-        NativeToolDefinition(id: toolID, name: toolName, title: "Schedule work",
+        var built = NativeToolDefinition(id: toolID, name: toolName, title: "Schedule work",
             description: "Proposes saving a schedule that runs research or writes a document later, either once at a set time or on a repeat. When to use: the person wants something looked into or written at a later time or regularly, such as every morning, on weekdays, weekly or every few hours. When not to use: work that should start now, which create_background_task handles when it is offered; something the person wants to be reminded of themselves, which apple_reminders_create handles when it is offered; a question you can answer now. Effects: nothing runs and nothing is saved until the person confirms the schedule in the app; once confirmed it is saved and listed in Scheduled. Inputs: repeat decides which timing fields apply: daily and weekdays need time, weekly needs weekday and time, every_hours needs hours, and once needs at, which must still be ahead. Research needs web search set up. Returns message and saved; acknowledge in one sentence using the timing in message, do not say the schedule exists until saved is true, and never show identifiers. If it is refused over a timing field, retry once with that field corrected; if the person declines, leave it.",
             parameters: .object([
                 "type": .string("object"), "additionalProperties": .bool(false),
@@ -64,6 +64,19 @@ enum NativeScheduleTools {
                     "saved": .bool(true),
                 ])
             }, wants: wants, marksEffect: true)
+        built.check = { arguments in
+            do {
+                _ = try draft(from: arguments, now: now(), timeZone: timeZone())
+                return nil
+            } catch NativeToolError.invalidArguments(let detail) {
+                return detail
+            } catch let refusal as NativeScheduleError {
+                return refusal.localizedDescription
+            } catch {
+                return nil
+            }
+        }
+        return built
     }
 
     static func draft(from arguments: [String: NativeJSONValue], now: Date, timeZone: TimeZone) throws -> NativeScheduleDraft {

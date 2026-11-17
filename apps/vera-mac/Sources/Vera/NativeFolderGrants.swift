@@ -369,6 +369,7 @@ enum NativeToolCallContext {
     @TaskLocal static var reason: NativeToolReasonSink?
     @TaskLocal static var boundary: NativeEffectBoundary?
     @TaskLocal static var round: Int?
+    @TaskLocal static var afterOnlyRefusals = false
     @TaskLocal static var otherToolRan: Bool?
     @TaskLocal static var sameToolOrdinal: Int?
     @TaskLocal static var replyCallOrdinal: Int?

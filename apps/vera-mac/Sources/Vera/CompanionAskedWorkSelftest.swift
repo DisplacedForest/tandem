@@ -345,7 +345,7 @@ enum CompanionAskedWorkFixture {
         harness.transport.answerRestrictions { asked in
             asked.contains("Don't use any tools.") ? NativeRequestAuthorizer.refusalsReply(["use any tools"]) : NativeRequestAuthorizer.noRestrictions
         }
-        let declined = try await send(harness, quiet)
+        let declined = try await send(harness, quiet, typed: true)
         try require((results(declined).first ?? "").contains(NativeRefusalList.ruledOutSentence)
                     && (try harness.repository.taskReferences(conversationID: nil)).isEmpty,
                     "A message that says not to use tools starts nothing in the companion conversation, and the model is told why")
@@ -355,7 +355,7 @@ enum CompanionAskedWorkFixture {
         try require(result.contains(NativeTaskTools.pausedReply) && result.contains("\"started\":false")
                     && (try harness.repository.taskReferences(conversationID: nil)).isEmpty,
                     "A paused companion starts nothing: \(result)")
-        let long = String(repeating: "a", count: NativeTaskTools.generalLimit + 1)
+        let long = String(repeating: "a", count: NativeCompanionTaskPayload.assignmentCharacters + 1)
         harness.store.setDotState(.active)
         let tooLong = try await send(harness, long)
         try require(tooLong.toolActivities.first?.state == .failed && (try harness.repository.taskReferences(conversationID: nil)).isEmpty,
@@ -414,7 +414,7 @@ enum CompanionAskedWorkFixture {
         let ask = "Please research lunar ice in the background, and sort the seed packets."
         let research = CompanionAskedWorkTransport.call(NativeTaskTools.toolName, ["worker_type": .string("research"), "objective": .string("Research lunar ice"),
                                                                                     "deliverables": .array([.string("Three findings")])])
-        let invalid = CompanionAskedWorkTransport.call(NativeTaskTools.toolName, ["worker_type": .string("research"), "objective": .string("Research lunar ice")])
+        let invalid = CompanionAskedWorkTransport.call(NativeTaskTools.toolName, ["worker_type": .string("research"), "deliverables": .array([.string("Three findings")])])
         let harness = try harness { _, messages, _ in
             if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("I'll do both.") }
             return CompanionAskedWorkTransport.hand([invalid, CompanionAskedWorkTransport.general(seeds)])

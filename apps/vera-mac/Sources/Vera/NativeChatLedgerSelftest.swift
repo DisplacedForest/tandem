@@ -401,8 +401,8 @@ extension SelfTest {
         let declinedRows = try chatLedgerRows(ledger, turn, "garden_log").filter { $0.decisionID?.hasPrefix("a-decline") == true }
         try require(declined?.activities.count == 2 && declined?.activities.allSatisfy {
                         $0.state == .failed && ($0.result ?? "").contains("The user did not approve this call")
-                    } == true && declinedRows.count == 2 && declinedRows.allSatisfy { $0.state == .declined } && log.count("ran:garden_log") == 1,
-                    "A declined card is recorded declined and the tool never runs")
+                    } == true && declinedRows.count == 1 && declinedRows.allSatisfy { $0.state == .declined } && log.count("ran:garden_log") == 1,
+                    "A declined card is recorded declined, its identical repeat is not asked or recorded again, and the tool never runs")
 
         let stopping = chatLedgerHook(ledger, turn: turn, rules: rules, grants: grants, log: log) { _ in NativeCardAnswer(kind: .decline, byPerson: false) }
         _ = try await chatLedgerLoop([send], calls: [[call("a-stop")]], hook: stopping)
@@ -772,7 +772,7 @@ extension SelfTest {
         try await chatLedgerSettle(declining)
         let declinedRows = try chatLedgerRows(declineLedger, declineTurn, "garden_log")
         let activities = declining.selected?.messages.last?.toolActivities ?? []
-        try require(declineLog.count("ran") == 0 && declinedRows.count == 2 && declinedRows.allSatisfy { $0.state == .declined }
+        try require(declineLog.count("ran") == 0 && declinedRows.count == 1 && declinedRows.allSatisfy { $0.state == .declined }
                     && activities.count == 2 && activities.allSatisfy { ($0.result ?? "").contains("The user did not approve this call") },
                     "A declined card and its identical repeat are both declined with no second card and nothing runs")
 

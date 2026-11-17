@@ -34,7 +34,19 @@ final class NativeTaskConfiguration {
             executionModel: executionModel,
             limits: try limits ?? NativeTaskGenerationLimits(),
             requiresCredential: config.apiKey?.isEmpty == false,
-            reasoning: Self.reasoningOn(options(profileID: profile.id, model: executionModel)))
+            reasoning: Self.reasoningOn(options(profileID: profile.id, model: executionModel)),
+            outputLimit: Self.outputLimit(options(profileID: profile.id, model: executionModel)))
+    }
+
+    nonisolated static func outputLimit(_ options: NativeChatRequestOptions) -> Int? {
+        guard let entry = options.topLevel.first(where: { $0.key == "max_tokens" }) else { return nil }
+        let number: Double
+        switch entry.value {
+        case .number(let value): number = value
+        default: return nil
+        }
+        guard number.isFinite, number >= 1, number <= 1_000_000, let whole = Int(exactly: number) else { return nil }
+        return whole
     }
 
     static func reasoningOn(_ options: NativeChatRequestOptions) -> Bool {

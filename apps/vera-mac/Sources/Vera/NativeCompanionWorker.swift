@@ -35,6 +35,7 @@ struct NativeCompanionWorkerEnvironment: Sendable {
     var recordsChanged: @Sendable () -> Void = {}
     var saveRules: @Sendable ([NativeRuleRecord]) -> Bool = { _ in false }
     var instructionUses: NativeInstructionUseStore? = nil
+    var checkObserved: NativeRequestAuthorizer.Observer? = nil
 }
 
 struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
@@ -67,9 +68,10 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var refused: [String]?
     var note: NativeTaskNote?
     var finishing: Bool?
+    var repairs: NativeToolRepairs?
 
     private enum CodingKeys: String, CodingKey {
-        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases, note, finishing
+        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases, note, finishing, repairs
         case refused = "instruction_refused"
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
@@ -79,6 +81,8 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     static func freshAttempt() -> String {
         UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
+
+    var stoppedOnRepairs: Bool { repairs?.closed.isEmpty == false }
 
     func encoded() throws -> Data {
         let encoder = JSONEncoder()
@@ -190,6 +194,7 @@ enum NativeCompanionWorker {
     static let stepTimeoutSeconds: Double = 1800
     static let reportScalars = 40000
     static let noteScalars = 240
+    static let stoppedShortFallback = "I couldn't finish this."
     static let outOfRoomLead = "I ran out of room to keep reading before I finished. Here's what I found so far."
     static let outOfRoomFallback = "I ran out of room to keep reading before I finished, and I couldn't write it up."
     static let summaryCharacters = 280
@@ -462,6 +467,8 @@ enum NativeCompanionWorker {
         return cut + " [result truncated]"
     }
 
+    static let unknownTool = "Unknown tool. Use only the tools offered."
+
     static func message(_ text: String) -> String {
         NativeEffectProposal.canonicalArguments(.object(["error": .string(text)]))
     }
@@ -645,8 +652,8 @@ extension NativeCompanionWorker {
         let covered = { (note: NativeCompanionEffectNote) in
             note.outcome.hasPrefix("done") || note.outcome == "failed" || note.outcome == "unconfirmed"
         }
-        let others = checkpoint.effects.filter { !covered($0) }
-        var sections = [outOfRoomFallback]
+        let others = checkpoint.effects.filter { !covered($0) && $0.outcome != NativeToolRepair.neverRanOutcome }
+        var sections = [checkpoint.stoppedOnRepairs ? stoppedShortFallback : outOfRoomFallback]
         if !others.isEmpty {
             sections.append(others.map { "- \($0.title): \($0.outcome)" + ($0.reason.map { ". " + $0 } ?? "") }.joined(separator: "\n"))
         }
@@ -841,7 +848,7 @@ private struct NativeCompanionRun {
         return sentence(why)
     }
 
-    func systemPrompt(finishing: Bool) -> String {
+    func systemPrompt(finishing: Bool, stoppedOnRepairs: Bool = false) -> String {
         let resolver = authority().resolver
         var lines = [
             (context.companion.name.map { "You are \($0)" } ?? "You are the user's assistant") + ", working on one assignment in a fresh, private workspace. You are an operator, not the conversation: you cannot see the conversation, and the person reads only your final reply.",
@@ -856,7 +863,9 @@ private struct NativeCompanionRun {
             lines.append("This run was started by a schedule or by Tandem itself, so it is read-only. You can look things up but cannot change anything. If the assignment needs a change, do the rest and say plainly what you left undone.")
         }
         if finishing {
-            lines.append("You ran out of room to keep going. Write in the first person and say plainly what you finished and what you did not.")
+            lines.append(stoppedOnRepairs
+                ? "A step you kept sending could not be run, so this work stops here. Write in the first person and say plainly what you finished and what you could not do."
+                : "You ran out of room to keep going. Write in the first person and say plainly what you finished and what you did not.")
             lines.append("Stop using tools now. Answer the person directly, the way you would reply in a chat, and say plainly what you did. If the assignment asked for something to keep, like a document, plan, list or write-up, write that thing in Markdown.")
         } else {
             lines.append("Use tools when they help. When the assignment is done, reply without tool calls and answer the person directly, the way you would reply in a chat. If the assignment asked for something to keep, like a document, plan, list or write-up, write that thing in Markdown.")
@@ -866,7 +875,7 @@ private struct NativeCompanionRun {
     }
 
     func messages(_ checkpoint: NativeCompanionCheckpoint, finishing: Bool) -> [NativeTaskGenerationMessage] {
-        [NativeTaskGenerationMessage(role: "system", content: systemPrompt(finishing: finishing)),
+        [NativeTaskGenerationMessage(role: "system", content: systemPrompt(finishing: finishing, stoppedOnRepairs: checkpoint.stoppedOnRepairs)),
          NativeTaskGenerationMessage(role: "user", content: "Assignment:\n\(dot.assignment)" + NativeCompanionWorker.carriedSection(dot.carried))] + checkpoint.transcript
     }
 
@@ -955,7 +964,8 @@ private struct NativeCompanionRun {
             }
             checkpoint.rounds += 1
             if completion.toolCalls.isEmpty, !completion.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return try await conclude(&checkpoint, text: NativeCompanionWorker.outOfRoomLead + "\n\n" + completion.content)
+                let lead = checkpoint.stoppedOnRepairs ? "" : NativeCompanionWorker.outOfRoomLead + "\n\n"
+                return try await conclude(&checkpoint, text: lead + completion.content)
             }
         }
         let fallback = NativeCompanionWorker.fallbackReport(checkpoint)
@@ -1001,7 +1011,7 @@ private struct NativeCompanionRun {
         let transport = NativeRequestAuthorizer.handedOff(model: model, phase: "work-\(checkpoint.rounds)",
                                                           attempt: checkpoint.attempt + NativeRequestAuthorizer.attemptSuffix + key,
                                                           seconds: NativeRequestAuthorizer.seconds(deadline), stopped: stopProbe)
-        return try await NativeRequestAuthorizer(transport: transport, deadline: deadline).decide(request, proposed)
+        return try await NativeRequestAuthorizer(transport: transport, deadline: deadline, observe: environment.checkObserved).decide(request, proposed)
     }
 
     func stopped(_ reason: String, call: NativeTaskGenerationToolCall, record: NativeEffectRecord?, title: String,
@@ -1045,8 +1055,25 @@ private struct NativeCompanionRun {
     }
 
     func execute(_ call: NativeTaskGenerationToolCall, _ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
+        var repairs = checkpoint.repairs ?? NativeToolRepairs()
+        let repairKey = definition(named: call.name) == nil ? NativeToolRepairs.unknownKey : call.name
+        func refuse(_ problem: NativeToolCallProblem) {
+            checkpoint.repairs = repairs
+            if repairs.isClosed(repairKey) { checkpoint.finishing = true }
+            checkpoint.answer(call, NativeEffectProposal.canonicalArguments(problem.value))
+        }
+        guard !repairs.isClosed(repairKey) else {
+            refuse(NativeToolRepair.closed(key: repairKey, unknown: NativeCompanionWorker.unknownTool))
+            return nil
+        }
+        func count(_ problem: NativeToolCallProblem, title: String) {
+            let answer = repairs.answer(problem, key: repairKey)
+            if repairs.isClosed(repairKey) { checkpoint.note(title, NativeToolRepair.neverRanOutcome, reason: NativeToolRepair.reason(problem.fault)) }
+            refuse(answer)
+        }
         guard let definition = definition(named: call.name) else {
-            checkpoint.answer(call, NativeCompanionWorker.message("Unknown tool. Use only the tools offered."))
+            count(NativeToolRepair.named(NativeToolRepair.unknown(NativeCompanionWorker.unknownTool, offered: offered.map(\.name)), nil, raw: call.arguments),
+                  title: NativeToolRepair.unknownStep)
             return nil
         }
         if let refusal = readOnlyRefusal(definition) {
@@ -1056,9 +1083,12 @@ private struct NativeCompanionRun {
             return nil
         }
         let arguments: [String: NativeJSONValue]
-        do { arguments = try definition.validatedArguments(call.arguments) } catch {
+        do {
+            arguments = try definition.validatedArguments(call.arguments)
+        } catch {
             checkpoint.calls += 1
-            checkpoint.answer(call, NativeCompanionWorker.message(error.localizedDescription))
+            count(NativeToolRepair.named(NativeToolRepair.problem(definition, raw: call.arguments, error: error), definition, raw: call.arguments),
+                  title: NativeToolRepair.described(definition, raw: call.arguments))
             return nil
         }
         if definition.effect == .read {
@@ -1066,6 +1096,26 @@ private struct NativeCompanionRun {
             return nil
         }
         return try await write(call, definition, arguments, &checkpoint)
+    }
+
+    func settleRepairs(_ call: NativeTaskGenerationToolCall, _ checkpoint: inout NativeCompanionCheckpoint) {
+        guard var repairs = checkpoint.repairs, repairs.counts[call.name] != nil else { return }
+        repairs.settled(call.name)
+        checkpoint.repairs = repairs
+    }
+
+    func countFault(_ call: NativeTaskGenerationToolCall, _ definition: NativeToolDefinition, _ message: String,
+                    _ checkpoint: inout NativeCompanionCheckpoint) {
+        var repairs = checkpoint.repairs ?? NativeToolRepairs()
+        let fault = NativeToolRepair.named(NativeToolRepair.handlerFault(message), definition, raw: call.arguments)
+        let answer = repairs.answer(fault, key: call.name)
+        if repairs.isClosed(call.name) {
+            checkpoint.note(NativeToolRepair.described(definition, raw: call.arguments), NativeToolRepair.neverRanOutcome,
+                            reason: NativeToolRepair.reason(fault.fault))
+            checkpoint.finishing = true
+        }
+        checkpoint.repairs = repairs
+        checkpoint.answer(call, NativeEffectProposal.canonicalArguments(answer.value))
     }
 
     func read(_ call: NativeTaskGenerationToolCall, _ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue],
@@ -1076,6 +1126,11 @@ private struct NativeCompanionRun {
             checkpoint.calls += 1
             do {
                 let raw = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) { try await definition.execute(arguments) }
+                settleRepairs(call, &checkpoint)
+                if let fault = NativeToolRepair.resultProblem(definition, raw, write: false) {
+                    checkpoint.answer(call, NativeEffectProposal.canonicalArguments(fault.value))
+                    return
+                }
                 var requested: String?
                 if case .string(let address)? = arguments["url"] { requested = address.trimmingCharacters(in: .whitespacesAndNewlines) }
                 let value = checkpoint.numbered(raw, definition: definition, requested: requested)
@@ -1086,6 +1141,10 @@ private struct NativeCompanionRun {
                 try Task.checkCancellation()
                 let canRetry = NativeCompanionWorker.transient(error) && attempt < NativeCompanionWorker.readRetryDelays.count
                 guard canRetry else {
+                    if case .invalidArguments? = error as? NativeToolError {
+                        countFault(call, definition, error.localizedDescription, &checkpoint)
+                        return
+                    }
                     let detail = NativeCompanionWorker.transient(error) ? "This lookup kept failing. Try another approach or report it." : error.localizedDescription
                     checkpoint.answer(call, NativeCompanionWorker.message(detail))
                     return
@@ -1207,7 +1266,13 @@ private struct NativeCompanionRun {
                     }
                 }
             }
+            settleRepairs(call, &checkpoint)
             let limit = NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)
+            if NativeToolRepair.resultProblem(definition, value, write: true) != nil {
+                try environment.ledger.markUncertain(digest: record.digest, reason: "failed_result")
+                guard let uncertain = try environment.ledger.record(digest: record.digest) else { return nil }
+                return try await reconcile(uncertain, call: call, definition: definition, &checkpoint)
+            }
             if NativeCompanionWorker.interrupted(value) {
                 try environment.ledger.markUncertain(digest: record.digest, reason: "interrupted_run")
                 guard let uncertain = try environment.ledger.record(digest: record.digest) else { return nil }
@@ -1228,6 +1293,10 @@ private struct NativeCompanionRun {
                 try environment.ledger.markUncertain(digest: record.digest, reason: "refused")
                 try environment.ledger.observe(digest: record.digest, .absent)
                 checkpoint.note(title, "not done")
+                if case .invalidArguments? = error as? NativeToolError {
+                    countFault(call, definition, error.localizedDescription, &checkpoint)
+                    return nil
+                }
                 checkpoint.answer(call, NativeCompanionWorker.message("Not done: \(error.localizedDescription)"))
                 return nil
             }

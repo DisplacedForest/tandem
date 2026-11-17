@@ -78,14 +78,15 @@ enum NativeSessionFixture {
             store.scheduleConversationTurns()
         }
         let previousMessages = store.conversations[index].messages
-        guard store.sendText(text), let accepted = try repository.conversationTurns().last else { return false }
+        guard store.sendText(text, fromComposer: true), let accepted = try repository.conversationTurns().last else { return false }
         let user = store.conversations[index].messages.first { $0.id == accepted.userMessageID }!
-        let legacy = NativeConversationTurn(id: accepted.id, conversationID: accepted.conversationID,
+        var legacy = NativeConversationTurn(id: accepted.id, conversationID: accepted.conversationID,
             userMessageID: accepted.userMessageID, assistantMessageID: accepted.assistantMessageID, mode: .continuous,
             profile: accepted.profile, enabledToolIDs: accepted.enabledToolIDs,
             persona: accepted.persona, userScope: accepted.userScope, instructions: accepted.instructions,
             grounding: accepted.grounding, memorySettings: accepted.memorySettings, createdAt: accepted.createdAt,
             history: NativeTurnHistoryMessage.snapshot(previousMessages, current: user, mode: .continuous))
+        legacy.preferenceEligible = accepted.preferenceEligible
         try repository.database.write { db in
             try LocalChatRepository.writeTurn(legacy, db: db)
             try db.execute(sql: "UPDATE native_conversation_turns SET mode='continuous' WHERE id=?",

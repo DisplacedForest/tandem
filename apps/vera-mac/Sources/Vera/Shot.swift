@@ -14,6 +14,10 @@ enum Shot {
             MessageActionsShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if NewReplyShot.views.contains(view) {
+            NewReplyShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("message-layout-") {
             ConversationShot.render(view: view, to: path, appearance: appearance)
             return

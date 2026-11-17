@@ -113,12 +113,13 @@ final class TaskReasoningWire: URLProtocol, @unchecked Sendable {
         return data
     }
 
-    static func complete(job: NativeTaskGenerationJob, liveReasoning: Bool) async throws -> NativeTaskGenerationCompletion {
+    static func complete(job: NativeTaskGenerationJob, liveReasoning: Bool, limit: Int? = nil) async throws -> NativeTaskGenerationCompletion {
         let binding = NativeTaskProfileBinding(id: "live-binding", profileID: "live-profile",
             provider: try NativeTaskEngineIdentity(URL(string: "https://\(host)/v1")!),
             savedModel: "live-model", executionModel: "live-model", limits: try NativeTaskGenerationLimits())
         var options = NativeChatRequestOptions.none
         if liveReasoning { options.topLevel.append(.init(key: "reasoning", value: .object(["enabled": .bool(true)]), source: .saved)) }
+        if let limit { options.topLevel.append(.init(key: "max_tokens", value: .number(Double(limit)), source: .saved)) }
         let config = NativeChatConfig(baseURL: binding.provider.base, apiKey: "live-key", model: binding.executionModel,
                                       chatTemplateKwargs: nil, streaming: false, options: options)
         return try await NativeTaskProvider.completion(config: config, binding: binding, job: job,
@@ -154,6 +155,8 @@ extension SelfTest {
         try await replyCauseSaved()
         try await documentShorterSection()
         try await documentCutShortPause()
+        try await documentOutlineCutShortPause()
+        try await replyCauseNoInventedCap()
         try await documentUnusableAnswer()
         try await documentModelChanged()
         try await documentCredentialLost()
@@ -211,7 +214,7 @@ extension SelfTest {
         let require = NativeTaskFixture.require
         TaskReasoningWire.reset(cutFirst: true)
         let repository = try LocalChatRepository(inMemory: true)
-        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter()) { job in
+        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter(), profileOutputLimit: 1024) { job in
             if job.phase == "outline" { return sectionOutline() }
             if job.phase.hasPrefix("draft") { return try await TaskReasoningWire.complete(job: job, liveReasoning: true) }
             return .text("Revised \(job.phase).")
@@ -239,7 +242,8 @@ extension SelfTest {
         let require = NativeTaskFixture.require
         TaskReasoningWire.reset(cutFirst: false)
         let repository = try LocalChatRepository(inMemory: true)
-        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter(), profileReasoning: true) { job in
+        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter(), profileReasoning: true,
+                                                            profileOutputLimit: 1024) { job in
             if job.phase == "outline" { return sectionOutline() }
             if job.phase.hasPrefix("draft") { return try await TaskReasoningWire.complete(job: job, liveReasoning: false) }
             return .text("Revised \(job.phase).")
@@ -306,6 +310,8 @@ extension SelfTest {
                             "A card paused with the earlier credential line shows the current one once: \(card.milestone)")
             }
         }
+        try require(Words.outlineCutShortMessage == "The plan for this document was cut off before it finished, even after asking for a shorter one. Try this step again?"
+                    && Words.replySentences.contains(Words.outlineCutShortMessage), "The plan line reads exactly as agreed")
         let forbidden = ["provider_", "response_", "finish_reason", "finish reason", "model request", "\u{2014}"] + CompanionTalkControlFixture.banned
         for sentence in Words.replySentences {
             let lowered = sentence.lowercased()
@@ -401,8 +407,10 @@ extension SelfTest {
         let repository = try LocalChatRepository(inMemory: true)
         let provider = try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!)
         let thinking = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "sizing-profile", provider: provider,
-            savedModel: "sizing-model", executionModel: "sizing-model", limits: try NativeTaskGenerationLimits(maximumOutputTokens: 2048),
-            reasoning: true)
+            savedModel: "sizing-model", executionModel: "sizing-model", limits: try NativeTaskGenerationLimits(),
+            reasoning: true, outputLimit: 2048)
+        let unlimited = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "sizing-profile", provider: provider,
+            savedModel: "sizing-model", executionModel: "sizing-model", limits: try NativeTaskGenerationLimits(), reasoning: true)
         let document = try NativeResearchTaskRequest(objective: "Workshop notes", deliverables: ["Bench"], workerType: "document", title: "Plan")
         let research = try NativeResearchTaskRequest(objective: "What color is the fictional moon Luma?", deliverables: ["A cited answer"])
         let remote = try NativeTaskEngineIdentity(URL(string: "https://server.test/api")!)
@@ -412,7 +420,18 @@ extension SelfTest {
         }
         let local = try saved(NativeTaskLocalEngine.identity, document)
         try require(local?.outputTokens == 2048 && local?.reasoning == true
-                    && NativeDocumentWorker.firstSectionCharacters(local) == 2784, "A local document saves the real cap and reasoning")
+                    && NativeDocumentWorker.firstSectionCharacters(local) == 2784, "A local document saves the limit the person set and reasoning")
+        let free = try repository.prepareTaskReference(origin: try NativeTaskFixture.origin(repository), engine: NativeTaskLocalEngine.identity,
+                                                       request: document, profile: unlimited).createRequest.payload.nativeBinding
+        try require(free?.outputTokens == nil && NativeDocumentWorker.firstSectionCharacters(free) == NativeDocumentWorker.sectionCharacters,
+                    "With no output limit set, a document asks for full-size sections")
+        func limit(_ value: NativeJSONValue?) -> Int? {
+            var options = NativeChatRequestOptions.none
+            if let value { options.topLevel.append(.init(key: "max_tokens", value: value, source: .saved)) }
+            return NativeTaskConfiguration.outputLimit(options)
+        }
+        try require(limit(nil) == nil && limit(.number(4096)) == 4096 && limit(.number(0)) == nil && limit(.number(1.5)) == nil
+                    && limit(.string("4096")) == nil && limit(.number(.infinity)) == nil, "Only a whole positive number the person saved counts as a limit")
         for other in [try saved(NativeTaskLocalEngine.identity, research), try saved(remote, document), try saved(remote, research)] {
             let wire = try other.map { String(decoding: try nativeTaskEncoded($0), as: UTF8.self) } ?? ""
             try require(other != nil && other?.outputTokens == nil && other?.reasoning == nil && !wire.contains("output_tokens") && !wire.contains("reasoning"),
@@ -590,7 +609,8 @@ extension SelfTest {
         let drafts = await recorder.all().filter { $0.phase == "draft-0" }
         let saved = reference.createRequest.payload.nativeBinding
         let full = NativeDocumentWorker.firstSectionCharacters(saved)
-        try require(saved?.outputTokens == 1024 && saved?.reasoning == false && full == 2496, "A new document carries the real cap and asks for what it holds")
+        try require(saved?.outputTokens == nil && saved?.reasoning == false && full == NativeDocumentWorker.sectionCharacters,
+                    "A new document with no output limit set asks for full-size sections")
         try require(drafts.count == 2 && asksFor(drafts[0], full) && asksFor(drafts[1], full / 2) && drafts[0].attempt != drafts[1].attempt,
                     "The second request asks for a shorter section under a fresh attempt")
         let later = await recorder.all().filter { $0.phase == "draft-1" }
@@ -643,6 +663,59 @@ extension SelfTest {
         try require(firstDrafts == 1 && report.contains("Revised revise-0.") && report.contains("Revised revise-1.")
                     && !report.contains(TaskReplyCauseWire.partial), "Retry reuses the failed step and keeps the earlier section")
         await harness.stop()
+    }
+
+    private static func documentOutlineCutShortPause() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let counter = NativeTaskEngineCounter()
+        let recorder = NativeTaskJobRecorder()
+        let release = NativeTaskEngineCounter()
+        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: counter) { job in
+            await recorder.record(job)
+            if job.phase == "outline", await release.count("retry") == 0 {
+                return try await TaskReplyCauseWire.complete("length", job: job)
+            }
+            if job.phase == "outline" { return sectionOutline() }
+            if job.phase.hasPrefix("draft") { return .text("{\"text\":\"Draft for \(job.phase).\"}") }
+            return .text("Revised \(job.phase).")
+        }
+        try await harness.start()
+        let reference = try await harness.submitDocument(title: "Bench plan", brief: "Workshop notes for the bench", inputs: ["Bench along the wall"])
+        try require(try await harness.wait(seconds: 20) { try harness.state(reference) == .needsDecision }, "A plan cut short three times pauses")
+        let snapshot = try repository.taskProjection(id: reference.id)!.snapshot!
+        try require(snapshot.decision?.prompt == NativeTaskWorkerFailures.outlineCutShortMessage && snapshot.decision?.choices == ["retry"],
+                    "The pause gives the plain reason for the plan: \(String(describing: snapshot.decision?.prompt))")
+        let card = try NativeTaskProjection.display(reference: try repository.taskReference(id: reference.id)!, snapshot: snapshot).card
+        try require(card.milestone == NativeTaskWorkerFailures.outlineCutShortMessage && card.canRetry && card.status == .needsInput,
+                    "The card shows the plan line with Retry, not a failure")
+        let checkpoint = try JSONDecoder().decode(NativeDocumentCheckpoint.self, from: try harness.engine.store.get(reference.remoteTaskID!).checkpoint)
+        try require(checkpoint.failureReason == nil && checkpoint.pauseCause == "response_cut_short", "The cause is saved and nothing blames the brief")
+        let tries = await recorder.all().filter { $0.phase == "outline" }
+        let systems: [String] = tries.map { $0.messages.first?.content ?? "" }
+        let full: String = "under \(NativeDocumentWorker.sectionCharacters) characters"
+        let half: String = "under \(NativeDocumentWorker.sectionCharacters / 2) characters"
+        try require(systems.count == 3, "The plan was asked for three times")
+        let firstMessage: String? = tries[0].messages.first?.content
+        let firstOpen: Bool = firstMessage.map { !$0.contains("under") } ?? false
+        let secondFull: Bool = systems[1].contains(full)
+        let thirdHalf: Bool = systems[2].contains(half)
+        try require(firstOpen && secondFull && thirdHalf, "The plan is asked for again shorter twice before pausing")
+        await release.bump("retry")
+        await harness.tracker.retry(reference.id)
+        try require(try await harness.wait(seconds: 20) { try harness.state(reference) == .completed }, "Retry after the plan pause finishes the document")
+        await harness.stop()
+    }
+
+    private static func replyCauseNoInventedCap() async throws {
+        let require = NativeTaskFixture.require
+        TaskReasoningWire.reset(cutFirst: false)
+        let job = replyCauseJob("draft-0")
+        _ = try await TaskReasoningWire.complete(job: job, liveReasoning: false)
+        _ = try await TaskReasoningWire.complete(job: job, liveReasoning: false, limit: 4096)
+        let bodies = TaskReasoningWire.seen.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        try require(bodies.count == 2 && bodies[0]["max_tokens"] == nil && bodies[1]["max_tokens"] as? Int == 4096,
+                    "Work done for a document sends no output limit unless the person set one, and then sends theirs")
     }
 
     private static func documentUnusableAnswer() async throws {

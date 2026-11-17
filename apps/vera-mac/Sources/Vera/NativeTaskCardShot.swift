@@ -162,7 +162,7 @@ struct NativeTaskCardShotSurface: View {
         default: break
         }
         let documentState = variant.components(separatedBy: "-card-document-")
-        if documentState.count == 2, ["cut-short", "empty", "unusable", "model-changed", "shorter", "credential"].contains(documentState[1]) {
+        if documentState.count == 2, ["cut-short", "empty", "unusable", "model-changed", "shorter", "credential", "outline-cut-short"].contains(documentState[1]) {
             result.title = "Workshop plan"
             result.workerType = "document"
             switch documentState[1] {
@@ -175,6 +175,10 @@ struct NativeTaskCardShotSurface: View {
                 if let checkpoint = try? JSONDecoder().decode(NativeTaskCheckpoint.self, from: Data(saved.utf8)) {
                     result.milestone = NativeTaskProjection.documentMilestone(checkpoint)
                 }
+            case "outline-cut-short":
+                result.status = .needsInput
+                result.milestone = NativeTaskWorkerFailures.outlineCutShortMessage
+                result.canRetry = true
             case "credential":
                 result.status = .needsInput
                 result.milestone = NativeTaskWorkerFailures.retryPrompt(NativeTaskWorkerFailures.pauseMessage("credential_unavailable", sections: true))

@@ -362,11 +362,11 @@ extension SelfTest {
             let script = NativeRestrictionScript(reply)
             let cards = NativeRestrictionCards(approves: false)
             let failures = NativeChatRulesCounter()
-            let (activities, _) = try await restrictionDrive([restrictionReader(hits)],
-                [restrictionRound([restrictionCall("one", "read_notes"), restrictionCall("two", "read_notes")]), restrictionDone],
+            let (activities, _) = try await restrictionDrive([restrictionReader(hits), restrictionReader(hits, name: "read_more")],
+                [restrictionRound([restrictionCall("one", "read_notes"), restrictionCall("two", "read_more")]), restrictionDone],
                 script: script, deadline: .milliseconds(200), cards: cards,
                 observe: { source in if case .failed = source { failures.hit() } })
-            try require(cards.names == ["read_notes", "read_notes"] && hits.count == 0 && activities.allSatisfy { $0.confirmationRequired },
+            try require(cards.names == ["read_notes", "read_more"] && hits.count == 0 && activities.allSatisfy { $0.confirmationRequired },
                         "When the first question can't be answered, every call asks first and nothing runs: \(reply)")
             try require(script.calls == 1 && script.checkCalls == 0 && failures.count == 1, "The question is tried once and reported as failed: \(reply)")
         }
