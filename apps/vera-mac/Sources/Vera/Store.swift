@@ -2522,8 +2522,7 @@ final class ChatStore: ObservableObject {
         let checkTransport = nativeTransport
         let observe: NativeRequestAuthorizer.Observer = { [weak self] source in await self?.notePermissionCheck(source) }
         let authorizer = NativeRequestAuthorizer(transport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: checkTransport, model: checkModel),
-                                                 listTransport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: checkTransport, model: checkModel,
-                                                                                                                     cap: NativeRequestAuthorizer.refusalReplyLimit),
+                                                 listTransport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: checkTransport, model: checkModel),
                                                  deadline: checkTimeout, observe: observe)
         let trusted = turn.companionEvent == nil ? NativeTrustedRequest.typed(typed, messageID: turn.userMessageID, conversationID: id) : nil
         let restrictions = turn.companionEvent == nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

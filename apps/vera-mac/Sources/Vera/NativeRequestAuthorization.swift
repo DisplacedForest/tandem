@@ -202,7 +202,6 @@ enum NativeAuthorizationFailure: String, Equatable, Sendable {
     case invalidReply = "invalid_reply"
     case tooLong = "too_long"
 
-    var judged: Bool { self == .toolCall || self == .invalidReply }
 }
 
 enum NativeAuthorizationSource: Equatable, Sendable {
@@ -232,9 +231,8 @@ struct NativeAuthorizationDecision: Equatable, Sendable {
 
     var remembersRefusal: Bool {
         switch source {
-        case .model: return verdict != .authorized
-        case .remembered: return false
-        case .failed(let failure): return failure.judged
+        case .model: return verdict == .notAuthorized
+        case .remembered, .failed: return false
         }
     }
 
@@ -586,8 +584,8 @@ struct NativeRequestAuthorizer: Sendable {
         return source == .model && verdict == .authorized
     }
 
-    static func chat(transport: any NativeChatTransport, model: String, cap: Int = Self.replyLimit) -> Transport {
-        let quick: any NativeChatTransport = (transport as? NativeChatClient)?.briefly(cap: cap) ?? transport
+    static func chat(transport: any NativeChatTransport, model: String) -> Transport {
+        let quick: any NativeChatTransport = (transport as? NativeChatClient)?.withoutThinking() ?? transport
         return { messages in
             var latest: NativeChatStreamSnapshot?
             for try await snapshot in quick.stream(messages: messages, model: model, tools: []) {

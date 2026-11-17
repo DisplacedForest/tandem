@@ -211,12 +211,12 @@ extension SelfTest {
             }
             return object
         }
-        let quick = try body(try client.briefly(cap: NativeRequestAuthorizer.replyLimit).request(messages: prompt, model: "local-model"))
+        let quick = try body(try client.withoutThinking().request(messages: prompt, model: "local-model"))
         let ordinary = try body(try client.request(messages: prompt, model: "local-model"))
-        try require(quick["max_tokens"] as? Int == NativeRequestAuthorizer.replyLimit && quick["reasoning_effort"] as? String == "low"
+        try require(quick["max_tokens"] as? Int == 1024 && quick["reasoning_effort"] as? String == "low"
                         && (quick["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == false
                         && quick["model"] as? String == "local-model" && quick["tools"] == nil && (quick["messages"] as? [Any])?.count == 2,
-                    "The check goes to the same model with a reply cap and thinking turned down where it is already set: \(quick)")
+                    "The check goes to the same model with no cap of its own and thinking turned down where it is already set: \(quick)")
         try require(ordinary["max_tokens"] as? Int == 1024 && ordinary["reasoning_effort"] as? String == "high",
                     "Ordinary chat requests are unchanged")
     }
@@ -257,15 +257,16 @@ extension SelfTest {
 
         for (reply, verdict) in [(NativeAuthorizationScript.Reply.notAuthorized, NativeAuthorizationVerdict.notAuthorized), (.unclear, .unclear)] {
             let made = try await NativeAuthorizationScript(reply).authorizer().decide(request, action)
-            try require(!made.authorizes && made.verdict == verdict && made.source == .model && made.remembersRefusal, "A \(verdict) is a remembered judgement")
+            try require(!made.authorizes && made.verdict == verdict && made.source == .model && made.remembersRefusal == (verdict == .notAuthorized),
+                        "Only a no is remembered: \(verdict)")
         }
         for reply in malformedReplies {
             let made = try await NativeAuthorizationScript(.text(reply)).authorizer().decide(request, action)
-            try require(!made.authorizes && made.verdict == .unclear && made.source == .failed(.invalidReply) && made.remembersRefusal,
-                        "A malformed reply counts as unclear and is remembered: \(reply)")
+            try require(!made.authorizes && made.verdict == .unclear && made.source == .failed(.invalidReply) && !made.remembersRefusal,
+                        "A malformed reply counts as unclear and is not remembered: \(reply)")
         }
         let called = try await NativeAuthorizationScript(.toolCall).authorizer().decide(request, action)
-        try require(!called.authorizes && called.source == .failed(.toolCall) && called.verdict == .unclear && called.remembersRefusal,
+        try require(!called.authorizes && called.source == .failed(.toolCall) && called.verdict == .unclear && !called.remembersRefusal,
                     "A tool call in the reply counts as unclear")
         let broken = try await NativeAuthorizationScript(.failure).authorizer().decide(request, action)
         try require(!broken.authorizes && broken.source == .failed(.unavailable) && !broken.remembersRefusal,
@@ -566,11 +567,13 @@ extension SelfTest {
         let unsure = UUID()
         let unclear = try await attempt(saved, message: unsure, .unclear)
         let afterUnclear = try await attempt(saved, message: unsure, .authorized)
-        try require(unclear.calls == 1 && afterUnclear.calls == 0 && sent.count == 0, "An unclear answer is remembered too")
+        try require(unclear.calls == 1 && afterUnclear.calls == 1 && sent.count == 1, "An unclear answer is not a no, so the next attempt asks again")
+        sent.reset()
         let garbled = UUID()
         let invalid = try await attempt(saved, message: garbled, .text("{\"run\": true}"))
         let afterInvalid = try await attempt(saved, message: garbled, .authorized)
-        try require(invalid.calls == 1 && afterInvalid.calls == 0 && sent.count == 0, "A reply that fails validation is remembered")
+        try require(invalid.calls == 1 && afterInvalid.calls == 1 && sent.count == 1, "A reply that fails validation is not a no, so the next attempt asks again")
+        sent.reset()
         let timedOut = UUID()
         let slow = try await attempt(saved, message: timedOut, .silence, deadline: .milliseconds(50))
         let afterSlow = try await attempt(saved, message: timedOut, .authorized)
