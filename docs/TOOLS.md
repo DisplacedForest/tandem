@@ -53,7 +53,7 @@ The shared policy lives in `NativeToolRepair.swift` and both transports use it. 
 - `malformed_arguments`: the arguments aren't valid JSON, for example a call cut off mid-stream.
 - `unknown_tool`: the name isn't one of the tools offered for this request. `offered` lists the names it can use.
 - `invalid_arguments`: the arguments are JSON but don't fit `parameters`. `problems` lists up to four, each with `at` (a path such as `filters.shelf` or `items[1].name`) and `expected`.
-- `unsupported_value`: the arguments hold something the app can't check or carry, such as a value too large to validate.
+- `unsupported_value`: the arguments hold something the app can't check or carry, such as a value too large to validate, or they were refused outright by a connected service's own check, for example a name repeated in one object or arguments over 16 KB.
 - `invalid_result`: the handler ran but returned `null`, blank text, or a result that doesn't fit the tool's declared `outputSchema`.
 
 For a call to `shelf_lookup` that leaves out its required `packet`, the model gets:

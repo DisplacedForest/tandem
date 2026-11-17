@@ -1,7 +1,21 @@
 import Foundation
 
+final class NativeToolRepairPrompts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(attempt: String, system: String)] = []
+
+    var all: [(attempt: String, system: String)] { lock.withLock { entries } }
+
+    func add(_ attempt: String, _ messages: [NativeTaskGenerationMessage]) {
+        let system = messages.first { $0.role == "system" }?.content ?? ""
+        lock.withLock { entries.append((attempt, system)) }
+    }
+}
+
 @MainActor
 extension SelfTest {
+    static let repairClosingReply = "I looked for the shelf but could not finish the search."
+
     private static let repairInputs: NativeJSONValue = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -21,7 +35,7 @@ extension SelfTest {
                               "items": .object(["type": .string("object"), "required": .array([.string("name")]),
                                                 "properties": .object(["name": .object(["type": .string("string"), "minLength": .number(1)])])]),
                               "description": .string("Other packets to find alongside it.")]),
-            "wait": .object(["type": .string("integer"), "minimum": .number(0), "maximum": .number(1000),
+            "wait": .object(["type": .string("integer"), "minimum": .number(0), "maximum": .number(100000),
                              "description": .string("Milliseconds the lookup takes in this fixture.")]),
         ]),
     ])
@@ -106,6 +120,8 @@ extension SelfTest {
             try await repairCorrection(),
             try await repairFragments(),
             try await repairCancel(),
+            try await repairServiceArguments(),
+            try repairComposition(),
             try await repairUncertainWrite(),
             try await repairReturned(),
             try await repairRequestShape(),
@@ -436,7 +452,7 @@ extension SelfTest {
         let shelf = repairShelf(log)
         let transport = ScriptedNativeToolTransport(rounds: [
             NativeWebToolsSelftest.call("stop-1", "shelf_lookup", #"{"count":2}"#),
-            repairRound([NativeChatToolCall(id: "stop-2", name: "shelf_lookup", arguments: #"{"packet":"Beans","wait":900}"#),
+            repairRound([NativeChatToolCall(id: "stop-2", name: "shelf_lookup", arguments: #"{"packet":"Beans","wait":60000}"#),
                          NativeChatToolCall(id: "stop-3", name: "shelf_lookup", arguments: #"{"packet":"Kale"}"#)]),
             NativeWebToolsSelftest.reply("Never."),
         ])
@@ -468,6 +484,77 @@ extension SelfTest {
         return "stopping a turn after a repair ends it as stopped with no further handler or model call"
     }
 
+    private static func repairServiceArguments() async throws -> String {
+        let require = NativeTaskFixture.require
+        let call = NativeWebToolsSelftest.call
+        let reply = NativeWebToolsSelftest.reply
+        let log = NativeToolExtensionLog()
+        var service = repairShelf(log, name: "service_lookup", id: "repair-service")
+        service.argumentValidator = { _ in }
+        let registry = NativeToolRegistry(definitions: [service])
+        try require(registry.issues.isEmpty, "The connected-service fixture passes the registry")
+        let unsupported = NativeJSONValue.string(NativeToolCallFault.unsupportedValue.rawValue)
+        let refusal = NativeToolError.invalidArguments(NativeToolRepair.unsupportedDetail).localizedDescription
+        let repeatedName = "{\"packet\":\"a\",\"packet\":\"b\"}"
+        let oversized = "{\"packet\":\"" + String(repeating: "a", count: 17000) + "\"}"
+        try require(oversized.utf8.count > 16384, "The oversized fixture is over the connected-service limit")
+        for (label, raw) in [("Repeated names", repeatedName), ("Oversized arguments", oversized)] {
+            log.clear()
+            let (refused, refusedTransport) = try await repairLoop(registry, rounds: [call("svc-1", "service_lookup", raw), reply("No shelf.")],
+                                                                   enabled: [service.id])
+            let fields = repairFields(repairResults(refusedTransport)["svc-1"])
+            try require(log.all.isEmpty && refused?.activities.first?.state == .failed && fields["fault"] == unsupported
+                        && fields["not_run"] == NativeJSONValue.bool(true) && fields["repairs_left"] == NativeJSONValue.number(2)
+                        && fields["error"] == NativeJSONValue.string(refusal),
+                        "\(label) refused by the connected-service check are answered as unsupported and nothing runs: \(fields)")
+            try require(NativeToolActivityChip.shownResult(refused?.activities.first?.result ?? "") == NativeToolActivityChip.incomplete,
+                        "\(label) show the incomplete line")
+        }
+        log.clear()
+        let (spent, spentTransport) = try await repairLoop(registry, rounds: [
+            call("svc-a", "service_lookup", repeatedName),
+            call("svc-b", "service_lookup", oversized),
+            call("svc-c", "service_lookup", repeatedName),
+            reply("The service would not take that request."),
+        ], enabled: [service.id])
+        let spentResults = repairResults(spentTransport)
+        let closing = repairFields(spentResults["svc-c"])
+        try require(repairFields(spentResults["svc-a"])["repairs_left"] == NativeJSONValue.number(2)
+                    && repairFields(spentResults["svc-b"])["repairs_left"] == NativeJSONValue.number(1)
+                    && closing["closed"] == NativeJSONValue.bool(true) && closing["fault"] == unsupported
+                    && log.all.isEmpty && spentTransport.schemas.last?.isEmpty == true
+                    && spent?.content == "The service would not take that request.",
+                    "Three refusals by the connected-service check close the name: \(closing)")
+        return "a connected-service tool refusing repeated names or oversized arguments is answered as unsupported, runs nothing, and closes after three"
+    }
+
+    private static func repairComposition() throws -> String {
+        let require = NativeTaskFixture.require
+        let schema: NativeJSONValue = .object(["type": .string("object"), "properties": .object([
+            "tags": .object(["type": .string("array"), "anyOf": .array([.object(["minItems": .number(1)]), .object(["minItems": .number(2)])])]),
+            "box": .object(["type": .string("object"), "allOf": .array([.object(["required": .array([.string("lid")])])])]),
+            "size": .object(["oneOf": .array([.object(["type": .string("number")]), .object(["minimum": .number(0)])])]),
+            "x": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "uniqueItems": .bool(true),
+                          "minItems": .number(0), "not": .object(["maxItems": .number(0)])]),
+        ])])
+        guard let validator = NativeToolSchemaCache.shared.validator(schema) else {
+            throw NativeTaskFixture.Failure.assertion("The composition fixture schema compiles")
+        }
+        let anyOf = validator.problems(.object(["tags": .array([])]))
+        try require(anyOf == [NativeSchemaProblem(path: "tags", expected: "must fit one of the allowed forms")],
+                    "An anyOf that no form fits is named at its field: \(anyOf)")
+        let allOf = validator.problems(.object(["box": .object([:])]))
+        try require(allOf == [NativeSchemaProblem(path: "box.lid", expected: "is required")],
+                    "An allOf member's missing field is named at its own path: \(allOf)")
+        let oneOf = validator.problems(.object(["size": .number(3)]))
+        try require(oneOf == [NativeSchemaProblem(path: "size", expected: "must fit only one of the allowed forms")],
+                    "A oneOf fitted by two forms says only one may fit: \(oneOf)")
+        let empty = validator.violation(.object(["x": .array([])]))
+        try require(empty == "Field 'x' does not match its schema" && empty?.contains("has an item") == false,
+                    "An empty list is never said to have a bad item: \(empty ?? "no violation")")
+        return "anyOf, allOf and oneOf failures are named at the right path, and an empty list is never blamed on an item"
+    }
+
     private static func repairUncertainWrite() async throws -> String {
         let require = NativeTaskFixture.require
         let call = NativeWebToolsSelftest.call
@@ -487,7 +574,9 @@ extension SelfTest {
             confirmation: .none, effect: .write, action: .otherChanges, isAvailable: { true },
             execute: { arguments in
                 log.started(arguments)
-                if arguments["bed"] == NativeJSONValue.string("north") { try await Task.sleep(nanoseconds: 2_000_000_000) }
+                if case .string(let bed)? = arguments["bed"], bed == "north" || bed.unicodeScalars.contains("\u{00E9}") {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                }
                 return .object(["watered": .bool(true)])
             })
         water.confirmationFor = { _ in false }
@@ -516,6 +605,29 @@ extension SelfTest {
         try require(watered?.activities.map(\.state) == [NativeToolActivityState.failed, .failed, .succeeded]
                     && NativeToolActivityChip.shownResult(watered?.activities.first?.result ?? "") == NativeToolLoop.timedOutMessage,
                     "The activity row shows the timeout sentence alone")
+
+        let composed = "{\"bed\":\"Caf\u{00E9}\"}"
+        let decomposed = "{\"bed\":\"Cafe\u{0301}\"}"
+        try require(composed == decomposed && Array(composed.utf8) != Array(decomposed.utf8),
+                    "The two spellings are equal as text but differ as bytes")
+        log.clear()
+        let (accented, accentedTransport) = try await repairLoop(NativeToolRegistry(definitions: [water]), rounds: [
+            call("a-composed", "water_bed", composed),
+            repairRound([NativeChatToolCall(id: "a-composed-again", name: "water_bed", arguments: composed),
+                         NativeChatToolCall(id: "a-decomposed", name: "water_bed", arguments: decomposed)]),
+            reply("The cafe bed could not be confirmed."),
+        ], enabled: [water.id], timeout: .milliseconds(150), effects: hook)
+        let accentedResults = repairResults(accentedTransport)
+        let accentUnsure = repairFields(accentedResults["a-composed"])
+        let accentRepeat = repairFields(accentedResults["a-composed-again"])
+        let accentOther = repairFields(accentedResults["a-decomposed"])
+        try require(accentUnsure["outcome"] == NativeJSONValue.string("uncertain")
+                    && accentRepeat["error"] == NativeJSONValue.string(NativeToolRepair.repeated) && accentRepeat["not_run"] == NativeJSONValue.bool(true),
+                    "The byte-identical repeat of an unconfirmed write is refused: \(accentRepeat)")
+        try require(NativeJSONValue.object(accentOther) == NativeJSONValue.object(["watered": .bool(true)])
+                    && log.all.map(\.call) == ["a-composed", "a-decomposed"]
+                    && accented?.activities.map(\.state) == [NativeToolActivityState.failed, .failed, .succeeded],
+                    "The same text spelled with different bytes is a different call and runs: \(log.all.map(\.call))")
 
         let readLog = NativeToolExtensionLog()
         let slowShelf = repairShelf(readLog, timeout: .milliseconds(150))
@@ -629,17 +741,26 @@ extension SelfTest {
     }
 
     private static func repairWorkModel(_ rounds: [[NativeTaskGenerationToolCall]]) -> NativeCompanionFinishModel {
-        NativeCompanionFinishModel(closing: .text("The beans are on shelf B3.")) { messages in
+        NativeCompanionFinishModel(closing: .text(repairClosingReply)) { messages in
             let replied = messages.filter { $0.role == "assistant" && $0.toolCalls != nil }.count
             guard rounds.indices.contains(replied) else { return .text("The beans are on shelf B3.") }
             return NativeTaskGenerationCompletion(content: "", toolCalls: rounds[replied], finishReason: "tool_calls")
         }
     }
 
-    private static func repairWorkRun(_ rig: NativeCompanionFinishRig) async throws -> (record: NativeTaskRecord, saved: [NativeCompanionCheckpoint]) {
+    private static func repairWorkRun(_ rig: NativeCompanionFinishRig, prompts: NativeToolRepairPrompts = NativeToolRepairPrompts())
+        async throws -> (record: NativeTaskRecord, saved: [NativeCompanionCheckpoint]) {
         var saved: [NativeCompanionCheckpoint] = []
+        let model = rig.model
         for _ in 0..<40 {
-            let record = try await rig.step()
+            guard let claimed = try rig.store.claim(workerTypes: ["companion"]) else {
+                throw NativeTaskFixture.Failure.assertion("The handed-off work is queued")
+            }
+            let step = try await NativeCompanionWorker.step(claimed, environment: rig.environment) { _, attempt, _, messages, tools, choice in
+                prompts.add(attempt, messages)
+                return try model.complete(attempt, messages, tools, choice)
+            }
+            let record = try rig.store.commitStep(claimed.id, generation: claimed.generation, step: step)
             if let checkpoint = try? rig.checkpoint(record) { saved.append(checkpoint) }
             if record.state != .queued { return (record, saved) }
         }
@@ -702,7 +823,8 @@ extension SelfTest {
         log.clear()
         let closing = try NativeCompanionFinishRig(tools: [shelf], model: repairWorkModel(closingRounds))
         _ = try closing.create(assignment)
-        let (closed, closedSaved) = try await repairWorkRun(closing)
+        let closingPrompts = NativeToolRepairPrompts()
+        let (closed, closedSaved) = try await repairWorkRun(closing, prompts: closingPrompts)
         let closedResults = repairWorkResults(closedSaved.last)
         let closedFields = repairFields(closedResults["work-3"])
         try require(closed.state == .completed && log.all.isEmpty && closedResults["work-4"] == nil,
@@ -716,6 +838,17 @@ extension SelfTest {
         let asked = closing.model.calls
         try require(asked.filter { $0.choice == "auto" }.count == 3 && asked.last?.attempt.hasSuffix("-finish") == true && asked.last?.choice == "none",
                     "After the name closes the work goes straight to its closing write-up: \(asked.map(\.attempt))")
+        let closedReport = try closing.report(closed)["report"] as? String ?? ""
+        try require(closedReport == repairClosingReply && !closedReport.hasPrefix(NativeCompanionWorker.outOfRoomLead),
+                    "Work stopped on a closed name reports the closing reply without the out-of-room lead: \(closedReport)")
+        guard let closingSystem = closingPrompts.all.last(where: { $0.attempt.hasSuffix("-finish") })?.system else {
+            throw NativeTaskFixture.Failure.assertion("The closing request was sent")
+        }
+        try require(closingSystem.contains("could not be run") && !closingSystem.contains("ran out of room"),
+                    "The closing request says a step could not be run, not that the work ran out of room")
+        try require(closedSaved.last?.stoppedOnRepairs == true && !fixedSaved.contains { $0.stoppedOnRepairs }
+                    && !closedSaved.contains { $0.repairs?.counts["shelf_lookup"] == 2 && $0.stoppedOnRepairs },
+                    "The checkpoint says the work stopped on a closed name only once a name has closed")
 
         guard let midway = closedSaved.first(where: { $0.repairs?.counts["shelf_lookup"] == 2 }) else {
             throw NativeTaskFixture.Failure.assertion("A checkpoint holds two failures")

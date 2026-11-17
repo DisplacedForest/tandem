@@ -138,9 +138,35 @@ struct NativeMCPJSONSchema: Sendable {
             default: break
             }
         }
+        if found.count == before, case .object(let object) = target, try typed(value, object) {
+            if case .array(let members)? = object["allOf"] {
+                for member in members where found.count < limit {
+                    try collect(value, schema: member, path: path, depth: depth + 1, limit: limit, into: &found, budget: &budget)
+                }
+            }
+            for key in ["anyOf", "oneOf"] where found.count == before {
+                guard case .array(let forms)? = object[key] else { continue }
+                var fitting = 0
+                for form in forms {
+                    if try matches(value, schema: form, depth: depth + 1, budget: &budget) { fitting += 1 }
+                }
+                if fitting == 0 {
+                    found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: "must fit one of the allowed forms"))
+                } else if key == "oneOf", fitting > 1 {
+                    found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: "must fit only one of the allowed forms"))
+                }
+            }
+        }
         if found.count == before, found.count < limit {
             found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: Self.expectation(value, target)))
         }
+    }
+
+    private func typed(_ value: NativeJSONValue, _ object: [String: NativeJSONValue]) throws -> Bool {
+        guard let type = object["type"] else { return true }
+        let names: [String]
+        if case .string(let name) = type { names = [name] } else { names = try strings(type) }
+        return names.contains { isType(value, $0) }
     }
 
     private static func within(_ count: Int, _ object: [String: NativeJSONValue]) -> Bool {
@@ -179,7 +205,7 @@ struct NativeMCPJSONSchema: Sendable {
             case ("array", .array(let items)):
                 if case .number(let minimum)? = object["minItems"], Double(items.count) < minimum { return "must have at least \(plain(minimum)) items" }
                 if case .number(let maximum)? = object["maxItems"], Double(items.count) > maximum { return "must have at most \(plain(maximum)) items" }
-                return "has an item that does not match its schema"
+                return items.isEmpty ? "does not match its schema" : "has an item that does not match its schema"
             case ("array", _): return "must be a list"
             case ("object", .object): break
             case ("object", _): return "must be an object"

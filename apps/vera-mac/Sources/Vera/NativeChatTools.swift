@@ -770,7 +770,7 @@ struct NativeToolLoop: Sendable {
                     var searchResults: [String: NativeJSONValue] = [:]
                     var turnSources: [String: Int] = [:]
                     var repairs = NativeToolRepairs()
-                    var unconfirmedWrites: Set<String> = []
+                    var unconfirmedWrites: Set<Data> = []
                     var repairsSpent = false
                     for round in 1...Self.maximumRounds {
                         try await checkAuthorization()
@@ -887,8 +887,8 @@ struct NativeToolLoop: Sendable {
                                     arguments = try definition.validatedArguments(call.arguments)
                                     repairs.settled(repairKey)
                                 } catch {
-                                    guard let problem = NativeToolRepair.problem(definition, raw: call.arguments, error: error) else { throw error }
-                                    let answer = repairs.answer(problem, key: repairKey)
+                                    if error is CancellationError { throw error }
+                                    let answer = repairs.answer(NativeToolRepair.problem(definition, raw: call.arguments, error: error), key: repairKey)
                                     repairsSpent = repairsSpent || repairs.isClosed(repairKey)
                                     throw answer
                                 }
@@ -907,7 +907,7 @@ struct NativeToolLoop: Sendable {
                                     }
                                     let recording = effects.flatMap { NativeChatEffects.records(definition, arguments) ? $0 : nil }
                                     let writeKey = NativeChatEffects.records(definition, arguments)
-                                        ? definition.name + "\u{0}" + (try Self.serializedResult(.object(arguments))) : nil
+                                        ? Data((definition.name + "\u{0}" + (try Self.serializedResult(.object(arguments)))).utf8) : nil
                                     if let writeKey, unconfirmedWrites.contains(writeKey) { throw NativeToolRepair.repeatedWrite() }
                                     let revisions = recording?.revisions()
                                     var needsConfirmation = definition.confirmationFor?(arguments) ?? (definition.confirmation == .required)

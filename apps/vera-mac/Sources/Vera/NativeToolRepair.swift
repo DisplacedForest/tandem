@@ -70,8 +70,11 @@ enum NativeToolRepair {
     static let mismatchedResult = "What came back didn't have the declared shape, so it can't be counted as done."
     static let hidden: Set<String> = ["not_run", "fault", "problems", "offered", "fix", "repairs_left", "closed", "outcome"]
 
-    static func problem(_ definition: NativeToolDefinition, raw: String, error: Error) -> NativeToolCallProblem? {
-        guard case .invalidArguments(let detail)? = error as? NativeToolError else { return nil }
+    static func problem(_ definition: NativeToolDefinition, raw: String, error: Error) -> NativeToolCallProblem {
+        guard case .invalidArguments(let detail)? = error as? NativeToolError else {
+            return make(NativeToolError.invalidArguments(unsupportedDetail).localizedDescription, .unsupportedValue,
+                        problems: [NativeSchemaProblem(path: "arguments", expected: "must be a smaller, plainer JSON object with no repeated names")])
+        }
         let message = error.localizedDescription
         guard let data = raw.data(using: .utf8), let any = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
             return make(message, .malformedArguments, problems: [NativeSchemaProblem(path: "arguments", expected: "must be one valid JSON object")])
@@ -81,9 +84,6 @@ enum NativeToolRepair {
         }
         guard let converted = try? object.mapValues({ try NativeJSONValue(any: $0) }), detail != unsupportedDetail else {
             return make(message, .unsupportedValue, problems: [])
-        }
-        if definition.argumentValidator != nil, data.count > 16384 {
-            return make(message, .unsupportedValue, problems: [NativeSchemaProblem(path: "arguments", expected: "must be smaller")])
         }
         guard let validator = NativeToolSchemaCache.shared.validator(definition.parameters) else {
             return make(message, .invalidArguments, problems: [])

@@ -81,6 +81,8 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
         UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
 
+    var stoppedOnRepairs: Bool { repairs?.closed.isEmpty == false }
+
     func encoded() throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -847,7 +849,7 @@ private struct NativeCompanionRun {
         return sentence(why)
     }
 
-    func systemPrompt(finishing: Bool) -> String {
+    func systemPrompt(finishing: Bool, stoppedOnRepairs: Bool = false) -> String {
         let resolver = authority().resolver
         var lines = [
             (context.companion.name.map { "You are \($0)" } ?? "You are the user's assistant") + ", working on one assignment in a fresh, private workspace. You are an operator, not the conversation: you cannot see the conversation, and the person reads only your final reply.",
@@ -862,7 +864,9 @@ private struct NativeCompanionRun {
             lines.append("This run was started by a schedule or by Tandem itself, so it is read-only. You can look things up but cannot change anything. If the assignment needs a change, do the rest and say plainly what you left undone.")
         }
         if finishing {
-            lines.append("You ran out of room to keep going. Write in the first person and say plainly what you finished and what you did not.")
+            lines.append(stoppedOnRepairs
+                ? "A step you kept sending could not be run, so this work stops here. Write in the first person and say plainly what you finished and what you could not do."
+                : "You ran out of room to keep going. Write in the first person and say plainly what you finished and what you did not.")
             lines.append("Stop using tools now. Answer the person directly, the way you would reply in a chat, and say plainly what you did. If the assignment asked for something to keep, like a document, plan, list or write-up, write that thing in Markdown.")
         } else {
             lines.append("Use tools when they help. When the assignment is done, reply without tool calls and answer the person directly, the way you would reply in a chat. If the assignment asked for something to keep, like a document, plan, list or write-up, write that thing in Markdown.")
@@ -872,7 +876,7 @@ private struct NativeCompanionRun {
     }
 
     func messages(_ checkpoint: NativeCompanionCheckpoint, finishing: Bool) -> [NativeTaskGenerationMessage] {
-        [NativeTaskGenerationMessage(role: "system", content: systemPrompt(finishing: finishing)),
+        [NativeTaskGenerationMessage(role: "system", content: systemPrompt(finishing: finishing, stoppedOnRepairs: checkpoint.stoppedOnRepairs)),
          NativeTaskGenerationMessage(role: "user", content: "Assignment:\n\(dot.assignment)" + NativeCompanionWorker.carriedSection(dot.carried))] + checkpoint.transcript
     }
 
@@ -961,7 +965,8 @@ private struct NativeCompanionRun {
             }
             checkpoint.rounds += 1
             if completion.toolCalls.isEmpty, !completion.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return try await conclude(&checkpoint, text: NativeCompanionWorker.outOfRoomLead + "\n\n" + completion.content)
+                let lead = checkpoint.stoppedOnRepairs ? "" : NativeCompanionWorker.outOfRoomLead + "\n\n"
+                return try await conclude(&checkpoint, text: lead + completion.content)
             }
         }
         let fallback = NativeCompanionWorker.fallbackReport(checkpoint)
@@ -1093,11 +1098,7 @@ private struct NativeCompanionRun {
             }
         } catch {
             checkpoint.calls += 1
-            guard let problem = NativeToolRepair.problem(definition, raw: call.arguments, error: error) else {
-                checkpoint.answer(call, NativeCompanionWorker.message(error.localizedDescription))
-                return nil
-            }
-            refuse(repairs.answer(problem, key: repairKey))
+            refuse(repairs.answer(NativeToolRepair.problem(definition, raw: call.arguments, error: error), key: repairKey))
             return nil
         }
         if definition.effect == .read {
