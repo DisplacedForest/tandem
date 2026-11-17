@@ -139,7 +139,10 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
         }
         let cleanTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let cleanTitle, !cleanTitle.isEmpty {
-            guard cleanTitle.unicodeScalars.count <= 200, !cleanTitle.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) }) else {
+            let oneLine = admitting
+                ? !cleanTitle.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) })
+                : !cleanTitle.contains("\n") && !cleanTitle.contains("\r")
+            guard cleanTitle.unicodeScalars.count <= 200, oneLine else {
                 throw NativeTaskError.invalidRequest("The title must be one line of at most 200 characters.")
             }
             self.title = cleanTitle

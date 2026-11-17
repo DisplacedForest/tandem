@@ -772,6 +772,7 @@ struct NativeToolLoop: Sendable {
                     var callCount = 0
                     var replyCallCount = 0
                     var otherToolRan = false
+                    var onlyRefusalsSoFar = true
                     var toolOrdinals: [String: Int] = [:]
                     var webSearchCount = 0
                     var issuedCallIDs: Set<String> = []
@@ -907,6 +908,8 @@ struct NativeToolLoop: Sendable {
                                     throw answer
                                 }
                                 if let askedKey, declinedCalls.contains(askedKey) { throw NativeToolError.failed(Self.declinedMessage) }
+                                let afterOnlyRefusals = onlyRefusalsSoFar
+                                onlyRefusalsSoFar = false
                                 let isSearch = definition.id == NativeWebTools.searchToolID && definition.name == NativeWebTools.searchToolName
                                 let cacheKey = isSearch && definition.confirmation == .none
                                     ? try Self.serializedResult(.object(arguments)) : nil
@@ -1024,7 +1027,7 @@ struct NativeToolLoop: Sendable {
                                                                         try await NativeToolCallContext.$instructionHolder.withValue(holding) {
                                                                             try await NativeToolCallContext.$replyCallOrdinal.withValue(replyOrdinal) {
                                                                                 try await Self.execute(
-                                                                                    definition, arguments: arguments, activity: activity,
+                                                                                    definition, arguments: arguments, activity: activity, afterOnlyRefusals: afterOnlyRefusals,
                                                                                     timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
                                                                             }
                                                                         }
@@ -1129,7 +1132,7 @@ struct NativeToolLoop: Sendable {
 
     private static func execute(
         _ definition: NativeToolDefinition,
-        arguments: [String: NativeJSONValue], activity: NativeToolActivity,
+        arguments: [String: NativeJSONValue], activity: NativeToolActivity, afterOnlyRefusals: Bool,
         timeout: Duration, authorize: @escaping @Sendable () async -> Bool,
         willExecute: @escaping @Sendable (NativeToolActivity) async -> Bool
     ) async throws -> NativeJSONValue {
@@ -1144,7 +1147,9 @@ struct NativeToolLoop: Sendable {
             return try await NativeToolCallContext.$activityID.withValue(activity.id) {
                 try await NativeToolCallContext.$request.withValue(activity.request) {
                     try await NativeToolCallContext.$round.withValue(activity.round) {
-                        try await definition.execute(arguments)
+                        try await NativeToolCallContext.$afterOnlyRefusals.withValue(afterOnlyRefusals) {
+                            try await definition.execute(arguments)
+                        }
                     }
                 }
             }

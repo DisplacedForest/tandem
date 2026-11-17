@@ -153,17 +153,20 @@ extension SelfTest {
             try await repairNeverRanSources(),
             try await repairServiceArguments(),
             try await repairHandOffLimits(),
+            try await repairGeneralCorrection(),
             try repairWorkBounds(),
             try await repairDeclined(),
             try await repairStartedWrite(),
             try repairComposition(),
             try repairBounds(),
             try repairSchemaShapes(),
+            try repairStringLengths(),
             try await repairHandlerFaults(),
             try await repairUncertainWrite(),
             try await repairReturned(),
             try await repairRequestShape(),
             try await repairHandedOff(),
+            try await repairHandedOffReset(),
         ]
         try require(summary.allSatisfy { !$0.isEmpty }, "Every repair check reports what it covered")
         print("  native tool repair OK (\(summary.joined(separator: "; ")))")
@@ -309,6 +312,10 @@ extension SelfTest {
 
         let cases: [(raw: String, problems: [NativeSchemaProblem], label: String)] = [
             (#"{"count":2}"#, [NativeSchemaProblem(path: "packet", expected: "is required")], "A missing required field"),
+            (#"{"packet":""}"#, [NativeSchemaProblem(path: "packet", expected: "must be a non-empty string, and this one has 0")], "An empty string"),
+            (#"{"packet":3}"#, [NativeSchemaProblem(path: "packet", expected: "must be a non-empty string")], "A non-string value"),
+            (#"{"packet":"Beans","items":[{"name":""}]}"#, [NativeSchemaProblem(path: "items[0].name", expected: "must be a non-empty string, and this one has 0")],
+             "An empty string inside a list item"),
             (#"{"packet":"Beans","count":"two"}"#, [NativeSchemaProblem(path: "count", expected: "must be a whole number")], "A wrong type"),
             (#"{"packet":"Beans","kind":"tuber"}"#, [NativeSchemaProblem(path: "kind", expected: "must be one of: seed, bulb")], "A value outside its choices"),
             (#"{"packet":"Beans","count":0}"#, [NativeSchemaProblem(path: "count", expected: "must be at least 1")], "A value below its minimum"),
@@ -331,6 +338,10 @@ extension SelfTest {
                         && fields["fix"] == NativeJSONValue.string(NativeToolRepair.correct) && repairText(fields["error"]).hasPrefix(lead)
                         && repairProblems(fields) == item.problems,
                         "\(item.label) is answered with where it went wrong and nothing runs: \(fields)")
+            if let first = item.problems.first, first.expected.hasPrefix("must be a non-empty string") {
+                try require(fields["error"] == NativeJSONValue.string(lead + "Field '\(first.path)' " + first.expected),
+                            "\(item.label) gives the exact string requirement and counts only strings: \(fields)")
+            }
             try require(NativeToolActivityChip.shownResult(checked?.activities.first?.result ?? "") == NativeToolActivityChip.incomplete,
                         "\(item.label) shows the incomplete line")
         }
@@ -1039,6 +1050,74 @@ extension SelfTest {
         return "a call the person declined is not asked or run again in that answer, a card closed without their answer is asked again, and the same tool with other arguments is asked again"
     }
 
+    private static func repairGeneralCorrection() async throws -> String {
+        let require = NativeTaskFixture.require
+        let call = NativeWebToolsSelftest.call
+        let reply = NativeWebToolsSelftest.reply
+        let objective = "Sort the seed packets by planting month."
+        let valid = #"{"worker_type":"general","objective":"Sort the seed packets by planting month."}"#
+        for scenario in ["corrected", "read", "refused"] {
+            let repository = try LocalChatRepository(inMemory: true)
+            let generalLog = NativeToolExtensionLog()
+            let readLog = NativeToolExtensionLog()
+            let posts = NativeChatRulesCounter()
+            let saves = NativeChatRulesCounter()
+            let client = NativeTaskClient { _, _, _, _ in
+                posts.hit()
+                return (Data(), 503)
+            }
+            let service = NativeTaskHandoffService(repository: repository, client: client, configuredBase: { URL(string: "https://work.test/api") })
+            let refuses = scenario == "refused"
+            let handOff = NativeTaskTools.definition(service: service, origin: try NativeTaskFixture.origin(repository), profile: nil,
+                allowedWorkerTypes: { ["general"] }, general: { assignment in
+                    generalLog.started(["objective": .string(assignment)])
+                    if refuses { throw NativeTaskTools.NotStarted(message: NativeTaskTools.pausedReply) }
+                    return try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: assignment, mode: "manual"))
+                }, didSave: { _ in saves.hit() })
+            let shelf = repairShelf(readLog)
+            let registry = NativeToolRegistry(definitions: [handOff, shelf])
+            try require(registry.issues.isEmpty, "The general correction fixtures pass the registry")
+            let first: [NativeChatStreamSnapshot]
+            switch scenario {
+            case "corrected": first = call("g-1", handOff.name, #"{"worker_type":"general","objective":"   "}"#)
+            case "read": first = call("g-1", shelf.name, #"{"packet":"Beans"}"#)
+            default: first = call("g-1", handOff.name, valid)
+            }
+            let (snapshot, transport) = try await repairLoop(registry, rounds: [
+                first, call("g-2", handOff.name, valid), reply("The request is answered."),
+            ], enabled: [handOff.id, shelf.id])
+            let results = repairResults(transport)
+            let firstFields = repairFields(results["g-1"])
+            let secondFields = repairFields(results["g-2"])
+            let references = try repository.taskReferences(conversationID: nil)
+            if scenario == "corrected" {
+                try require(firstFields["error"] == NativeJSONValue.string(NativeToolError.invalidArguments(NativeCompanionTaskPayload.emptyAssignment).localizedDescription)
+                            && firstFields["not_run"] == NativeJSONValue.bool(true) && firstFields["repairs_left"] == NativeJSONValue.number(2)
+                            && firstFields["fault"] == NativeJSONValue.string(NativeToolCallFault.invalidArguments.rawValue),
+                            "A blank general objective is answered correctively before the next round: \(firstFields)")
+                try require(generalLog.all.map(\.call) == ["g-2"] && generalLog.all.map(\.arguments) == [["objective": .string(objective)]]
+                            && secondFields["message"] == NativeJSONValue.string(NativeTaskTools.acknowledged) && secondFields["started"] == NativeJSONValue.bool(false)
+                            && saves.count == 1 && posts.count == 1 && references.count == 1 && references.first?.origin.index == 1
+                            && references.first?.request.objective == objective && snapshot?.activities.map(\.state) == [.failed, .succeeded],
+                            "A corrected general call reaches the closure in round two and is saved at index one: \(secondFields)")
+            } else {
+                try require(secondFields["message"] == NativeJSONValue.string(NativeTaskTools.laterRound) && secondFields["started"] == NativeJSONValue.bool(false)
+                            && saves.count == 0 && posts.count == 0 && references.isEmpty,
+                            "General work after \(scenario) keeps the later-round refusal: \(secondFields)")
+                if scenario == "read" {
+                    try require(readLog.all.map(\.call) == ["g-1"] && generalLog.all.isEmpty
+                                && firstFields["shelf"] == NativeJSONValue.string("B3") && snapshot?.activities.first?.state == .succeeded,
+                                "A different tool ran successfully before general work was refused")
+                } else {
+                    try require(generalLog.all.map(\.call) == ["g-1"] && firstFields["message"] == NativeJSONValue.string(NativeTaskTools.pausedReply)
+                                && firstFields["started"] == NativeJSONValue.bool(false) && firstFields["not_run"] == nil,
+                                "A non-argument refusal reaches the general closure only in round one")
+                }
+            }
+        }
+        return "general work can follow only corrective refusals, keeps index one after a correction, and stays refused after a successful read or a non-argument refusal"
+    }
+
     private static func repairWorkBounds() throws -> String {
         let require = NativeTaskFixture.require
         func refusal(_ make: () throws -> Void) -> String? {
@@ -1072,6 +1151,15 @@ extension SelfTest {
             try require(refusal { _ = try NativeResearchTaskRequest(objective: "Write a planting guide.", deliverables: [], workerType: "document", title: title) } != nil,
                         "A title that is not one line of up to 200 characters is still refused")
         }
+        let savedTitle = "First\u{2028}Second"
+        let savedDocument = Data(#"{"objective":"Write a planting guide.","deliverables":[],"worker_type":"document","title":"First\u2028Second"}"#.utf8)
+        let decodedDocument = try JSONDecoder().decode(NativeResearchTaskRequest.self, from: savedDocument)
+        try require(decodedDocument.title == savedTitle, "A saved document title with a Unicode line separator still decodes")
+        for title in [savedTitle, "a\r\nb"] {
+            try require(refusal { _ = try NativeResearchTaskRequest(objective: "Write a planting guide.", deliverables: [], workerType: "document", title: title) }
+                        == "The title must be one line of at most 200 characters.",
+                        "New titles with a Unicode line separator or CRLF get the existing title refusal")
+        }
         let limit = NativeCompanionTaskPayload.assignmentCharacters
         try require(limit == 50000, "The fixture messages assume the current assignment size")
         let fits = try NativeCompanionTaskPayload(assignment: String(repeating: "a", count: limit), mode: "manual")
@@ -1091,7 +1179,7 @@ extension SelfTest {
         try require(decodedPayload.assignment == longAssignment
                     && refusal { _ = try NativeCompanionTaskPayload(assignment: longAssignment, mode: "manual") } != nil,
                     "A saved assignment over the new size still reads, while a new one is refused")
-        return "requests take any number of deliverables, drop blank ones, keep the title rule, and refuse only past the total size with both sizes stated"
+        return "requests take any number of deliverables, drop blank ones, read saved titles with a Unicode line separator, refuse new titles with separators or CRLF, and refuse only past the total size with both sizes stated"
     }
 
     private static func repairStartedWrite() async throws -> String {
@@ -1268,6 +1356,27 @@ extension SelfTest {
         try require(whole == "The tool arguments are invalid: The arguments must have at most 2 fields, and this one has 3",
                     "A problem with the arguments as a whole is said about the arguments: \(whole ?? "accepted")")
         return "an item is never blamed for the list, a reference and its siblings are both checked, counts read in the singular, a matching fixed value is not repeated back, and a problem with the whole call names the arguments"
+    }
+
+    private static func repairStringLengths() throws -> String {
+        let require = NativeTaskFixture.require
+        let cases: [(minimum: Double, value: NativeJSONValue, expected: String, violation: String)] = [
+            (1, .string(""), "must be a non-empty string, and this one has 0", "must be a non-empty string"),
+            (1, .number(3), "must be a non-empty string", "must be a non-empty string"),
+            (3, .string(""), "must be at least 3 characters, and this one has 0", "must be at least 3 characters"),
+            (3, .string("a"), "must be at least 3 characters, and this one has 1", "must be at least 3 characters"),
+        ]
+        for item in cases {
+            let schema: NativeJSONValue = .object(["type": .string("object"), "properties": .object([
+                "x": .object(["type": .string("string"), "minLength": .number(item.minimum)]),
+            ])])
+            let validator = try NativeMCPJSONSchema(schema)
+            let value = NativeJSONValue.object(["x": item.value])
+            try require(validator.problems(value) == [NativeSchemaProblem(path: "x", expected: item.expected)]
+                        && validator.violation(value) == "Field 'x' " + item.violation,
+                        "String length problems count what was sent while the older violation stays unchanged: \(item.expected)")
+        }
+        return "empty and short strings report their scalar counts, wrong types have no count, and the older violation text stays unchanged"
     }
 
     private static func repairHandlerFaults() async throws -> String {
@@ -1641,6 +1750,37 @@ extension SelfTest {
             if let id = message.toolCallID { found[id] = message.content }
         }
         return found
+    }
+
+    private static func repairHandedOffReset() async throws -> String {
+        let require = NativeTaskFixture.require
+        let log = NativeToolExtensionLog()
+        let shelf = repairShelf(log, answer: { _ in .null })
+        let arguments = ["{}", "{}", #"{"packet":"Beans"}"#, "{}"]
+        let rounds = arguments.enumerated().map { index, raw in
+            [NativeTaskGenerationToolCall(id: "reset-\(index + 1)", name: shelf.name, arguments: raw)]
+        }
+        let rig = try NativeCompanionFinishRig(tools: [shelf], model: repairWorkModel(rounds))
+        _ = try rig.create("Find where the seed packets are kept")
+        var saved: [NativeCompanionCheckpoint] = []
+        for _ in rounds {
+            let record = try await rig.step()
+            try require(record.state == .queued, "The four-call repair sequence stays queued")
+            saved.append(try rig.checkpoint(record))
+        }
+        let results = repairWorkResults(saved.last)
+        let third = repairFields(results["reset-3"])
+        let fourth = repairFields(results["reset-4"])
+        try require(saved[1].repairs?.counts[shelf.name] == 2 && saved[2].repairs?.counts[shelf.name] == nil
+                    && third["fault"] == NativeJSONValue.string(NativeToolCallFault.invalidResult.rawValue)
+                    && third["error"] == NativeJSONValue.string(NativeToolRepair.emptyResult) && log.all.count == 1,
+                    "A null read result clears two prior argument refusals and answers with invalid_result: \(third)")
+        try require(fourth["repairs_left"] == NativeJSONValue.number(2) && fourth["closed"] == nil
+                    && fourth["fault"] == NativeJSONValue.string(NativeToolCallFault.invalidArguments.rawValue)
+                    && saved.last?.repairs?.counts[shelf.name] == 1 && saved.last?.repairs?.isClosed(shelf.name) == false
+                    && saved.last?.finishing != true && saved.last?.stoppedOnRepairs == false,
+                    "The next invalid call gets a fresh allowance without closing the name or finishing: \(fourth)")
+        return "a returned null read clears prior refusals, so the next invalid call has two repairs left and the work stays open"
     }
 
     private static func repairHandedOff() async throws -> String {

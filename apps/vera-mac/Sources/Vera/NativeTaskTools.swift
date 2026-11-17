@@ -61,7 +61,8 @@ enum NativeTaskTools {
                 }
                 let request: NativeResearchTaskRequest
                 if workerType == generalWorkerType, let general {
-                    guard NativeToolCallContext.round == 1, NativeToolCallContext.otherToolRan == false else {
+                    guard NativeToolCallContext.round == 1 || NativeToolCallContext.afterOnlyRefusals,
+                          NativeToolCallContext.otherToolRan == false else {
                         return .object(["message": .string(laterRound), "started": .bool(false)])
                     }
                     guard allowedWorkerTypes().contains(workerType) else {

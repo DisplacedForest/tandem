@@ -1140,6 +1140,7 @@ private struct NativeCompanionRun {
             checkpoint.calls += 1
             do {
                 let raw = try await NativeCompanionWorker.withDeadline(seconds, stopped: stopProbe) { try await definition.execute(arguments) }
+                settleRepairs(call, &checkpoint)
                 if let fault = NativeToolRepair.resultProblem(definition, raw, write: false) {
                     checkpoint.answer(call, NativeEffectProposal.canonicalArguments(fault.value))
                     return
@@ -1147,7 +1148,6 @@ private struct NativeCompanionRun {
                 var requested: String?
                 if case .string(let address)? = arguments["url"] { requested = address.trimmingCharacters(in: .whitespacesAndNewlines) }
                 let value = checkpoint.numbered(raw, definition: definition, requested: requested)
-                settleRepairs(call, &checkpoint)
                 checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
                 return
             } catch {
@@ -1274,6 +1274,7 @@ private struct NativeCompanionRun {
                     }
                 }
             }
+            settleRepairs(call, &checkpoint)
             let limit = NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)
             if NativeToolRepair.resultProblem(definition, value, write: true) != nil {
                 try environment.ledger.markUncertain(digest: record.digest, reason: "failed_result")
@@ -1286,7 +1287,6 @@ private struct NativeCompanionRun {
                 return try await reconcile(uncertain, call: call, definition: definition, &checkpoint)
             }
             try environment.ledger.settle(digest: record.digest, receipt: value, modelClaim: nil)
-            settleRepairs(call, &checkpoint)
             checkpoint.note(title, NativeCompanionWorker.ranWithFailure(value) ? "failed" : "done")
             checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: limit))
             return nil

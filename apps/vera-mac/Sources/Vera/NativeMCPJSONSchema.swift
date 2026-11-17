@@ -176,7 +176,11 @@ struct NativeMCPJSONSchema: Sendable {
         if found.count == before, found.count < limit {
             var expected = Self.expectation(value, target)
             if expected == Self.itemBlame { expected = Self.vague }
-            if Self.countedEndings.contains(where: { expected.hasSuffix($0) }) { expected += Self.measured(value, target) }
+            if case .string = value, expected == "must be a non-empty string" {
+                expected += Self.measured(value, target)
+            } else if Self.countedEndings.contains(where: { expected.hasSuffix($0) }) {
+                expected += Self.measured(value, target)
+            }
             found.append(NativeSchemaProblem(path: path.isEmpty ? "arguments" : path, expected: expected))
         }
     }
