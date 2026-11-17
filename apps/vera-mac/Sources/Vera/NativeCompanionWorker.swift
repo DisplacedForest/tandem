@@ -258,7 +258,7 @@ enum NativeCompanionWorker {
             }
             checkpoint.attempt = NativeCompanionCheckpoint.freshAttempt()
             checkpoint.pending = NativeCompanionPending(kind: "retry")
-            return try decide(checkpoint, NativeTaskWorkerFailures.pauseMessage(failure.code) + " Retry this step?", ["retry"])
+            return try decide(checkpoint, NativeTaskWorkerFailures.retryPrompt(NativeTaskWorkerFailures.pauseMessage(failure.code)), ["retry"])
         }
     }
 
@@ -953,7 +953,7 @@ private struct NativeCompanionRun {
                 completion = try await model("work-\(checkpoint.rounds)", checkpoint.attempt + "-finish", 0, prompt, tools, "none")
             } catch let failure as NativeTaskGenerationFailure where NativeTaskWorkerFailures.terminalCodes.contains(failure.code) {
                 return try await conclude(&checkpoint, text: NativeCompanionWorker.unfinishedReport(checkpoint))
-            } catch let failure as NativeTaskGenerationFailure where failure.code == "provider_response" {
+            } catch let failure as NativeTaskGenerationFailure where NativeTaskWorkerFailures.unusableReplyCodes.contains(failure.code) {
                 return try await conclude(&checkpoint, text: NativeCompanionWorker.fallbackReport(checkpoint))
             }
             checkpoint.rounds += 1

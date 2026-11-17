@@ -42,6 +42,7 @@ struct NativeTaskEngineHarness {
                           onUpdate: @escaping @MainActor @Sendable ([NativeTaskMessageUpdate]) -> Void = { _ in },
                           workers extra: @escaping (NativeTaskGenerationExchange) -> [String: NativeTaskWorker] = { _ in [:] },
                           identity customIdentity: (@Sendable (NativeTaskRecord) -> NativeWorkerIdentity)? = nil,
+                          profileReasoning: Bool? = nil,
                           complete: @escaping @Sendable (NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion) throws -> NativeTaskEngineHarness {
         let arbiter = NativeInferenceArbiter(cooldown: 0)
         let search = customSearch ?? NativeResearchSearch { query, _ in
@@ -65,7 +66,7 @@ struct NativeTaskEngineHarness {
                                         transport: engine.transport, configuredBase: base, onUpdate: onUpdate)
         let profile = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "fixture-profile",
             provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
-            savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits())
+            savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits(), reasoning: profileReasoning)
         let broker = NativeTaskGenerationBroker(repository: repository, client: engine.client, configuredBase: base,
             isProfileAvailable: { _ in true }, complete: { _, job in
                 await counter.bump("generate:\(job.phase)")
@@ -156,6 +157,7 @@ extension SelfTest {
         try await taskGatherRelaunch()
         try await taskDocumentEndToEnd()
         try await taskDocumentAutomaticRetry()
+        try await taskReplyCauses()
         try await taskScheduledRun()
         try await taskScheduleCheckIns()
         try await taskArbiterContract()
