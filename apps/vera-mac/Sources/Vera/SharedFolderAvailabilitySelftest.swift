@@ -184,6 +184,27 @@ extension SelfTest {
                     && !manager.fileExists(atPath: underBin),
                     "Sharing a parent folder does not reach into its Trash: \(intoBin)")
 
+        for spelled in [".trash", ".TRASH", ".Trashes", ".trashes", ".TrAsHeS"] {
+            let asked = base.appendingPathComponent(spelled).appendingPathComponent("dropped.txt").path
+            let said = try await failure(NativeFolderTools.writeName, [whole], ["path": .string(asked), "content": .string("x")])
+            try require(said == "\(asked) is in the Trash, which the file tools leave alone." && (try manager.contentsOfDirectory(atPath: bin.path)).isEmpty,
+                        "Another spelling of the Trash folder's name is refused too: \(said)")
+        }
+        let wholeRoot = try NativeFolderIO.openRoot(whole)
+        do {
+            _ = try NativeFolderIO.openDirectory(wholeRoot, ".Trash", display: bin.path)
+            throw NativeTaskFixture.Failure.assertion("Opening the Trash folder under a share must fail")
+        } catch let error as NativeFolderAccessError {
+            try require(error == .inTrash(bin.path), "A folder that really is the Trash is refused when it is opened, whatever was asked for: \(error)")
+        }
+        do {
+            _ = try NativeFolderIO.openDirectory(wholeRoot, ".trash", display: bin.path)
+            throw NativeTaskFixture.Failure.assertion("Opening the Trash folder by another spelling must fail")
+        } catch let error as NativeFolderAccessError {
+            try require(error == .inTrash(bin.path) || error == .notFound(bin.path), "Another spelling never opens the Trash folder: \(error)")
+        }
+
+        try require(FolderGrant.inTrash("/home/.TRASH/Plans") && FolderGrant.inTrash("/home/.trashes/501/Plans"), "The Trash name is matched whatever its capitals")
         try require(FolderGrant.inTrash("/home/.Trash/Plans") && FolderGrant.inTrash("/Volumes/Storage/.Trashes/501/Plans")
                     && !FolderGrant.inTrash("/home/Trash/Plans") && !FolderGrant.inTrash("/home/.Trash-notes/Plans"),
                     "Only a real Trash folder counts")

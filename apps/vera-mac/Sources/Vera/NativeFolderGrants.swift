@@ -92,8 +92,13 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
         return String(parts[1])
     }
 
+    static func isTrashName(_ component: Substring) -> Bool {
+        let name = component.lowercased()
+        return name == ".trash" || name == ".trashes"
+    }
+
     static func inTrash(_ path: String) -> Bool {
-        path.split(separator: "/", omittingEmptySubsequences: true).contains { $0 == ".Trash" || $0 == ".Trashes" }
+        path.split(separator: "/", omittingEmptySubsequences: true).contains(where: isTrashName)
     }
 
     static func real(_ path: String) -> String {
@@ -275,7 +280,7 @@ struct NativeFolderAccess: Sendable {
         if let best = matches.max(by: { $0.root.path.count < $1.root.path.count }) {
             let relative = String(best.path.dropFirst(best.root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
             guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
-            guard !relative.contains(where: { $0 == ".Trash" || $0 == ".Trashes" }) else { throw NativeFolderAccessError.inTrash(requested) }
+            guard !relative.contains(where: { FolderGrant.isTrashName(Substring($0)) }) else { throw NativeFolderAccessError.inTrash(requested) }
             return NativeFolderLocation(root: best.root, components: relative)
         }
         for candidate in candidates {
