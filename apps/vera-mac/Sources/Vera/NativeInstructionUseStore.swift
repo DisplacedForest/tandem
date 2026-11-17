@@ -81,8 +81,8 @@ struct NativeInstructionUseStore: Sendable {
         do {
             return try database.read { db in
                 try Bool.fetchOne(db, sql: """
-                    SELECT EXISTS(SELECT 1 FROM native_instruction_uses WHERE message_id = ? AND signature = ? AND (? IS NULL OR holder != ?))
-                    """, arguments: [messageID.uuidString, signature, holder, holder]) ?? true
+                    SELECT EXISTS(SELECT 1 FROM native_instruction_uses WHERE message_id = ? AND signature = ? AND (? IS NULL OR holder != ? OR holder = ?))
+                    """, arguments: [messageID.uuidString, signature, holder, holder, Self.refusalHolder]) ?? true
             }
         } catch {
             return true
