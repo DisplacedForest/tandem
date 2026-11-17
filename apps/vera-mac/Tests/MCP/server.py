@@ -105,6 +105,9 @@ class Handler(BaseHTTPRequestHandler):
             result['content'][0]['text'] = synthetic_token
         if self.path == '/hints' and method == 'tools/list' and result.get('tools'):
             result['tools'].append(dict(result['tools'][0], name='fixture_post', annotations={'readOnlyHint': False, 'destructiveHint': True, 'idempotentHint': False, 'openWorldHint': True}))
+        if self.path == '/declared' and method == 'tools/list' and result.get('tools'):
+            result['tools'][0]['title'] = 'Fixture read'
+            result['tools'][0]['outputSchema'] = {'type': 'object', 'properties': {'count': {'type': 'integer'}, 'ok': {'type': 'boolean'}}, 'required': ['count', 'ok'], 'additionalProperties': False}
         if self.path == '/data-schema' and method == 'tools/list' and result.get('tools'):
             result['tools'][0]['inputSchema']['properties']['uri'] = {'const': 'data:,hello'}
         if self.path == '/data-result' and method == 'tools/call':

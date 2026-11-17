@@ -877,7 +877,7 @@ enum NativeTaskDeliverySelftest {
         strings.append(ChatStore.researchReplyRule)
         strings.append(NativeTaskDeliveryShot.reply)
         for text in strings {
-            let words = Set(text.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+            let words = Set(text.lowercased().split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_") }).map(String.init))
             let hits = words.intersection(banned)
             try require(hits.isEmpty && !text.contains("\u{2014}") && !text.contains("Tandem"),
                         "Copy stays first person and plain: \(hits) in \(text)")

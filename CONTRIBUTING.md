@@ -36,7 +36,7 @@ services/vera-image/    image-gen reference service (MLX; OpenAI Images API + na
 services/vera-vision/   vision serving notes + launchd template
 services/vera-coder/    coding-agent harness for the coder endpoint
 scripts/                ops scripts; each documents its own env in its header
-docs/                   SETUP.md + screenshots
+docs/                   SETUP.md, TOOLS.md (adding a tool) + screenshots
 ```
 
 ## Running tests

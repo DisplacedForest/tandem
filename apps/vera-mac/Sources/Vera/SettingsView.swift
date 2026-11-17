@@ -408,18 +408,50 @@ enum ModelSettingsCopy {
 
 enum SettingsToolsCopy {
     static let empty = "No tools are available."
-    static let unreadable = "One of your added tools couldn't be loaded."
     static let services = "Connected services are managed under Integrations."
     static let openIntegrations = "Open Integrations"
     static let openSearch = "Open Search"
     static let openImage = "Open Image"
 
     static var fixedStrings: [String] {
-        [empty, unreadable, services, openIntegrations, openSearch, openImage]
+        [empty, services, openIntegrations, openSearch, openImage]
     }
 
-    static func failureHint(_ file: String) -> String {
-        (file as NSString).deletingPathExtension
+    static let fieldTypes = "string, boolean, integer or number"
+
+    static func failureLine(_ failure: NativeToolDeclarationFailure) -> String {
+        failureLine(file: failure.file, problem: failure.problem)
+    }
+
+    static func failureLine(file: String, problem: NativeToolDeclarationProblem) -> String {
+        "\((file as NSString).lastPathComponent) wasn't loaded. " + fix(problem)
+    }
+
+    static func fix(_ problem: NativeToolDeclarationProblem) -> String {
+        switch problem {
+        case .unreadable: return "Tandem couldn't open it. Check that the file can be read, then save it again."
+        case .notJSON: return "Tandem couldn't read what's in it. Check its brackets, commas and quotes, then save."
+        case .missing(let key): return "It needs a \"\(key)\". Add one and save."
+        case .badName: return "The name can only use plain letters, numbers and _, and must start with a letter. Rename it and save."
+        case .badParameters: return "Its \"parameters\" must say \"type\": \"object\" and list its fields under \"properties\". Fix it and save."
+        case .badField(let field): return "The field \"\(field)\" needs a \"type\" of \(fieldTypes). Fix it and save."
+        case .unsupportedType(let field, let type): return "The field \"\(field)\" is \"\(type)\", which Tandem can't check. Use \(fieldTypes), then save."
+        case .unsupportedKeyword(let keyword): return "It uses \"\(keyword)\", which Tandem can't check. Remove it and save."
+        case .badValue(let field, let keyword): return "The \"\(keyword)\" on the field \"\(field)\" isn't a value Tandem can use. Fix it and save."
+        case .badRequired: return "Its \"required\" must list only fields that are under \"properties\". Fix it and save."
+        case .repeatedRequired: return "A field is listed twice as required. Remove the repeat and save."
+        case .badEndpoint: return "Its \"endpoint\" must be an http or https address, or a path on your Tandem server. Fix it and save."
+        case .badMethod: return "Its \"method\" must be \"GET\" or \"POST\". Fix it and save."
+        case .badConfirmation: return "Its \"confirmation\" must be \"none\" or \"required\". Fix it and save."
+        case .badTimeout: return "Its \"timeout_s\" must be a number from 1 to 300. Fix it and save."
+        case .badEnabled: return "Its \"enabled\" must be true or false. Fix it and save."
+        case .badJSONFields: return "Its \"json_fields\" must map each text field to its own request field, and only works with \"POST\". Fix it and save."
+        case .badSendsTo: return "Its \"sends_to\" must list text fields once each, and only works with \"POST\". Fix it and save."
+        case .badVerbs: return "Its \"verbs\" must list one to eight different lowercase words, and only a tool that changes something can have them. Fix it and save."
+        case .duplicateName(let name): return "Another file already uses the name \"\(name)\". Rename one of them and save."
+        case .reservedName(let name): return "The name \"\(name)\" belongs to a tool built into Tandem. Rename it and save."
+        case .other: return "Check the file and save it again."
+        }
     }
 
     static func tab(for toolID: String) -> SettingsTab? {
@@ -498,9 +530,8 @@ struct NativeToolEditor: View {
                 }
             }
             ForEach(failures) { failure in
-                Text(SettingsToolsCopy.unreadable)
+                Text(SettingsToolsCopy.failureLine(failure))
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    .help(SettingsToolsCopy.failureHint(failure.file))
             }
             HStack(spacing: 10) {
                 Text(SettingsToolsCopy.services)

@@ -62,11 +62,16 @@ extension ChatStore {
         let serviceNames = services.map(\.name).joined(separator: ", ")
         var definition = NativeToolDefinition(id: NativeCompanionProfileTools.toolID, name: NativeCompanionProfileTools.name,
             title: "Update companion profile",
-            description: "Apply one profile change explicitly requested by the current user. Actions: name, rule, connect, disconnect, note, finish_setup. value is the new text or service name. For rule only, category is file_edits, commands, trash, network_sends, risky_commands, reminders, service_changes or other_changes, and value is act, ask or hand_off. Global restrictions cannot be widened. Notes become memory suggestions for review and require memory enabled. finish_setup uses an empty value when setup was answered or skipped. Configured service names: " + serviceNames,
+            description: "Changes one thing about the companion in this conversation: its name, a rule for how it handles a kind of action here, which connected services it may use, a lasting preference, or whether first-time setup is finished. When to use: the person wants the companion renamed, wants a kind of action done straight away, asked about first or handed back to them, wants a service connected or disconnected, states a preference to keep, or answers or skips setup. When not to use: a question about the current settings, which you answer directly; any other change, which this cannot make. Effects: saves that one change; the app asks the person first before connecting a service or making a rule less strict. Inputs by action: name sets the name, up to 80 characters; rule needs category and a value of act, ask or hand_off, and cannot be less strict than the defaults in Settings; connect and disconnect take an exact service name from the list below; note saves value as a memory suggestion for the person to review and needs memory turned on; finish_setup takes an empty value. Returns result, a short sentence; confirm the change in one line. If it says the profile changed, read the current settings and propose the change once more; otherwise tell the person plainly why it could not be done. Services that can be connected or disconnected: " + (serviceNames.isEmpty ? "none" : serviceNames),
             parameters: .object(["type": .string("object"), "properties": .object([
-                "action": .object(["type": .string("string")]),
-                "value": .object(["type": .string("string")]),
-                "category": .object(["type": .string("string")]),
+                "action": .object(["type": .string("string"), "minLength": .number(1),
+                                   "enum": .array(["name", "rule", "connect", "disconnect", "note", "finish_setup"].map { NativeJSONValue.string($0) }),
+                                   "description": .string("Which change to make.")]),
+                "value": .object(["type": .string("string"), "minLength": .number(0),
+                                  "description": .string("The new value: the name, the rule choice act, ask or hand_off, the exact service name, or the preference text. Up to 2000 characters; empty only for finish_setup.")]),
+                "category": .object(["type": .string("string"), "minLength": .number(1),
+                                     "enum": .array(NativeActionClass.configurable.map { NativeJSONValue.string($0.rawValue) }),
+                                     "description": .string("For rule only: the kind of action the rule covers. Omit for every other action.")]),
             ]), "required": .array([.string("action"), .string("value")]), "additionalProperties": .bool(false)]), confirmation: .none,
             confirmationFor: { arguments in
                 guard let change = try? NativeCompanionProfileTools.change(arguments) else { return true }

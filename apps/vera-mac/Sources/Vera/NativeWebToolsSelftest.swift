@@ -179,7 +179,12 @@ enum NativeWebToolsSelftest {
             let (final, _) = try await loop(registry, rounds: [
                 call("h", "web_search", "{\"query\":\"rain\",\"max_results\":\(hostile)}"), reply("Still standing."),
             ], enabled: ["web-search"])
-            try require(final?.activities.first?.state == .succeeded && final?.content == "Still standing.", "hostile max_results \(hostile)")
+            let activity = final?.activities.first
+            let whole = hostile == "1e100"
+            try require(final?.content == "Still standing." && (whole
+                            ? activity?.state == .succeeded
+                            : activity?.state == .failed && activity?.result?.contains("Field 'max_results' must be a whole number") == true),
+                        "hostile max_results \(hostile) is refused by name or handled, and the turn carries on: \(activity?.result ?? "")")
         }
 
         client.respond(status: 503, json: "<html>down</html>")

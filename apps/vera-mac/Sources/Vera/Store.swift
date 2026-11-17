@@ -212,7 +212,7 @@ final class ChatStore: ObservableObject {
     var nativeTaskTracker: NativeTaskTracker?
     let nativeTaskTrackingClient: NativeTaskClient
     @Published var nativeTaskReferences: [NativeTaskReference] = []
-    static let researchReplyRule = "Start research only when this current request explicitly asks for research or an investigation. When you do, reply with one short first-person sentence that says what you'll do in the person's terms, without identifiers, implementation details, or saying where or how the result will arrive; it arrives in this conversation by itself. Report real blockers when relevant. Never wait for its report or claim it is complete."
+    static let researchReplyRule = "Start longer research when the current request calls for it, and answer a quick question directly. When you start it, reply with one short first-person sentence that says what you'll do in the person's terms, without identifiers, implementation details, or saying where or how the result will arrive; it arrives in this conversation by itself. Report real blockers when relevant. Never wait for its report or claim it is complete."
     var nativeTaskResultDeliveries: [UUID: UUID?] = [:]
     @Published var highlightedTaskID: String?
     @Published var pendingTaskReveal: String?
@@ -462,6 +462,7 @@ final class ChatStore: ObservableObject {
 
     static var builtInToolNames: Set<String> {
         Set(buildToolRegistry([]).definitions.map(\.name)).union([NativeTaskTools.toolName]).union(NativeFolderTools.toolNames).union(NativeCommandTools.toolNames)
+            .union([NativeScheduleTools.toolName, NativeCompanionProfileTools.name]).union(CompanionTalkTools.names)
     }
 
     func reloadCapabilityTools(_ declarations: [NativeToolDeclaration]) {

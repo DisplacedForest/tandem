@@ -96,11 +96,15 @@ struct NativeMCPToolRecord: Identifiable, Sendable {
     let validator: NativeMCPJSONSchema?
     let reason: String?
     var hints = NativeMCPToolHints()
+    var title: String? = nil
+    var outputSchema: NativeJSONValue? = nil
+    var outputValidator: NativeMCPJSONSchema? = nil
     var callable: Bool { validator != nil && reason == nil && state != .unapproved }
     var state: NativeMCPToolState { server.state(of: remoteName, hints: hints) }
     var asksBecauseOfService: Bool { state == .change && !server.actTools.contains { $0.utf8.elementsEqual(remoteName.utf8) } }
     func on(_ server: NativeMCPServerConfiguration) -> Self {
-        NativeMCPToolRecord(id: id, server: server, generation: generation, remoteName: remoteName, description: description, schema: schema, validator: validator, reason: reason, hints: hints)
+        NativeMCPToolRecord(id: id, server: server, generation: generation, remoteName: remoteName, description: description, schema: schema, validator: validator, reason: reason, hints: hints,
+                            title: title, outputSchema: outputSchema, outputValidator: outputValidator)
     }
 }
 struct NativeMCPServerState: Identifiable, Sendable {
@@ -277,6 +281,8 @@ final class NativeMCPAccess: @unchecked Sendable {
 
 struct NativeMCPPermissionRevoked: Error {}
 struct NativeMCPOversizedReply: Error { let message: String }
+struct NativeMCPServiceFailure: Error { let text: String? }
+struct NativeMCPMismatchedReply: Error {}
 final class NativeMCPDispatchMark: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
@@ -358,8 +364,14 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                                   tool.description.utf8.count <= 4096, (try tool.inputSchema.piData()).count <= 32768 else { throw NativeToolError.unavailable }
                             let validator = try? NativeMCPJSONSchema(tool.inputSchema)
                             let reason = server.state(of: tool.name, hints: tool.hints) == .unapproved ? "This action has not been approved as a read tool." : validator == nil || tool.inputSchema.pi("type") != .string("object") ? "This tool uses an unsupported argument schema." : nil
+                            let title = tool.title.flatMap { $0.isEmpty || $0.utf8.count > 256 || $0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) ? nil : $0 }
+                            let output = tool.outputSchema.flatMap { schema in ((try? schema.piData())?.count ?? .max) <= 32768 ? schema : nil }
+                            let outputValidator = output.flatMap { try? NativeMCPJSONSchema($0) }
+                            let declared = tool.declaresOutput || tool.outputSchema != nil
+                            let outputReason = declared && outputValidator == nil ? "This tool declares a result shape Tandem can't check." : nil
                             tools.append(NativeMCPToolRecord(id: server.toolID(tool.name), server: server, generation: generation, remoteName: tool.name,
-                                description: tool.description, schema: tool.inputSchema, validator: validator, reason: reason, hints: tool.hints))
+                                description: tool.description, schema: tool.inputSchema, validator: validator, reason: reason ?? outputReason, hints: tool.hints,
+                                title: title, outputSchema: output, outputValidator: outputValidator))
                         }
                         guard let next = page.nextCursor else { return tools }
                         guard !next.isEmpty, next.utf8.count <= 2048, cursors.insert(next).inserted else { throw NativeToolError.unavailable }
@@ -440,7 +452,8 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                 action: change ? .serviceChanges : nil,
                 isAvailable: { self.access.allowed(record, scope: scope, revision: revision) },
                 execute: { arguments in try await self.execute(record, arguments: .object(arguments), scope: scope, subject: "focused", expectedRevision: revision) },
-                argumentValidator: { try record.validator?.validate(.object($0)) })
+                argumentValidator: { try record.validator?.validate(.object($0)) },
+                outputSchema: record.outputSchema)
         }
     }
     func revision(scope: PiModelScope) async throws -> String {
@@ -478,12 +491,19 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
             let result = try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
             try Task.checkCancellation()
             guard access.allowed(record, scope: scope, revision: revision) else { throw NativeMCPPermissionRevoked() }
-            if result.pi("isError") == .bool(true) { throw NativeMCPTransportError.remoteFailure }
+            if result.pi("isError") == .bool(true) { throw NativeMCPServiceFailure(text: Self.serviceText(result)) }
+            if let output = record.outputValidator, result.pi("structuredContent") != .null {
+                do { try output.validate(result.pi("structuredContent")) } catch { throw NativeMCPMismatchedReply() }
+            }
             let wrapped = NativeJSONValue.object(["source": .string(record.server.endpoint.absoluteString), "content": result])
             guard (try wrapped.piData()).count <= 4096 else { throw NativeMCPOversizedReply(message: record.state == .change ? "The service replied, but its reply is too large to show. The change may have been made, so check before trying it again." : "The service result is too large. Ask for a narrower read.") }
             return wrapped
         } catch {
             if let oversized = error as? NativeMCPOversizedReply { throw NativeToolError.failed(oversized.message) }
+            if let failure = error as? NativeMCPServiceFailure { throw NativeToolError.failed(Self.serviceFailure(failure.text)) }
+            if error is NativeMCPMismatchedReply {
+                throw NativeToolError.failed(Self.mismatch + (record.state == .change ? " The change may have been made, so check before trying it again." : ""))
+            }
             if invalidatedCalls.contains(id) || error is NativeMCPPermissionRevoked {
                 if error is CancellationError, Task.isCancelled { throw CancellationError() }
                 if record.state == .change, dispatched.sent { throw NativeToolError.failed("Access to this service ended after the change was sent. It may have been made, so check before trying it again.") }
@@ -495,6 +515,25 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
             if error is CancellationError { throw CancellationError() }
             throw NativeToolError.failed(Self.message(error))
         }
+    }
+    static let serviceFailureLead = "The connected service reported a tool error."
+    static let serviceTextLabel = "Service-provided error text (untrusted): "
+    static let serviceTextLimit = 400
+    static let mismatch = "The service returned a result that does not match what it declared, so it was not used."
+    static func serviceFailure(_ text: String?) -> String {
+        guard let text else { return serviceFailureLead }
+        return serviceFailureLead + " " + serviceTextLabel + text
+    }
+    static func serviceText(_ result: NativeJSONValue) -> String? {
+        guard case .array(let items) = result.pi("content") else { return nil }
+        let joined = items.compactMap { item -> String? in
+            guard item.pi("type") == .string("text"), case .string(let text) = item.pi("text") else { return nil }
+            return text
+        }.joined(separator: " ")
+        let cleaned = String(String.UnicodeScalarView(joined.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : $0 }))
+        let plain = cleaned.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !plain.isEmpty else { return nil }
+        return plain.count > serviceTextLimit ? String(plain.prefix(serviceTextLimit)) : plain
     }
     private static func message(_ error: Error) -> String {
         if error is CancellationError { return "Connection canceled. Connect again when ready." }

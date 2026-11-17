@@ -1,9 +1,16 @@
 import Foundation
+import MCP
 
 enum NativeMCPTransportSelftest {
     enum Failure: Error { case assertion(String) }
 
     static func run() async throws {
+        try require(NativeMCPProtocolVersions.accepted == ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"], "The accepted protocol versions are the ones named in the app")
+        try require(NativeMCPProtocolVersions.accepted.isSubset(of: Version.supported), "Every accepted protocol version is one the client library speaks")
+        try require(Version.supported.contains(Version.latest) && NativeMCPProtocolVersions.accepts(Version.latest), "The version the client asks for is accepted")
+        for unknown in ["2099-01-01", "2024-10-07", "", "2025-06-18 "] {
+            try require(!NativeMCPProtocolVersions.accepts(unknown), "An unknown protocol version is refused: \(unknown)")
+        }
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("vera-mcp-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -77,6 +84,14 @@ enum NativeMCPTransportSelftest {
         try require(hintedPage.tools.first?.hints == NativeMCPToolHints(), "A tool with nothing said about it carries no hints")
         try require(hintedPage.tools.last?.hints == NativeMCPToolHints(readOnly: false, destructive: true, idempotent: false, openWorld: true), "What a service says about a tool is kept")
         await hinted.disconnect()
+        try require(hintedPage.tools.first?.title == nil && hintedPage.tools.first?.outputSchema == nil, "A tool that declares no title or result shape carries none")
+        let declaredTools = try connection("declared")
+        try await declaredTools.connect()
+        let declaredPage = try await declaredTools.listTools(cursor: nil)
+        try require(declaredPage.tools.first?.title == "Fixture read", "A service's own title for a tool is kept")
+        try require(declaredPage.tools.first?.outputSchema?.pi("required") == .array([.string("count"), .string("ok")]),
+                    "A service's declared result shape is kept as sent")
+        await declaredTools.disconnect()
         let dataSchema = try connection("data-schema")
         try await dataSchema.connect()
         do { _ = try await dataSchema.listTools(cursor: nil); throw Failure.assertion("Data URL schema was silently rewritten") }

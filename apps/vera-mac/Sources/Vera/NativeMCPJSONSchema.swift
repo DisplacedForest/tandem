@@ -57,6 +57,80 @@ struct NativeMCPJSONSchema: Sendable {
         }
     }
 
+    func violation(_ value: NativeJSONValue) -> String? {
+        do {
+            try validate(value)
+            return nil
+        } catch Failure.resourceLimit {
+            return "The arguments are too large to check"
+        } catch Failure.unsupportedSchema {
+            return "This tool's argument schema is not supported"
+        } catch {}
+        guard case .object(let schema) = self.schema, case .object(let values) = value else { return "Expected a JSON object" }
+        if let required = schema["required"], let names = try? strings(required) {
+            for name in names where Self.exactValue(name, in: values) == nil { return "Missing required field '\(name)'" }
+        }
+        let declared: [String: NativeJSONValue]
+        if case .object(let properties)? = schema["properties"] { declared = properties } else { declared = [:] }
+        if schema["additionalProperties"] == .bool(false),
+           let name = values.keys.filter({ Self.exactValue($0, in: declared) == nil }).sorted().first {
+            return "Unknown field '\(name)'"
+        }
+        for name in values.keys.sorted() {
+            guard let item = values[name], let property = Self.exactValue(name, in: declared) else { continue }
+            var budget = 50_000
+            if (try? matches(item, schema: property, depth: 1, budget: &budget)) == true { continue }
+            return "Field '\(name)' " + Self.expectation(item, property)
+        }
+        return "The arguments do not match this tool's schema"
+    }
+
+    private static func expectation(_ value: NativeJSONValue, _ schema: NativeJSONValue) -> String {
+        guard case .object(let object) = schema else { return "is not accepted" }
+        if case .string(let type)? = object["type"] {
+            switch (type, value) {
+            case ("string", .string(let text)):
+                if case .number(let minimum)? = object["minLength"], Double(text.unicodeScalars.count) < minimum {
+                    return minimum <= 1 ? "must be a non-empty string" : "must be at least \(plain(minimum)) characters"
+                }
+                if case .number(let maximum)? = object["maxLength"], Double(text.unicodeScalars.count) > maximum {
+                    return "must be at most \(plain(maximum)) characters"
+                }
+            case ("string", _):
+                if case .number(let minimum)? = object["minLength"], minimum == 0 { return "must be a string" }
+                return "must be a non-empty string"
+            case ("boolean", .bool): break
+            case ("boolean", _): return "must be a boolean"
+            case ("integer", .number(let number)), ("number", .number(let number)):
+                if type == "integer", number.rounded(.towardZero) != number { return "must be a whole number" }
+                if case .number(let minimum)? = object["minimum"], number < minimum { return "must be at least \(plain(minimum))" }
+                if case .number(let maximum)? = object["maximum"], number > maximum { return "must be at most \(plain(maximum))" }
+            case ("integer", _): return "must be a whole number"
+            case ("number", _): return "must be a number"
+            case ("array", .array(let items)):
+                if case .number(let minimum)? = object["minItems"], Double(items.count) < minimum { return "must have at least \(plain(minimum)) items" }
+                if case .number(let maximum)? = object["maxItems"], Double(items.count) > maximum { return "must have at most \(plain(maximum)) items" }
+                return "has an item that does not match its schema"
+            case ("array", _): return "must be a list"
+            case ("object", .object): break
+            case ("object", _): return "must be an object"
+            default: break
+            }
+        }
+        if case .array(let choices)? = object["enum"] {
+            let names = choices.compactMap { choice -> String? in
+                if case .string(let text) = choice { return text }
+                return nil
+            }
+            if names.count == choices.count, !names.isEmpty { return "must be one of: " + names.joined(separator: ", ") }
+        }
+        return "does not match its schema"
+    }
+
+    private static func plain(_ number: Double) -> String {
+        number.rounded(.towardZero) == number && abs(number) < 1e18 ? String(Int(number)) : String(number)
+    }
+
     private static func measure(_ value: NativeJSONValue, depth: Int, nodes: inout Int, bytes: inout Int) throws {
         nodes += 1
         guard depth <= 48, nodes <= 8_192, bytes <= 1_048_576 else { throw Failure.resourceLimit }
@@ -299,5 +373,65 @@ struct NativeMCPJSONSchema: Sendable {
         case .bool, .null: break
         }
         return true
+    }
+}
+
+typealias NativeJSONSchema = NativeMCPJSONSchema
+
+final class NativeToolSchemaCache: @unchecked Sendable {
+    static let shared = NativeToolSchemaCache()
+    private let lock = NSLock()
+    private var compiled: [[UInt8]: NativeJSONSchema?] = [:]
+
+    func validator(_ schema: NativeJSONValue) -> NativeJSONSchema? {
+        let key = Self.exactKey(schema)
+        lock.lock()
+        defer { lock.unlock() }
+        if let known = compiled[key] { return known }
+        if compiled.count >= 1_024 { compiled.removeAll() }
+        let built = try? NativeJSONSchema(schema)
+        compiled[key] = built
+        return built
+    }
+
+    static func exactKey(_ value: NativeJSONValue) -> [UInt8] {
+        var bytes: [UInt8] = []
+        append(value, to: &bytes)
+        return bytes
+    }
+
+    private static func append(_ text: String, to bytes: inout [UInt8]) {
+        let utf8 = Array(text.utf8)
+        bytes.append(contentsOf: String(utf8.count).utf8)
+        bytes.append(0x3A)
+        bytes.append(contentsOf: utf8)
+    }
+
+    private static func append(_ value: NativeJSONValue, to bytes: inout [UInt8]) {
+        switch value {
+        case .null: bytes.append(0x6E)
+        case .bool(let flag): bytes.append(flag ? 0x74 : 0x66)
+        case .number(let number):
+            bytes.append(0x23)
+            withUnsafeBytes(of: number.bitPattern.bigEndian) { bytes.append(contentsOf: $0) }
+        case .string(let text):
+            bytes.append(0x73)
+            append(text, to: &bytes)
+        case .array(let items):
+            bytes.append(0x5B)
+            bytes.append(contentsOf: String(items.count).utf8)
+            bytes.append(0x3A)
+            for item in items { append(item, to: &bytes) }
+            bytes.append(0x5D)
+        case .object(let object):
+            bytes.append(0x7B)
+            bytes.append(contentsOf: String(object.count).utf8)
+            bytes.append(0x3A)
+            for (key, item) in object.sorted(by: { $0.key.utf8.lexicographicallyPrecedes($1.key.utf8) }) {
+                append(key, to: &bytes)
+                append(item, to: &bytes)
+            }
+            bytes.append(0x7D)
+        }
     }
 }

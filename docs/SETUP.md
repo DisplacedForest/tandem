@@ -139,13 +139,6 @@ Background research runs in the app's own task engine. Tasks, their append-only 
 
 A simple explicit count such as “with three bullet points” or “exactly 3 bullets” creates one list body with one document title. Counts from one through twenty are supported. The worker validates the count after drafting, revision and before publication; a mismatch preserves the draft and waits for an explicit retry. Quoted, ambiguous, ranged or per-section counts retain the general section workflow. Existing saved section plans are not rewritten.
 
-
-On ordinary launch, select your companion in the sidebar (it shows the name you gave it, or **Your companion** until you name it), then **Connect assistant** using the saved OpenRouter profile. The assistant requires a previously authorized spending policy at `~/Library/Application Support/Vera/Assistant/spending.json`, owned by the current user with mode 0600. It contains schema version 1, a stable UUID `id`, `ceilingNanos`, `historicalHoldsNanos`, `allowanceNanos`, and `observedUsageNanos` (USD multiplied by one billion). Never reset this file or its sibling ledgers to renew an allowance. The local allowance is at most $1 and the cumulative ceiling at most $200. Existing credentials stay in Keychain; the policy contains no secrets. Provider usage and prices are checked before generation, and each request reserves at most $0.01. There is no automatic model call when the app launches. Each explicit Connect assistant attempt refreshes only the selected saved credential without opening an authorization prompt or modifying it. Access refusal is reported separately from a missing credential or unsaved/unsupported model configuration. After access has been restored outside the app, Connect assistant retries without requiring a restart. Repeated connection attempts cannot change Keychain permissions. If an already loaded credential changes outside Tandem, connection is blocked until the selected credential is explicitly saved in Settings; existing operations cannot silently adopt the replacement.
-
-In the native assistant, ask your companion to write a document through the ordinary composer. Include the brief and any source notes in the current message (up to 2,000 characters). Your companion chooses a short title and drafts up to four sections using only that message. Earlier conversation content and memory are excluded from the document worker. Progress, Stop, a read-only Markdown preview and Show in Finder remain attached to the original request. No editor or connected service is needed. The finished document also appears in [Library](#library). The selected shared model and background admission still apply.
-
-A saved request retries with the same identity after an unconfirmed response. On restart, completed documents reopen without a model request; unfinished writing waits for an explicit resume while keeping completed sections. An uncertain step may consume model usage again on explicit retry, and its earlier reservation remains accounted for. Each native document permits twelve attempts; the four-section document worker requires nine successful model calls. Conversational routing and acknowledgment use additional calls. The ordinary assistant retains its lifetime spending ledger and up to 1,000 recorded calls across restarts. If that limit or the selected model is unavailable, the card preserves progress and reports that writing needs attention.
-
 The existing task engine registers a `document` worker. Submit work through `POST /tasks` with a fresh idempotency key:
 
 ```json
@@ -518,8 +511,10 @@ Chat tools beyond the built-ins are configuration, not code. Drop a JSON file in
 and the app loads it at startup and again whenever Settings saves. Each valid file becomes
 a native tool: a toggle appears in Settings, Tools, the model is offered the tool when it is
 enabled and available, calls execute over HTTP, and each call renders as an activity chip
-in chat like any other tool. A malformed file is skipped. Settings, Tools says one couldn't be loaded, and hovering
-that line shows which file.
+in chat like any other tool. A file that can't be loaded is skipped and its tool is never
+offered to the model. Settings, Tools shows a line for it that names the file and says what
+to change, for example: garden.json wasn't loaded. It uses "pattern", which Tandem can't
+check. Remove it and save.
 
 A declaration is one JSON object per file. For example, a tool over a home inventory
 service:
@@ -546,14 +541,21 @@ service:
 }
 ```
 
-- `name`: the unique function name the model calls.
+- `name`: the unique function name the model calls. A name already used by a tool built
+  into Tandem is refused, and so is a name another file already took.
 - `title`: the short label shown in Settings and in the activity chip.
 - `description`: what the tool does and when to use it, written for the model.
 - `summary`: optional. One short line for people, shown under the title in Settings,
   Tools. The `description` is never shown there. Without a `summary` the row shows the
   title alone.
-- `parameters`: a JSON Schema object. The supported subset is string and boolean
-  properties, plus `required` and `additionalProperties: false`.
+- `parameters`: a JSON Schema object with `type: "object"`, `properties`, an optional
+  `required` list and an optional `additionalProperties: false`. Each property has a
+  `type` of `string`, `boolean`, `integer` or `number`, and may also use `description`,
+  `enum`, `const`, `minLength`, `maxLength`, `minimum`, `maximum`, `default`, `title` and
+  `examples`. Arguments are checked against these before any request is sent, and a
+  string property without its own `minLength` must not be empty. A file that uses any
+  other keyword, inside a property or next to `properties` (for example `pattern`,
+  `format`, `items`, a nested object, `oneOf` or `$ref`), isn't loaded.
 - `endpoint`: an absolute URL, or a path starting with `/`, resolved against the
   configured vera-api base URL. A path-relative tool stays unavailable, and off the list in
   Settings, Tools, until that URL is set.
@@ -570,7 +572,7 @@ service:
 - `json_fields`: optional, POST only. Maps a declared string property to a request body
   field, and the string must then contain a JSON object, for example
   `"json_fields": {"filters_json": "filters"}`. This lets a tool accept a nested object
-  while the parameters stay within the string and boolean subset.
+  while the parameters stay within the supported subset.
 - `sends_to`: optional, POST only. Lists the declared string fields that say where a
   message goes, for example `"sends_to": ["to"]`. A field can hold several addresses
   separated by commas or semicolons. Leave the list empty, `"sends_to": []`, for a tool

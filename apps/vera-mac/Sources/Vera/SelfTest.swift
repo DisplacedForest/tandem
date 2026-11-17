@@ -486,6 +486,8 @@ enum SelfTest {
         do { try await NativeRuleRecordsSelftest.run() } catch { print("SELFTEST ERROR: rule records \(error)"); exit(1) }
         do { try await runNativeMemoryRetrieval() } catch { print("SELFTEST ERROR: native memory retrieval \(error)"); exit(1) }
         do { try await runSettingsToolsCopy() } catch { print("SELFTEST ERROR: settings tools copy \(error)"); exit(1) }
+        do { try await runNativeToolContract() } catch { print("SELFTEST ERROR: native tool contract \(error)"); exit(1) }
+        do { try await runNativeToolExtension() } catch { print("SELFTEST ERROR: native tool extension \(error)"); exit(1) }
         do { try await runModelSettingsCopy() } catch { print("SELFTEST ERROR: model settings copy \(error)"); exit(1) }
         await runNativeImageTools()
         await runNativeCapabilityTools()
@@ -893,7 +895,8 @@ enum SelfTest {
         guard tools.count >= 2, toolLines.count == tools.count,
               first.sections[3].content.contains("Never say a function name to the user."),
               zip(tools, toolLines).allSatisfy({ tool, line in
-                  line.hasPrefix("- \(tool.name) (\"\(NativeContextAssembler.plainTitle(tool.title))\"): ")
+                  let head = "- \(tool.name) (\"\(NativeContextAssembler.plainTitle(tool.title))\")"
+                  return (line == head || line == head + " Requires in-app confirmation before it runs.")
                       && !NativeContextAssembler.plainTitle(tool.title).isEmpty
               }) else {
             print("SELFTEST ERROR: native context tool lines \(toolLines)"); exit(1)
@@ -914,8 +917,9 @@ enum SelfTest {
         var titled = input
         titled.tools = [quoted, untitled]
         let titledTools = NativeContextAssembler.assemble(titled).sections.first(where: { $0.name == "tools" })?.content ?? ""
-        guard titledTools.contains("- garden_log_post (\"Post to the garden log\"): Post a note Requires in-app confirmation before it runs."),
-              titledTools.contains("- garden_log_read (\"Garden log read\"): Read the log"),
+        guard titledTools.contains("- garden_log_post (\"Post to the garden log\") Requires in-app confirmation before it runs."),
+              titledTools.contains("- garden_log_read (\"Garden log read\")"),
+              !titledTools.contains("Post a note"), !titledTools.contains("Read the log"),
               NativeContextAssembler.plainTitle("Post\u{22}\u{301} it \u{201C}now\u{201D}") == "Post\u{301} it now",
               !NativeContextAssembler.plainTitle("a\u{22}\u{301}b").unicodeScalars.contains("\u{22}") else {
             print("SELFTEST ERROR: native context tool titles \(titledTools)"); exit(1)
@@ -2578,7 +2582,7 @@ enum SelfTest {
           "description": "Uses an unsupported schema type.",
           "parameters": {
             "type": "object",
-            "properties": {"count": {"type": "integer"}},
+            "properties": {"count": {"type": "array"}},
             "required": [],
             "additionalProperties": false
           },
@@ -2685,6 +2689,130 @@ enum SelfTest {
 
     static let bundledSendersWithoutDestination: Set<String> = ["propose_action", "author_skill"]
 
+    private static func capabilityKeywords(_ root: URL, reserved: Set<String>) async throws {
+        let require = NativeTaskFixture.require
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        func file(_ name: String, parameters: String, endpoint: String = "https://garden.example/water", method: String = "GET") -> String {
+            """
+            {"name": "\(name)", "title": "Water a bed", "description": "Water one garden bed.",
+             "parameters": \(parameters), "endpoint": "\(endpoint)", "method": "\(method)", "confirmation": "none", "unknown_top_level": 1}
+            """
+        }
+        func load(_ contents: String) -> NativeCapabilityToolCatalog {
+            let folder = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? Data(contents.utf8).write(to: folder.appendingPathComponent("garden.json"))
+            return NativeCapabilityTools.catalog(directory: folder, reservedNames: reserved)
+        }
+        let accented = load(file("caf\u{E9}_log", parameters: #"{"type": "object", "properties": {}, "required": [], "additionalProperties": false}"#))
+        try require(accented.declarations.allSatisfy { $0.name != "caf\u{E9}_log" } && accented.failures.first?.problem == .badName,
+                    "A tool name with a letter outside plain ASCII is refused when the file loads, so Settings says why")
+        let repeated = load(file("water_twice", parameters: #"{"type": "object", "properties": {"bed": {"type": "string"}}, "required": ["bed", "bed"], "additionalProperties": false}"#))
+        try require(repeated.declarations.allSatisfy { $0.name != "water_twice" } && repeated.failures.first?.problem == .repeatedRequired,
+                    "A field listed twice as required is refused when the file loads, so Settings says why")
+        let huge = load(file("water_huge", parameters: #"{"type": "object", "properties": {"bed": {"type": "string", "minLength": 1e20}, "count": {"type": "integer", "maximum": 1e20}}, "required": ["bed"], "additionalProperties": false}"#))
+        if let hugeTool = huge.declarations.first(where: { $0.name == "water_huge" }) {
+            let definition = NativeCapabilityTools.plainDefinition(hugeTool, base: { nil }, client: NativeHTTPToolClient { _, _, _, _ in (Data(), 500) })
+            var refusal = ""
+            do { _ = try definition.validatedArguments(#"{"bed":"north"}"#) } catch NativeToolError.invalidArguments(let message) { refusal = message }
+            try require(refusal == "Field 'bed' must be at least 100000000000000000000 characters" || refusal.hasPrefix("Field 'bed' must be at least 1e+20"),
+                        "A huge length limit is refused in words, without stopping the app: \(refusal)")
+        } else {
+            try require(huge.failures.first.map { _ in true } == true, "A huge length limit either loads and is enforced in words, or the file is refused")
+        }
+        let watering = load(file("water_bed", parameters: """
+            {"type": "object", "properties": {
+               "bed": {"type": "string", "enum": ["north", "south"], "description": "Which bed"},
+               "minutes": {"type": "integer", "minimum": 1, "maximum": 30, "default": 5, "title": "Minutes", "examples": [5]},
+               "depth": {"type": "number", "minimum": 0.5, "maximum": 4},
+               "note": {"type": "string", "maxLength": 40},
+               "tag": {"type": "string", "minLength": 0},
+               "mode": {"type": "string", "const": "gentle"}},
+             "required": ["bed", "minutes"], "additionalProperties": false}
+            """))
+        guard watering.failures.isEmpty, let declaration = watering.declarations.first(where: { $0.name == "water_bed" }) else {
+            throw NativeToolError.failed("A file with whole-number, number and choice fields loads: \(watering.failures)")
+        }
+        guard case .object(let schema) = declaration.parameters, case .object(let fields)? = schema["properties"] else {
+            throw NativeToolError.failed("The generated schema has fields")
+        }
+        try require(schema["additionalProperties"] == .bool(false), "The generated schema still refuses unknown fields")
+        try require(fields["minutes"] == .object(["type": .string("integer"), "minimum": .number(1), "maximum": .number(30), "default": .number(5),
+                                                  "title": .string("Minutes"), "examples": .array([.number(5)])]), "Accepted keywords are carried through unchanged")
+        try require(fields["bed"] == .object(["type": .string("string"), "enum": .array([.string("north"), .string("south")]), "minLength": .number(1),
+                                              "description": .string("Which bed")]), "A choice field keeps its choices and the non-empty rule")
+        try require(fields["note"] == .object(["type": .string("string"), "maxLength": .number(40), "minLength": .number(1)]), "A text field without its own minimum stays non-empty")
+        try require(fields["tag"] == .object(["type": .string("string"), "minLength": .number(0)]), "A text field that allows empty text keeps its own minimum")
+        let client = SelfTestHTTPToolClient()
+        client.respond("/water", status: 200, body: "{\"ok\":true}")
+        let definition = NativeCapabilityTools.definition(declaration, base: { nil }, client: client.client)
+        let registry = NativeToolRegistry(definitions: [definition])
+        try require(registry.issues.isEmpty && registry.definitions.count == 1, "A tool with the new keywords passes the shared tool check")
+        let refused: [(String, String)] = [
+            (#"{"bed":"north","minutes":45}"#, "Field 'minutes' must be at most 30"),
+            (#"{"bed":"north","minutes":0}"#, "Field 'minutes' must be at least 1"),
+            (#"{"bed":"north","minutes":2.5}"#, "Field 'minutes' must be a whole number"),
+            (#"{"bed":"north","minutes":"5"}"#, "Field 'minutes' must be a whole number"),
+            (#"{"bed":"east","minutes":5}"#, "Field 'bed' must be one of: north, south"),
+            (#"{"bed":"north","minutes":5,"depth":9}"#, "Field 'depth' must be at most 4"),
+            (#"{"bed":"north","minutes":5,"depth":"deep"}"#, "Field 'depth' must be a number"),
+            (#"{"bed":"north","minutes":5,"note":""}"#, "Field 'note' must be a non-empty string"),
+            (#"{"minutes":5}"#, "Missing required field 'bed'"),
+        ]
+        for (raw, message) in refused {
+            do {
+                _ = try definition.validatedArguments(raw)
+                throw NativeToolError.failed("Arguments were accepted: \(raw)")
+            } catch NativeToolError.invalidArguments(let detail) {
+                try require(detail == message, "The check names the field: expected \(message), got \(detail)")
+            }
+        }
+        try require(client.calls.isEmpty, "Refused arguments never reach the service")
+        _ = try await definition.execute(definition.validatedArguments(#"{"bed":"north","minutes":5,"depth":1.5}"#))
+        try require(client.calls.last?.url == "https://garden.example/water?bed=north&depth=1.5&minutes=5", "Numbers reach the service as plain values: \(client.calls.last?.url ?? "none")")
+        for (field, raw) in [("note", #"{"bed":"north","minutes":5,"note":"   "}"#), ("tag", #"{"bed":"north","minutes":5,"tag":" \n "}"#)] {
+            let before = client.calls.count
+            let arguments = try definition.validatedArguments(raw)
+            do {
+                _ = try await definition.execute(arguments)
+                throw NativeToolError.failed("Blank text was sent for \(field)")
+            } catch NativeToolError.invalidArguments(let detail) {
+                try require(detail == "Field '\(field)' must be a non-empty string" && client.calls.count == before, "Blank text is refused before any request: \(field)")
+            }
+        }
+
+        let refusals: [(String, NativeToolDeclarationProblem)] = [
+            (#"{"type": "object", "properties": {"code": {"type": "string", "pattern": "^[a-z]+$"}}, "additionalProperties": false}"#, .unsupportedKeyword("pattern")),
+            (#"{"type": "object", "properties": {"when": {"type": "string", "format": "date-time"}}}"#, .unsupportedKeyword("format")),
+            (#"{"type": "object", "properties": {"plot": {"type": "object", "properties": {"row": {"type": "string"}}}}}"#, .unsupportedType(field: "plot", type: "object")),
+            (#"{"type": "object", "properties": {"beds": {"type": "array", "items": {"type": "string"}}}}"#, .unsupportedType(field: "beds", type: "array")),
+            (#"{"type": "object", "properties": {"bed": {"oneOf": [{"type": "string"}]}}}"#, .unsupportedKeyword("oneOf")),
+            (##"{"type": "object", "properties": {"bed": {"$ref": "#/$defs/bed"}}}"##, .unsupportedKeyword("$ref")),
+            (#"{"type": "object", "properties": {"count": {"type": "integer", "minimum": "low"}}}"#, .badValue(field: "count", keyword: "minimum")),
+            (#"{"type": "object", "properties": {"bed": {"type": "string", "enum": []}}}"#, .badValue(field: "bed", keyword: "enum")),
+            (#"{"type": "object", "properties": {}, "additionalProperties": true}"#, .unsupportedKeyword("additionalProperties")),
+            (#"{"type": "object", "properties": {}, "$defs": {}}"#, .unsupportedKeyword("$defs")),
+        ]
+        for (parameters, problem) in refusals {
+            let refusedCatalog = load(file("water_bed", parameters: parameters))
+            try require(!refusedCatalog.declarations.contains { $0.name == "water_bed" } && refusedCatalog.failures.map(\.problem) == [problem]
+                        && refusedCatalog.failures.first?.file == "garden.json",
+                        "A file that uses something Tandem can't check is not loaded: \(parameters) gave \(refusedCatalog.failures)")
+        }
+        let minimal = load(file("garden_status", parameters: #"{"type": "object", "properties": {}, "required": [], "additionalProperties": false}"#))
+        try require(minimal.failures.isEmpty && minimal.declarations.first { $0.name == "garden_status" }?.parameters
+                        == .object(["type": .string("object"), "properties": .object([:]), "required": .array([]), "additionalProperties": .bool(false)]),
+                    "A file with no fields loads exactly as before")
+        let reservedNames = [NativeScheduleTools.toolName, NativeCompanionProfileTools.name, CompanionTalkTools.stopName, CompanionTalkTools.answerName,
+                             CompanionHoldTools.setAsideName, CompanionHoldTools.pickUpName, CompanionHoldTools.changeName]
+        for name in reservedNames {
+            try require(reserved.contains(name), "A shipped tool's name is reserved: \(name)")
+            let shadow = load(file(name, parameters: #"{"type": "object", "properties": {}, "additionalProperties": false}"#, method: "POST"))
+            try require(!shadow.declarations.contains { $0.name == name && $0.source != NativeCapabilityTools.bundledSource }
+                        && shadow.failures.map(\.problem) == [.reservedName(name)], "A file can't take a shipped tool's name: \(name)")
+        }
+    }
+
     private static func capabilitySendsTo(_ bundled: [NativeToolDeclaration]) throws {
         let require = NativeTaskFixture.require
         func declaration(_ sendsTo: Any?, method: String = "POST", properties: [String: Any]? = nil) throws -> NativeToolDeclaration {
@@ -2788,7 +2916,7 @@ enum SelfTest {
             guard catalog.failures.count == 7,
                   failures["b-broken.json"]?.contains("not a JSON object") == true,
                   failures["c-missing.json"]?.contains("'description'") == true,
-                  failures["d-badtype.json"]?.contains("unsupported type 'integer'") == true,
+                  failures["d-badtype.json"]?.contains("unsupported type 'array'") == true,
                   failures["g-reserved.json"]?.contains("reserved by a built-in tool") == true,
                   failures["h-overwrite.json"]?.contains("overwrite the declared property 'note'") == true,
                   failures["i-collide.json"]?.contains("onto the request body field 'args'") == true,
@@ -2797,6 +2925,17 @@ enum SelfTest {
                   !names.contains("colliding_tool") else {
                 print("SELFTEST ERROR: capability tool loader failures \(catalog.failures)"); exit(1)
             }
+            let problems = Dictionary(uniqueKeysWithValues: catalog.failures.map { ($0.file, $0.problem) })
+            guard problems["b-broken.json"] == .notJSON,
+                  problems["c-missing.json"] == .missing("description"),
+                  problems["d-badtype.json"] == .unsupportedType(field: "count", type: "array"),
+                  problems["g-reserved.json"] == .reservedName("web_search"),
+                  problems["h-overwrite.json"] == .badJSONFields,
+                  problems["i-collide.json"] == .badJSONFields,
+                  problems["z-duplicate.json"] == .duplicateName("inventory_lookup") else {
+                print("SELFTEST ERROR: capability tool loader failure kinds \(problems)"); exit(1)
+            }
+            try await capabilityKeywords(root.appendingPathComponent("keywords", isDirectory: true), reserved: reserved)
 
             let bundled = NativeCapabilityTools.bundled
             let propose = bundled.first { $0.name == "propose_action" }

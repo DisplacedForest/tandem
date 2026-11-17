@@ -1192,7 +1192,7 @@ enum CompanionTalkControlFixture {
     }
 
     static func words(_ text: String) -> [String] {
-        text.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
+        text.lowercased().components(separatedBy: CharacterSet.letters.union(.decimalDigits).union(CharacterSet(charactersIn: "_")).inverted).filter { !$0.isEmpty }
     }
 
     static func sweep() throws {
