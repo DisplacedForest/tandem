@@ -645,6 +645,27 @@ enum NativePreferencesSelftest {
         let editedRows = try await edited.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_preference_captures") ?? 0 }
         try require(editedOutcome == .removalUnclear && edited.active().map(\.statement) == ["Cite sources"] && editedRows == 0,
                     "A preference edited while classifying is kept, and the reply asks which one was meant")
+
+        let punctuated = NativePreferenceStore(database: try tracked().database)
+        let separator = try punctuated.add(statement: "Use \":\" as the separator")
+        let punctuationOutcome = await NativePreferenceCapture.run(request("drop the separator one"), store: punctuated, classify: { body in
+            _ = try? punctuated.updateStatement(id: separator.id, statement: "Use \";\" as the separator")
+            return await picked.classify(body)
+        })
+        try require(punctuationOutcome == .removalUnclear && punctuated.active().map(\.statement) == ["Use \";\" as the separator"],
+                    "An edit that only changes punctuation still keeps the preference")
+
+        let merged = NativePreferenceStore(database: try tracked().database)
+        let selected = try merged.add(statement: "Use metric units")
+        let other = try merged.add(statement: "Cite sources")
+        let mergedOutcome = await NativePreferenceCapture.run(request("drop the units one", conversation: "merge-c"), store: merged, classify: { body in
+            _ = try? merged.updateStatement(id: other.id, statement: "Use metric units")
+            return await picked.classify(body)
+        })
+        let mergedRows = try await merged.database.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM native_preference_captures") ?? 0 }
+        try require(try merged.preference(id: selected.id)?.status == .removed && mergedOutcome == .removalUnclear
+                    && merged.active().map(\.statement) == ["Use metric units"] && mergedRows == 0,
+                    "When Settings merged a duplicate into another row, nothing is claimed removed and the active one stays")
     }
 
     private static func permission(_ require: (Bool, String) throws -> Void) async throws {

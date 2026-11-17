@@ -463,8 +463,12 @@ struct NativePreferenceStore: Sendable {
             guard try stillCurrent(db) else { throw NativePreferenceStoreError(reason: .stopped) }
             guard let row = try Row.fetchOne(db, sql: "SELECT statement, status FROM native_preferences WHERE id = ?", arguments: [preferenceID])
             else { throw NativePreferenceStoreError(reason: .missing) }
-            guard Self.normalized(row["statement"] ?? "") == Self.normalized(statement) else { throw NativePreferenceStoreError(reason: .changed) }
+            guard (row["statement"] as String?) == statement else { throw NativePreferenceStoreError(reason: .changed) }
             if (row["status"] as String?) == NativePreferenceStatus.removed.rawValue {
+                let active = try String.fetchAll(db, sql: "SELECT statement FROM native_preferences WHERE status = 'active'")
+                guard !active.contains(where: { Self.normalized($0) == Self.normalized(statement) }) else {
+                    throw NativePreferenceStoreError(reason: .changed)
+                }
                 try Self.insertCapture(db, key, outcome: .removed, preferenceID: preferenceID, written: false, now: now)
                 return
             }
