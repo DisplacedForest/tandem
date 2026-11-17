@@ -21,6 +21,7 @@ struct TranscriptFollow: Equatable {
     private(set) var atLatest = true
     private(set) var holding = false
     private(set) var readerScrolling = false
+    private(set) var navigating = false
     private var last: TranscriptGeometry?
     private var seenSends = 0
     private var knownRows: Set<UUID>?
@@ -55,6 +56,7 @@ struct TranscriptFollow: Equatable {
             }
         }
         unseen.formIntersection(replies)
+        seen.formIntersection(replies)
     }
 
     private mutating func resume() {
@@ -86,8 +88,11 @@ struct TranscriptFollow: Equatable {
         let sameSize = abs(next.contentHeight - last.contentHeight) < Self.movement
             && abs(next.containerHeight - last.containerHeight) < Self.movement
         guard up || down else { return following && !sameSize && distance > Self.restMargin && !readerScrolling }
-        if readerScrolling { holding = false }
-        guard readerScrolling || (sameSize && !holding) else { return false }
+        if readerScrolling {
+            holding = false
+            navigating = false
+        }
+        guard readerScrolling || (sameSize && !holding && !navigating) else { return false }
         if up, distance > Self.restMargin {
             following = false
         } else if down, atLatest {
@@ -102,7 +107,11 @@ struct TranscriptFollow: Equatable {
 
     mutating func jumpToReply() {
         resume()
-        holding = true
+        navigating = true
+    }
+
+    mutating func settled() {
+        navigating = false
     }
 
     mutating func hold() {
@@ -317,6 +326,11 @@ extension SelfTest {
         follow.geometry(at(1000, content: 2000))
         follow.geometry(at(700, content: 2000))
         try require(follow.following, "The marker's own scroll up to the reply is not taken as scrolling away")
+        follow.settled()
+        follow.geometry(at(500, content: 2000))
+        try require(!follow.following, "Once the marker's scroll has finished, a scroll bar style move up stops following again")
+        follow.jumpToReply()
+        follow.settled()
         follow.scrollPhase(reader: true)
         follow.geometry(at(900, content: 2400))
         follow.geometry(at(600, content: 2400))
@@ -342,6 +356,13 @@ extension SelfTest {
         follow.replies(replies, rows: rows)
         try require(follow.unseenReplies(replies) == [fourth], "A held view shows the marker for a later reply, never silent")
         try require(follow.sent(2) && follow.unseenReplies(replies).isEmpty, "Sending a message clears it")
+        scroll(&follow, from: 1800, to: 1000, content: 2400)
+        replies.removeAll { $0 == fourth }
+        follow.replies(replies, rows: rows)
+        try require(!follow.following && follow.unseenReplies(replies).isEmpty, "A reply being retried shows nothing while it is empty")
+        replies.append(fourth)
+        follow.replies(replies, rows: rows)
+        try require(follow.unseenReplies(replies) == [fourth], "A retried reply the reader saw before shows the marker when its new words arrive")
         follow.hold()
         follow.scope("other", sends: 2)
         follow.replies([UUID()], rows: [UUID()])
