@@ -374,11 +374,14 @@ struct NativeTaskAdmissionBinding: Codable, Equatable, Hashable, Sendable {
     let id: String
     let admissionBase: URL
     let enrollmentDigest: String
+    var outputTokens: Int? = nil
+    var reasoning: Bool? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case id
+        case id, reasoning
         case admissionBase = "admission_base"
         case enrollmentDigest = "enrollment_digest"
+        case outputTokens = "output_tokens"
     }
 }
 
@@ -419,9 +422,10 @@ struct NativeTaskProfileBinding: Codable, Equatable, Hashable, Sendable {
     let executionModel: String
     let limits: NativeTaskGenerationLimits
     let requiresCredential: Bool
+    var reasoning: Bool? = nil
 
     init(id: String, profileID: String, provider: NativeTaskEngineIdentity, savedModel: String,
-         executionModel: String, limits: NativeTaskGenerationLimits, requiresCredential: Bool = false) {
+         executionModel: String, limits: NativeTaskGenerationLimits, requiresCredential: Bool = false, reasoning: Bool? = nil) {
         self.id = id
         self.profileID = profileID
         self.provider = provider
@@ -429,6 +433,7 @@ struct NativeTaskProfileBinding: Codable, Equatable, Hashable, Sendable {
         self.executionModel = executionModel
         self.limits = limits
         self.requiresCredential = requiresCredential
+        self.reasoning = reasoning
     }
 }
 
@@ -507,9 +512,11 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
     var effects: [NativeCompanionEffectNote] = []
     var pending: NativeCompanionPending? = nil
     var note: NativeTaskNote? = nil
+    var shrinkStep: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case phase, sources, outline, drafts, revisions, effects, pending, note
+        case shrinkStep = "shrink_step"
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
         case nextQuery = "next_query"
@@ -528,6 +535,7 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
         effects = (try? container.decodeIfPresent([NativeCompanionEffectNote].self, forKey: .effects)) ?? []
         pending = try? container.decodeIfPresent(NativeCompanionPending.self, forKey: .pending)
         note = try? container.decodeIfPresent(NativeTaskNote.self, forKey: .note)
+        shrinkStep = try? container.decodeIfPresent(String.self, forKey: .shrinkStep)
     }
 
     var unconfirmedEffects: [String] {

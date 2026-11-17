@@ -20,18 +20,25 @@ struct NativeDocumentCheckpoint: Codable, Equatable, Sendable {
     var failureReason: String?
     var automaticRetryStep: String?
     var note: NativeTaskNote?
+    var pauseCause: String?
+    var shrinkStep: String?
+    var shrinks = 0
 
     private enum CodingKeys: String, CodingKey {
-        case phase, outline, drafts, revisions, retry, attempt, errors, note
+        case phase, outline, drafts, revisions, retry, attempt, errors, note, shrinks
         case bulletCount = "bullet_count"
         case outlineLimit = "outline_limit"
         case outlineAttempts = "outline_attempts"
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
         case automaticRetryStep = "automatic_retry_step"
+        case pauseCause = "pause_cause"
+        case shrinkStep = "shrink_step"
     }
 
     var stepKey: String { "\(phase):\(drafts.count):\(revisions.count)" }
+
+    var currentShrinks: Int { shrinkStep == stepKey ? shrinks : 0 }
 
     init() {}
 
@@ -51,6 +58,9 @@ struct NativeDocumentCheckpoint: Codable, Equatable, Sendable {
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
         automaticRetryStep = try container.decodeIfPresent(String.self, forKey: .automaticRetryStep)
         note = try? container.decodeIfPresent(NativeTaskNote.self, forKey: .note)
+        pauseCause = try container.decodeIfPresent(String.self, forKey: .pauseCause)
+        shrinkStep = try container.decodeIfPresent(String.self, forKey: .shrinkStep)
+        shrinks = try container.decodeIfPresent(Int.self, forKey: .shrinks) ?? 0
     }
 
     func encoded() throws -> Data {
@@ -73,6 +83,25 @@ enum NativeDocumentWorker {
     static let titleCharacters = 120
     static let promptBytes = 24000
     static let reportCharacters = 40000
+    static let charactersPerToken = 3
+    static let wrapperReserveTokens = 192
+    static let reasoningShareDivisor = 2
+    static let shortestSectionCharacters = 400
+    static let maximumShrinks = 2
+
+    static func firstSectionCharacters(_ binding: NativeTaskAdmissionBinding?) -> Int {
+        guard let tokens = binding?.outputTokens, (1...8192).contains(tokens) else { return sectionCharacters }
+        let room = max(0, tokens - wrapperReserveTokens) / (binding?.reasoning == true ? reasoningShareDivisor : 1)
+        return min(sectionCharacters, max(shortestSectionCharacters, room * charactersPerToken))
+    }
+
+    static func sectionAllowance(_ checkpoint: NativeDocumentCheckpoint, binding: NativeTaskAdmissionBinding?) -> Int {
+        var allowance = firstSectionCharacters(binding)
+        for _ in 0..<min(checkpoint.currentShrinks, maximumShrinks) {
+            allowance = max(shortestSectionCharacters, allowance / 2)
+        }
+        return allowance
+    }
 
     static func make(exchange: NativeTaskGenerationExchange,
                      identity: @escaping @Sendable (NativeTaskRecord) -> NativeWorkerIdentity) -> NativeTaskWorker {
@@ -95,6 +124,12 @@ enum NativeDocumentWorker {
             if NativeTaskWorkerFailures.terminalCodes.contains(failure.code) {
                 return try fail(&checkpoint, code: failure.code, message: NativeTaskWorkerFailures.terminalMessage(failure.code, work: "writing"))
             }
+            if failure.code == "profile_changed" {
+                return try fail(&checkpoint, code: failure.code, message: NativeTaskWorkerFailures.modelChangedMessage)
+            }
+            if failure.code == "response_cut_short", let shorter = try shorten(&checkpoint, binding: payload.nativeBinding) {
+                return shorter
+            }
             if NativeTaskWorkerFailures.retriesAutomatically(failure.code), checkpoint.automaticRetryStep != checkpoint.stepKey {
                 checkpoint.automaticRetryStep = checkpoint.stepKey
                 checkpoint.attempt = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
@@ -104,8 +139,30 @@ enum NativeDocumentWorker {
                 return NativeTaskStepResult(state: .queued, checkpoint: try checkpoint.encoded(), event: "progress",
                                             data: try NativeTaskStore.canonical(payload))
             }
-            return try pause(&checkpoint, NativeTaskWorkerFailures.pauseMessage(failure.code))
+            return try pause(&checkpoint, NativeTaskWorkerFailures.pauseMessage(failure.code, sections: checkpoint.phase != "outline"),
+                             cause: failure.code)
         }
+    }
+
+    private static func shorten(_ checkpoint: inout NativeDocumentCheckpoint, binding: NativeTaskAdmissionBinding?) throws -> NativeTaskStepResult? {
+        if checkpoint.phase == "outline" {
+            checkpoint.outlineAttempts += 1
+            guard checkpoint.outlineAttempts < 3 else {
+                return try fail(&checkpoint, code: "input_limit", message: "The writing model could not fit a plan for this document. Start a new document with a shorter brief or fewer inputs.")
+            }
+            checkpoint.outlineLimit = max(50, checkpoint.outlineLimit.map { $0 / 2 } ?? firstSectionCharacters(binding))
+            checkpoint.attempt = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            return try progress(checkpoint)
+        }
+        guard ["draft", "revise"].contains(checkpoint.phase), checkpoint.currentShrinks < maximumShrinks else { return nil }
+        checkpoint.shrinks = checkpoint.currentShrinks + 1
+        checkpoint.shrinkStep = checkpoint.stepKey
+        checkpoint.attempt = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        checkpoint.note(NativeTaskWorkerFailures.shorterSectionNote)
+        var payload = data(checkpoint)
+        payload["message"] = NativeTaskWorkerFailures.shorterSectionNote
+        return NativeTaskStepResult(state: .queued, checkpoint: try checkpoint.encoded(), event: "progress",
+                                    data: try NativeTaskStore.canonical(payload))
     }
 
     static func title(for payload: NativeResearchTaskPayload) -> String {
@@ -182,7 +239,7 @@ enum NativeDocumentWorker {
             let index = checkpoint.phase == "draft" ? checkpoint.drafts.count : checkpoint.revisions.count
             context["outline"] = checkpoint.outline.map { ["heading": $0.heading, "instructions": $0.instructions] }
             context["section"] = index + 1
-            instruction += " Return {\"text\":\"Markdown body, at most \(sectionCharacters) characters, without the section heading\"}."
+            instruction += " Return {\"text\":\"Markdown body, at most \(sectionAllowance(checkpoint, binding: payload.nativeBinding)) characters, without the section heading\"}."
             if checkpoint.phase == "draft" {
                 instruction += " Draft this section. Do not duplicate other sections."
             } else {
@@ -272,15 +329,16 @@ enum NativeDocumentWorker {
                              data: try NativeTaskStore.canonical(data(checkpoint)))
     }
 
-    private static func pause(_ checkpoint: inout NativeDocumentCheckpoint, _ reason: String) throws -> NativeTaskStepResult {
+    private static func pause(_ checkpoint: inout NativeDocumentCheckpoint, _ reason: String, cause: String? = nil) throws -> NativeTaskStepResult {
         checkpoint.note(reason)
         checkpoint.retry = true
+        checkpoint.pauseCause = cause
         checkpoint.attempt = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         var payload = data(checkpoint)
         payload["message"] = reason
         return NativeTaskStepResult(state: .needsDecision, checkpoint: try checkpoint.encoded(), event: "progress",
             data: try NativeTaskStore.canonical(payload),
-            decision: try NativeTaskStore.canonical(["prompt": reason + " Retry this step?", "choices": ["retry"]]))
+            decision: try NativeTaskStore.canonical(["prompt": NativeTaskWorkerFailures.retryPrompt(reason), "choices": ["retry"]]))
     }
 
     private static func fail(_ checkpoint: inout NativeDocumentCheckpoint, code: String, message: String) throws -> NativeTaskStepResult {

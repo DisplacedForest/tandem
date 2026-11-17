@@ -132,16 +132,42 @@ enum NativeTaskWorkerFailures {
     static let unsafeToRetryCodes: Set<String> = ["previous_request_uncertain", "canceled", "provider_auth", "credential_unavailable"]
     static let automaticRetryNote = "The model request did not complete. Trying once more."
 
+    static let replyCodes: Set<String> = ["response_cut_short", "response_finish", "response_tool_calls", "response_empty",
+                                          "response_too_large", "response_unreadable", "provider_error"]
+    static let unusableReplyCodes: Set<String> = replyCodes.union(["provider_response"])
+
+    static let sectionCutShortMessage = "This section was too long to finish in one go, even after asking for a shorter one. The sections already written are kept. Try this step again?"
+    static let sectionEmptyMessage = "The answer for this section came back empty. The sections already written are kept. Try this step again?"
+    static let sectionUnusableMessage = "The answer for this section wasn't something Tandem could use. The sections already written are kept. Try this step again?"
+    static let stepCutShortMessage = "This step's answer was too long to finish in one go. Try this step again?"
+    static let stepEmptyMessage = "The answer for this step came back empty. Try this step again?"
+    static let stepUnusableMessage = "The answer for this step wasn't something Tandem could use. Try this step again?"
+    static let modelChangedMessage = "The model this document was using has changed in Settings. Start the document again to use the new one."
+    static let shorterSectionNote = "Asking for a shorter section."
+    static let credentialUnreadableMessage = "Tandem couldn't read the saved key for this model. Check it in Settings, then try this step again?"
+
+    static let replySentences = [sectionCutShortMessage, sectionEmptyMessage, sectionUnusableMessage,
+                                 stepCutShortMessage, stepEmptyMessage, stepUnusableMessage, modelChangedMessage, shorterSectionNote,
+                                 credentialUnreadableMessage]
+
     static func retriesAutomatically(_ code: String) -> Bool {
-        !terminalCodes.contains(code) && !unsafeToRetryCodes.contains(code)
+        !terminalCodes.contains(code) && !unsafeToRetryCodes.contains(code) && code != "response_cut_short"
     }
 
-    static func pauseMessage(_ code: String) -> String {
+    static func retryPrompt(_ reason: String) -> String {
+        reason.hasSuffix("?") ? reason : reason + " Retry this step?"
+    }
+
+    static func pauseMessage(_ code: String, sections: Bool = false) -> String {
         switch code {
+        case "response_cut_short": return sections ? sectionCutShortMessage : stepCutShortMessage
+        case "response_empty": return sections ? sectionEmptyMessage : stepEmptyMessage
+        case "response_finish", "response_tool_calls", "response_unreadable", "provider_error", "response_too_large":
+            return sections ? sectionUnusableMessage : stepUnusableMessage
         case "request_timeout": return "The model request took too long."
         case "provider_auth": return "The saved model credential was not accepted."
         case "provider_quota": return "The model provider has no usage left."
-        case "credential_unavailable": return "The saved model credential is unavailable."
+        case "credential_unavailable": return credentialUnreadableMessage
         case "previous_request_uncertain": return "The previous model request ended without a saved response."
         default: return "The model request did not complete."
         }
@@ -213,7 +239,7 @@ enum NativeResearchWorker {
         checkpoint.attempt = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         return NativeTaskStepResult(state: .needsDecision, checkpoint: try checkpoint.encoded(), event: "progress",
             data: try NativeTaskStore.canonical(["message": reason]),
-            decision: try NativeTaskStore.canonical(["prompt": reason + " Retry this step?", "choices": ["retry"]]))
+            decision: try NativeTaskStore.canonical(["prompt": NativeTaskWorkerFailures.retryPrompt(reason), "choices": ["retry"]]))
     }
 
     private static func progress(_ checkpoint: NativeResearchCheckpoint, added: [NativeResearchSource] = []) throws -> NativeTaskStepResult {
