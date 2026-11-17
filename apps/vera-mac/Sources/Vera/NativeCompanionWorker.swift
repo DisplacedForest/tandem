@@ -744,8 +744,14 @@ private struct NativeCompanionRun {
         usable.filter { readOnlyRefusal($0) == nil }
     }
 
+    var offered: [NativeToolSchema] {
+        NativeToolAdapter.offered(advertised, for: .handedOffWork).schemas
+    }
+
     func definition(named name: String) -> NativeToolDefinition? {
-        usable.first { $0.name == name }
+        guard let found = usable.first(where: { $0.name == name }) else { return nil }
+        if readOnlyRefusal(found) != nil { return found }
+        return NativeToolAdapter.carried(advertised, for: .handedOffWork).definitions.contains { $0.name == name } ? found : nil
     }
 
     func cardSubject(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass) -> NativeCardSubject {
@@ -904,7 +910,7 @@ private struct NativeCompanionRun {
     }
 
     func round(_ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult {
-        let schemas = advertised.map(\.schema)
+        let schemas = offered
         let tools: [NativeTaskGenerationTool]? = schemas.isEmpty ? nil : schemas
         let prompt = messages(checkpoint, finishing: false)
         guard fits(prompt, tools: tools) else { return try ending(&checkpoint) }
@@ -938,7 +944,7 @@ private struct NativeCompanionRun {
 
     func finish(_ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult {
         checkpoint.finishing = true
-        let schemas = advertised.map(\.schema)
+        let schemas = offered
         let tools: [NativeTaskGenerationTool]? = schemas.isEmpty ? nil : schemas
         let prompt = messages(checkpoint, finishing: true)
         if fits(prompt, tools: tools, closing: true) {

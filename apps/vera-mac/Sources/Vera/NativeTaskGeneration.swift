@@ -290,6 +290,19 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
             && call.arguments.utf8.count <= 16384
     }
 
+    static let maximumTools = 64
+    static let maximumToolNameBytes = 64
+    static let maximumToolDescriptionBytes = 4096
+
+    static func carriesToolName(_ name: String) -> Bool {
+        (1...maximumToolNameBytes).contains(name.utf8.count)
+            && name.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || $0 == "_" || $0 == "-" }
+    }
+
+    static func carriesToolDescription(_ description: String) -> Bool {
+        description.utf8.count <= maximumToolDescriptionBytes
+    }
+
     static func validShape(_ messages: [NativeTaskGenerationMessage], tools: [NativeTaskGenerationTool]?,
                            toolChoice: String?, budget: NativeTaskGenerationBudget) -> Bool {
         guard messages.count >= 1, budget.maximumMessages.map({ messages.count <= $0 }) ?? true else { return false }
@@ -300,9 +313,8 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
         }
         if let tools {
             let names = tools.map(\.name)
-            guard !tools.isEmpty, tools.count <= 64, Set(names).count == names.count,
-                  tools.allSatisfy({ (1...64).contains($0.name.utf8.count) && $0.description.utf8.count <= 4096
-                      && $0.name.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || $0 == "_" || $0 == "-" } })
+            guard !tools.isEmpty, tools.count <= maximumTools, Set(names).count == names.count,
+                  tools.allSatisfy({ carriesToolName($0.name) && carriesToolDescription($0.description) })
             else { return false }
         }
         guard toolChoice == nil || (["auto", "none"].contains(toolChoice ?? "") && tools != nil) else { return false }

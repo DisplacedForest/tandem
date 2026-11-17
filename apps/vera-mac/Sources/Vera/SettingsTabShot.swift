@@ -10,8 +10,26 @@ enum SettingsTabShot {
         var name = String(view.dropFirst(prefix.count))
         let window = name.hasSuffix("-window")
         if window { name = String(name.dropLast("-window".count)) }
+        let refused = name.hasSuffix("-refused")
+        if refused { name = String(name.dropLast("-refused".count)) }
         let filled = name.hasSuffix("-filled")
         let tab = filled ? String(name.dropLast("-filled".count)) : name
+        var seededFiles: [URL] = []
+        if refused {
+            let folder = NativeCapabilityTools.defaultDirectory
+            AppLocations.refuseRealData(folder)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let samples = [
+                "garden.json": #"{"name":"garden_log","title":"Garden log","description":"Adds a line to the garden log.","endpoint":"https://garden.example/log","method":"POST","confirmation":"required","parameters":{"type":"object","properties":{"line":{"type":"string","pattern":"^[a-z]+$"}},"required":["line"],"additionalProperties":false}}"#,
+                "plans.json": #"{"name":"schedule_task","title":"Plans","description":"Lists plans.","endpoint":"https://plans.example/list","method":"GET","confirmation":"none","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}}"#,
+            ]
+            for (file, text) in samples {
+                let url = folder.appendingPathComponent(file)
+                try? Data(text.utf8).write(to: url)
+                seededFiles.append(url)
+            }
+        }
+        defer { for url in seededFiles { try? FileManager.default.removeItem(at: url) } }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("settings-tab-shot-" + UUID().uuidString)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }

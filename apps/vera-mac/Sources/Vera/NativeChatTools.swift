@@ -244,7 +244,7 @@ struct NativeToolDefinition: Sendable {
     var wantsPhrase: String { wants ?? (title.prefix(1).lowercased() + title.dropFirst()) }
 
     var schema: NativeToolSchema {
-        NativeToolSchema(name: name, description: description, parameters: parameters)
+        NativeToolAdapter.schema(self)
     }
 
     private static func acceptsNull(_ property: NativeJSONValue?) -> Bool {
@@ -304,6 +304,8 @@ struct NativeToolIssue: Equatable, Sendable {
         case unsupportedSchema
         case unsupportedOutputSchema
         case invalidExample
+        case descriptionTooLong
+        case tooManyTools
     }
 
     let name: String
@@ -755,9 +757,9 @@ struct NativeToolLoop: Sendable {
                     for round in 1...Self.maximumRounds {
                         try await checkAuthorization()
                         let active = registry.active(enabledIDs: enabledToolIDs)
-                        let definitions = Dictionary(active.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
-                        var seen: Set<String> = []
-                        let schemas = active.filter { seen.insert($0.name).inserted }.map(\.schema)
+                        let offered = NativeToolAdapter.carried(active, for: .chat).definitions
+                        let definitions = Dictionary(offered.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+                        let schemas = offered.map(NativeToolAdapter.schema)
                         var last = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
                         do {
                             for try await snapshot in transport.stream(messages: history, model: model, tools: schemas, validateRequest: {

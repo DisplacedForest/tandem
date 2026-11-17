@@ -12,7 +12,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-one_container-009688?logo=fastapi&logoColor=white)](services/vera-api)
 [![macOS app](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](apps/vera-mac)
 
-[Setup](docs/SETUP.md) · [Contributing](CONTRIBUTING.md)
+[Setup](docs/SETUP.md) · [Tools](docs/TOOLS.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
