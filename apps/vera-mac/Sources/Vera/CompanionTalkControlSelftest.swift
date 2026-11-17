@@ -16,6 +16,7 @@ final class CompanionTalkTransport: NativeChatTransport, @unchecked Sendable {
     func discoverModels() async throws -> [String] { ["local-model"] }
 
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.noRestrictions) }
         let user = messages.last(where: { $0.role == "user" })?.content ?? ""
         lock.withLock { captured.append(Record(user: user, messages: messages, tools: tools)) }
         let reply = self.reply
@@ -61,6 +62,24 @@ final class CompanionTalkVeto: @unchecked Sendable {
     }
 
     var calls: [(said: String, about: String)] { lock.withLock { asked } }
+
+    static let allowing = NativeRequestAuthorizer(transport: { _ in "{\"decision\": \"authorized\"}" })
+
+    var transport: NativeRequestAuthorizer.Transport {
+        { messages in
+            if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.noRestrictions }
+            let parts = CompanionTalkVeto.parts(messages.last?.content ?? "")
+            let yes = await self.answer(parts.said, parts.about)
+            return yes ? "{\"decision\": \"authorized\"}" : "{\"decision\": \"not_authorized\"}"
+        }
+    }
+
+    static func parts(_ content: String) -> (said: String, about: String) {
+        let pieces = content.components(separatedBy: "\n\n" + NativeRequestAuthorizer.actionLabel + "\n")
+        let literal = String((pieces.first ?? "").dropFirst(NativeRequestAuthorizer.messageLabel.count + 1))
+        let said = (try? JSONSerialization.jsonObject(with: Data(literal.utf8), options: [.fragmentsAllowed])) as? String ?? literal
+        return (said, pieces.count > 1 ? pieces.dropFirst().joined(separator: "\n\n" + NativeRequestAuthorizer.actionLabel + "\n") : "")
+    }
 
     func answer(_ said: String, _ about: String) async -> Bool {
         let mode = lock.withLock { () -> Mode in
@@ -169,7 +188,7 @@ enum CompanionTalkControlFixture {
             nativeToolRegistry: NativeToolRegistry(definitions: [notes]),
             nativeTaskClient: engine.client, nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         let veto = earlier?.veto ?? CompanionTalkVeto()
-        store.instructionCheck = { said, about in await veto.answer(said, about) }
+        store.requestAuthorization = veto.transport
         if earlier != nil { store.conversations = try repository.listConversations() }
         store.loadDotProfile()
         if earlier == nil { store.skipDotSetup() }
@@ -412,6 +431,11 @@ enum CompanionTalkControlFixture {
                     && !result.contains("undone\""), "The result is the plain sentence: \(result)")
         try require(harness.veto.calls.count == 1 && harness.veto.calls[0].said == ask && harness.veto.calls[0].about.contains("libraries")
                     && harness.veto.calls[0].about.contains("seed packets"), "The check sees the typed words, this entry and the others")
+        let action = harness.veto.calls[0].about
+        let context = action.components(separatedBy: "\n\n" + NativeRequestAuthorizer.earlierLabel + "\n")
+        let earlierText = context.count == 2 ? (try? JSONSerialization.jsonObject(with: Data(context[1].utf8), options: [.fragmentsAllowed])) as? String : nil
+        try require(earlierText?.isEmpty == false && !context[0].contains(earlierText ?? "\u{0}"),
+                    "The earlier reply arrives only in its own block, labelled as context and quoted as a string: \(action)")
         try require(NativeTaskTranscript.visibleActivities(in: reply).isEmpty && reply.text == "I've stopped looking into the libraries.",
                     "The tool's row never shows and the reply is the one line")
         await harness.gate.release()
@@ -503,7 +527,7 @@ enum CompanionTalkControlFixture {
             throw NativeTaskFixture.Failure.assertion("The replayed turn still sees the list")
         }
         let tools = harness.store.companionTalkTools(control, turn: replayed, typed: harness.store.typedWords(for: replayed), capture: CompanionTalkCapture(known: Set(control.entries.map(\.referenceID)), decisions: [:]),
-                                                     answerer: { _, _ in true }, timeout: .seconds(1))
+                                                     authorizer: CompanionTalkVeto.allowing, timeout: .seconds(1))
         let value = try await CompanionAskedWorkFixture.asLoop(0) {
             try await tools[0].execute(["item": .string(control.entries[0].handle)])
         }

@@ -94,9 +94,7 @@ enum NativeTaskTools {
                         return text
                     }
                     guard allowedWorkerTypes().contains(workerType) else {
-                        throw NativeToolError.failed(workerType == "document"
-                            ? "The current message says not to write a document, so nothing was started."
-                            : "The current message says not to research, so nothing was started.")
+                        throw NativeToolError.failed("Nothing was started, because this message did not allow it.")
                     }
                     if workerType == "research", !searchAvailable() {
                         throw NativeToolError.failed(searchUnavailable)

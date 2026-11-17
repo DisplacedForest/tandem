@@ -921,7 +921,7 @@ enum CompanionWorkAsideFixture {
             nativeToolRegistry: NativeToolRegistry(definitions: [notes]),
             nativeTaskClient: wrap(engine.client), nativeTaskEnrollment: enrollment, nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         let veto = earlier?.veto ?? CompanionTalkVeto()
-        store.instructionCheck = { said, about in await veto.answer(said, about) }
+        store.requestAuthorization = veto.transport
         if earlier != nil { store.conversations = try repository.listConversations() }
         store.loadDotProfile()
         if earlier == nil { store.skipDotSetup() }
@@ -1856,9 +1856,9 @@ enum CompanionWorkAsideFixture {
         }
         let all = Set(control.entries.map(\.referenceID))
         let replayedTools = harness.store.companionTalkTools(control, turn: replayed, typed: harness.store.typedWords(for: replayed),
-            capture: CompanionTalkCapture(known: all, decisions: [:]), answerer: { _, _ in true }, timeout: .seconds(1))
+            capture: CompanionTalkCapture(known: all, decisions: [:]), authorizer: CompanionTalkVeto.allowing, timeout: .seconds(1))
         let afterTools = harness.store.companionTalkTools(control, turn: turn, typed: harness.store.typedWords(for: turn),
-            capture: CompanionTalkCapture(known: [], decisions: [:]), answerer: { _, _ in true }, timeout: .seconds(1))
+            capture: CompanionTalkCapture(known: [], decisions: [:]), authorizer: CompanionTalkVeto.allowing, timeout: .seconds(1))
         for name in CompanionHoldTools.names.sorted() {
             let arguments: [String: NativeJSONValue] = name == CompanionHoldTools.changeName
                 ? ["item": .string(entry.handle), "work": .string(changedWork)] : ["item": .string(entry.handle)]

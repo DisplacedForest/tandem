@@ -25,6 +25,7 @@ final class NativeSessionFixtureTransport: NativeChatTransport, @unchecked Senda
 
     func discoverModels() async throws -> [String] { ["local-model"] }
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.noRestrictions) }
         lock.withLock { captured.append(messages); advertised.append(tools) }
         let query = messages.last(where: { $0.role == "user" })?.content ?? ""
         return AsyncThrowingStream { continuation in

@@ -27,6 +27,7 @@ final class NativeAuthorizationScript: @unchecked Sendable {
     func answer(_ next: Reply) { lock.withLock { reply = next } }
 
     func respond(_ messages: [NativeChatMessage]) async throws -> String {
+        if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.noRestrictions }
         let current = lock.withLock { () -> Reply in
             seen.append(messages)
             return reply

@@ -7,6 +7,7 @@ final class CompanionAskedWorkTransport: NativeChatTransport, @unchecked Sendabl
     private let lock = NSLock()
     private var captured: [Record] = []
     private var held = false
+    private var restrictionAnswer: @Sendable (String) -> String = { _ in NativeRequestAuthorizer.noRestrictions }
 
     var holding: Bool { lock.withLock { held } }
     let reply: Reply
@@ -15,9 +16,18 @@ final class CompanionAskedWorkTransport: NativeChatTransport, @unchecked Sendabl
 
     var records: [Record] { lock.withLock { captured } }
 
+    func answerRestrictions(_ answer: @escaping @Sendable (String) -> String) { lock.withLock { restrictionAnswer = answer } }
+
     func discoverModels() async throws -> [String] { ["local-model"] }
 
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) {
+            let answer = lock.withLock { restrictionAnswer }
+            return NativeRequestAuthorizer.answered(answer(messages.last?.content ?? ""))
+        }
+        if NativeRequestAuthorizer.asksRefusalCheck(messages) {
+            return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.refusalCheckReply(.ruledOut))
+        }
         let user = messages.last(where: { $0.role == "user" })?.content ?? ""
         lock.withLock { captured.append(Record(user: user, messages: messages, tools: tools)) }
         guard let snapshot = reply(user, messages, tools) else {
@@ -326,14 +336,19 @@ enum CompanionAskedWorkFixture {
         let require = NativeTaskFixture.require
         let quiet = "Don't use any tools. How are libraries funded?"
         let harness = try harness { user, messages, _ in
-            if user == quiet { return CompanionAskedWorkTransport.say("Mostly through local taxes.") }
-            if CompanionAskedWorkTransport.answered(messages) { return CompanionAskedWorkTransport.say("I couldn't start that.") }
+            if CompanionAskedWorkTransport.answered(messages) {
+                return CompanionAskedWorkTransport.say(user == quiet ? "Mostly through local taxes." : "I couldn't start that.")
+            }
             return CompanionAskedWorkTransport.hand([CompanionAskedWorkTransport.general(user)])
         }
         defer { harness.store.conversationTurnLoop?.cancel() }
-        _ = try await send(harness, quiet)
-        try require(offered(harness, user: quiet) == nil && harness.transport.records.last { $0.user == quiet }?.tools.isEmpty == true,
-                    "A message that says not to use tools is not offered the tool in the companion conversation")
+        harness.transport.answerRestrictions { asked in
+            asked.contains("Don't use any tools.") ? NativeRequestAuthorizer.refusalsReply(["use any tools"]) : NativeRequestAuthorizer.noRestrictions
+        }
+        let declined = try await send(harness, quiet)
+        try require((results(declined).first ?? "").contains(NativeRefusalList.ruledOutSentence)
+                    && (try harness.repository.taskReferences(conversationID: nil)).isEmpty,
+                    "A message that says not to use tools starts nothing in the companion conversation, and the model is told why")
         harness.store.setDotState(.paused)
         let paused = try await send(harness, library)
         let result = results(paused).first ?? ""

@@ -11,6 +11,7 @@ final class RuleOfferTransport: NativeChatTransport, @unchecked Sendable {
     func discoverModels() async throws -> [String] { ["local-model"] }
 
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.noRestrictions) }
         let snapshot: NativeChatStreamSnapshot = locked {
             captured.append(messages)
             calls += 1

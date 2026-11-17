@@ -6,6 +6,7 @@ enum RulesCopy {
     static let infoLabel = "What each choice means"
     static let floorSectionTitle = "Always left to you"
     static let imagesNote = "This also covers saving generated images."
+    static let permissionQuestionsFailing = "Your model hasn't been able to answer Tandem's permission questions, so Tandem has asked you before every action. Check the model in Settings, Model."
 
     static func info(for action: NativeActionClass, choice: NativeRuleChoice) -> String {
         let detail = NativeRules.detail(for: action, choice: choice)
@@ -23,7 +24,8 @@ enum RulesCopy {
     }
 
     static func screenStrings(name: String?) -> [String] {
-        var strings = [CompanionSentence.plain(headerTemplate, name: name), CompanionSentence.plain(sectionTemplate, name: name), infoLabel, floorSectionTitle]
+        var strings = [CompanionSentence.plain(headerTemplate, name: name), CompanionSentence.plain(sectionTemplate, name: name), infoLabel, floorSectionTitle,
+                       permissionQuestionsFailing]
         for choice in NativeRuleChoice.allCases {
             strings.append(choice.title)
             strings.append(CompanionSentence.plain(explanationTemplate(choice), name: name))
@@ -190,6 +192,10 @@ struct RulesSettingsTab: View {
         Form {
             Section {
                 if let notice = store.rulesNotice {
+                    Label(notice, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+                if let notice = store.permissionQuestionsNotice {
                     Label(notice, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }

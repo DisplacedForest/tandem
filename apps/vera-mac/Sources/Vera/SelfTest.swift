@@ -146,6 +146,10 @@ final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendabl
     private var capturedSchemas: [[NativeToolSchema]] = []
     private var checkAnswer = "{\"decision\": \"not_authorized\"}"
     private var checks: [String] = []
+    private var restrictionAnswer = NativeRequestAuthorizer.noRestrictions
+    private var restrictionAsked: [String] = []
+    private var refusalCheckAnswer = NativeRequestAuthorizer.refusalCheckReply(.ruledOut)
+    private var refusalCheckAsked: [String] = []
 
     init(rounds: [[NativeChatStreamSnapshot]]) {
         self.rounds = rounds
@@ -155,6 +159,10 @@ final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendabl
     var schemas: [[NativeToolSchema]] { locked { capturedSchemas } }
     var instructionChecks: [String] { locked { checks } }
     func answerChecks(_ reply: String) { locked { checkAnswer = reply } }
+    var restrictionChecks: [String] { locked { restrictionAsked } }
+    func answerRestrictions(_ reply: String) { locked { restrictionAnswer = reply } }
+    var refusalChecks: [String] { locked { refusalCheckAsked } }
+    func answerRefusalChecks(_ reply: String) { locked { refusalCheckAnswer = reply } }
 
     func discoverModels() async throws -> [String] { ["local-model"] }
 
@@ -162,6 +170,14 @@ final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendabl
         messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
     ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
         let snapshots: [NativeChatStreamSnapshot] = locked {
+            if NativeRequestAuthorizer.asksRestrictions(messages) {
+                restrictionAsked.append(messages.last?.content ?? "")
+                return [NativeChatStreamSnapshot(content: restrictionAnswer, toolCalls: [], finishReason: "stop")]
+            }
+            if NativeRequestAuthorizer.asksRefusalCheck(messages) {
+                refusalCheckAsked.append(messages.last?.content ?? "")
+                return [NativeChatStreamSnapshot(content: refusalCheckAnswer, toolCalls: [], finishReason: "stop")]
+            }
             if messages.first?.content == NativeRequestAuthorizer.systemPrompt {
                 checks.append(messages.last?.content ?? "")
                 return [NativeChatStreamSnapshot(content: checkAnswer, toolCalls: [], finishReason: "stop")]
@@ -466,6 +482,7 @@ enum SelfTest {
         do { try await runUnnamedRecipients() } catch { print("SELFTEST ERROR: unnamed recipients \(error)"); exit(1) }
         do { try await runInstructions() } catch { print("SELFTEST ERROR: instructions \(error)"); exit(1) }
         do { try await runInstructionCheck() } catch { print("SELFTEST ERROR: instruction check \(error)"); exit(1) }
+        do { try await runRequestRestrictions() } catch { print("SELFTEST ERROR: request restrictions \(error)"); exit(1) }
         do { try await runInstructionSpent() } catch { print("SELFTEST ERROR: instruction spent \(error)"); exit(1) }
         do { try await runRulesAdvanced() } catch { print("SELFTEST ERROR: rules advanced \(error)"); exit(1) }
         do { try await runRulesAdvancedChoices() } catch { print("SELFTEST ERROR: rules advanced choices \(error)"); exit(1) }

@@ -159,9 +159,10 @@ final class ChatStore: ObservableObject {
     @Published var preferenceMarkers: [String: [UUID: TranscriptMarker]] = [:]
     var preferenceClassifier: (@Sendable (String) async -> String?)?
     var preferenceClassifierTimeout: Duration = .seconds(30)
-    var instructionCheck: NativeInstructionAnswerer?
-    var instructionCheckTimeout: Duration = NativeInstructionCheck.timeout
+    var instructionCheckTimeout: Duration = NativeRequestAuthorizer.standardDeadline
     var requestAuthorization: NativeRequestAuthorizer.Transport?
+    let requestRestrictionCache = NativeRequestRestrictionCache()
+    @Published var permissionCheckFailures = 0
     private let nativeTransportFactory: (NativeChatConfig) -> (any NativeChatTransport)?
     private var nativeSystemPrompt: String
     private var nativePersonaID: String?
@@ -2248,7 +2249,7 @@ final class ChatStore: ObservableObject {
         conversation.isPersisted = true
         let scopes = resolvePromptScopes(conversationID: id)
         let mentions = mentionedToolIDs(in: text)
-        let baseToolIDs = NativeTurnToolAuthority(text, mentions: mentions, companion: isVeraThread(id)).filter(turnConsentedToolIDs(conversationID: id, mentions: mentions))
+        let baseToolIDs = turnConsentedToolIDs(conversationID: id, mentions: mentions)
         var turn = NativeConversationTurn(id: UUID(), conversationID: id,
             userMessageID: user.id, assistantMessageID: reply.id, mode: .chat,
             profile: turnProfile(for: user.routeNote), enabledToolIDs: baseToolIDs,
@@ -2268,7 +2269,6 @@ final class ChatStore: ObservableObject {
                 try turnRepository.acceptTurn(turn, conversation: conversation, user: user, reply: reply)
             }
             if let pendingReply { recordReply(pendingReply, messageID: user.id, conversationID: id, saved: answered != nil && turnRepository is LocalChatRepository) }
-            requestSystemAccess(enabledIDs: baseToolIDs)
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])
             let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
             conversation.messages = stored.map { live[$0.id] ?? $0 }
@@ -2354,14 +2354,13 @@ final class ChatStore: ObservableObject {
     }
 
     func turnToolIDs(for text: String) -> Set<String> {
-        let mentions = mentionedToolIDs(in: text)
-        return NativeTurnToolAuthority(text, mentions: mentions).filter(nativeEnabledToolIDs.union(mentions))
+        nativeEnabledToolIDs.union(mentionedToolIDs(in: text))
     }
 
     func turnToolAuthority(for turn: NativeConversationTurn) -> (NativeTurnToolAuthority, Set<String>) {
         let text = turn.history.first(where: { $0.id == turn.userMessageID })?.text ?? ""
         let mentions = mentionedToolIDs(in: text)
-        return (NativeTurnToolAuthority(text, mentions: mentions, companion: isVeraThread(turn.conversationID)), turnConsentedToolIDs(conversationID: turn.conversationID, mentions: mentions))
+        return (NativeTurnToolAuthority(mentions: mentions, companion: isVeraThread(turn.conversationID)), turnConsentedToolIDs(conversationID: turn.conversationID, mentions: mentions))
     }
 
     var enabledNativeToolIDs: Set<String> { nativeEnabledToolIDs }
@@ -2379,6 +2378,19 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    func requestSystemAccess(for id: String, _ access: NativeToolAccess) async {
+        guard asksForSystemAccess, access.state() == .notAsked, askedSystemAccess.insert(id).inserted else { return }
+        _ = await access.request()
+    }
+
+    func systemAccessNotes(_ registry: NativeToolRegistry, enabledIDs: Set<String>) -> [String] {
+        registry.access(enabledIDs: enabledIDs).compactMap { entry in
+            let state = entry.access.state()
+            if state == .notAsked && asksForSystemAccess && !askedSystemAccess.contains(entry.id) { return nil }
+            return entry.access.note(state)
+        }
+    }
+
     func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
         guard turnOwned(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
         let (authority, consented) = turnToolAuthority(for: turn)
@@ -2387,13 +2399,13 @@ final class ChatStore: ObservableObject {
         allowed.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { allowed.remove(NativeWebTools.searchToolID) }
         let supportsTools = activeCapabilityResolution?.profile.supportsTools ?? false
-        if !(supportsTools && authority.allowsTools && turn.mode != .continuous) {
+        if !(supportsTools && turn.mode != .continuous) {
             allowed.remove(NativeFolderTools.toolID)
             allowed.remove(NativeCommandTools.toolID)
         }
         let profileTool = companionProfileTool(for: turn)
-        if profileTool != nil && supportsTools && authority.allowsTools { allowed.insert(NativeCompanionProfileTools.toolID) }
-        if companionTalkOffered(turn) && supportsTools && authority.allowsTools { allowed.insert(CompanionTalkTools.toolID) }
+        if profileTool != nil && supportsTools { allowed.insert(NativeCompanionProfileTools.toolID) }
+        if companionTalkOffered(turn) && supportsTools { allowed.insert(CompanionTalkTools.toolID) }
         if turn.companionEvent != nil { allowed = [] }
         guard allowed.contains(activity.toolID) else { return false }
         if activity.toolID == NativeTaskTools.toolID { return activity.name == NativeTaskTools.toolName }
@@ -2508,15 +2520,17 @@ final class ChatStore: ObservableObject {
         let checkTimeout = instructionCheckTimeout
         let checkModel = nativeConfig.model
         let checkTransport = nativeTransport
-        let answerer: NativeInstructionAnswerer = instructionCheck ?? { said, about in
-            await NativeInstructionCheck.ask(transport: checkTransport, model: checkModel, said: said, about: about, timeout: checkTimeout)
-        }
+        let observe: NativeRequestAuthorizer.Observer = { [weak self] source in await self?.notePermissionCheck(source) }
         let authorizer = NativeRequestAuthorizer(transport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: checkTransport, model: checkModel),
-                                                 deadline: checkTimeout)
+                                                 listTransport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: checkTransport, model: checkModel,
+                                                                                                                     cap: NativeRequestAuthorizer.refusalReplyLimit),
+                                                 deadline: checkTimeout, observe: observe)
         let trusted = turn.companionEvent == nil ? NativeTrustedRequest.typed(typed, messageID: turn.userMessageID, conversationID: id) : nil
+        let restrictions = turn.companionEvent == nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? NativeRestrictionCheck(authorizer: authorizer, messageID: turn.userMessageID, text: text, cache: requestRestrictionCache) : nil
         let capture = composerSentTurns.removeValue(forKey: turn.id)
         let talk = companionTalkControl(for: turn, supportsTools: ModelCapabilityCatalog.resolve(model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile.supportsTools)
-        if let talk { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + companionTalkTools(talk, turn: turn, typed: typed, capture: capture, answerer: answerer, timeout: checkTimeout)) }
+        if let talk { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + companionTalkTools(talk, turn: turn, typed: typed, capture: capture, authorizer: authorizer, timeout: checkTimeout)) }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
@@ -2533,8 +2547,9 @@ final class ChatStore: ObservableObject {
                 await self.noteRuleOfferWhy(activity, turn: turn, definitions: turnRegistry.definitions, typed: typed)
                 return await self.awaitTurnConfirmation(activity, turn: turn, subject: subject)
             },
-            authorizer: authorizer, request: trusted,
-            effects: chatEffectHook(for: turn, definitions: turnRegistry.definitions, typed: typed))
+            authorizer: authorizer, request: trusted, restrictions: restrictions,
+            effects: chatEffectHook(for: turn, definitions: turnRegistry.definitions, typed: typed),
+            systemAccess: { [weak self] toolID, access in await self?.requestSystemAccess(for: toolID, access) })
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
         let (authority, consented) = turnToolAuthority(for: turn)
@@ -2544,13 +2559,13 @@ final class ChatStore: ObservableObject {
                                                  hasStore: nativeScheduleStore != nil) : []
         enabledToolIDs.remove(NativeWebTools.researchToolID)
         if turn.mode == .continuous { enabledToolIDs.remove(NativeWebTools.searchToolID) }
-        if !(capabilityProfile.supportsTools && authority.allowsTools && folderConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
+        if !(capabilityProfile.supportsTools && folderConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
             enabledToolIDs.remove(NativeFolderTools.toolID)
         }
-        if !(capabilityProfile.supportsTools && authority.allowsTools && commandsConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
+        if !(capabilityProfile.supportsTools && commandsConsented && !turnGrants.isEmpty && turn.mode != .continuous) {
             enabledToolIDs.remove(NativeCommandTools.toolID)
         }
-        if profileTool != nil && capabilityProfile.supportsTools && authority.allowsTools { enabledToolIDs.insert(NativeCompanionProfileTools.toolID) }
+        if profileTool != nil && capabilityProfile.supportsTools { enabledToolIDs.insert(NativeCompanionProfileTools.toolID) }
         if talk != nil { enabledToolIDs.insert(CompanionTalkTools.toolID) }
         if turn.companionEvent != nil { enabledToolIDs = [] }
         let grantNote = enabledToolIDs.contains(NativeFolderTools.toolID) || enabledToolIDs.contains(NativeCommandTools.toolID)
@@ -2565,7 +2580,7 @@ final class ChatStore: ObservableObject {
         let ownerName = nativeOwnerName
         let assistantName = isVeraThread(id) ? companionName : nil
         let activeTools = turnRegistry.active(enabledIDs: enabledToolIDs)
-        let accessNotes = turnRegistry.accessNotes(enabledIDs: enabledToolIDs)
+        let accessNotes = systemAccessNotes(turnRegistry, enabledIDs: enabledToolIDs)
         let allowedGrounding = Set(conversations.first(where: { $0.id == id })?.grounding ?? [])
         let groundingCollections = turn.grounding.filter { allowedGrounding.contains($0) }
         let groundingBase = client?.base

@@ -8,43 +8,10 @@ enum NativeTurnAuthorityFixture {
 
     static func run() async throws {
         let require = NativeTaskFixture.require
-        for request in [first, "Research the fictional moon Luma in the background.", "Separately, please investigate Mars ice.",
-                        "Can you start a new background research task about Europa?", "Please do some research on heat pumps.",
-                        "Look into heat pumps and report back.", "Hey, research heat pumps", "I'm moving; research movers"] {
-            try require(NativeTurnToolAuthority(request).allowsResearch, "Research is offered however it is asked for: \(request)")
-        }
-        for request in ["Write me a document about the workshop plan.", "Please write a detailed report on lunar ice in the background.",
-                        "Write a document.", "Draft a memo", "Prepare a report: summarize the attached notes.",
-                        "Could you draft a memo about the garage rebuild? Do not research anything new.",
-                        "Create a saved document", "Create a saved document about the workshop plan.",
-                        "Put together a one page summary I can keep.", "Turn these notes into something I can send round."] {
-            let authority = NativeTurnToolAuthority(request)
-            try require(authority.allowsDocument && authority.allowedWorkerTypes.contains("document"), "A document is offered however it is asked for: \(request)")
-        }
-        let memoOnly = NativeTurnToolAuthority("Could you draft a memo about the garage rebuild? Do not research anything new.")
-        try require(memoOnly.allowedWorkerTypes == ["document"], "A document request with a research prohibition permits only documents")
-        for request in ["What did I ask you to do?", "Add links.", "The document is ready.", "Research is interesting.",
-                        "Earlier I said write me a document about NASA. What did I ask?", "What does 'research NASA' mean?",
-                        "Explain this:\n> Please do not research NASA", "Summarize `do not write a document`."] {
-            let authority = NativeTurnToolAuthority(request)
-            try require(authority.allowsTools && authority.allowsResearch && authority.allowsDocument && authority.allowsSchedule,
-                        "Offering does not depend on the wording of an ordinary message: \(request)")
-        }
-        for request in ["Write a guide about research. Do not write a guide.", "Do not write a document about NASA."] {
-            try require(!NativeTurnToolAuthority(request).allowsDocument, "A stated refusal of a document is kept: \(request)")
-        }
-        for request in [second, "Earlier I said \"Please start background research about NASA\". What is 7 plus 5? Do not use tools.",
-                        "Please do not research NASA.", "Research NASA. Do not start new research."] {
-            try require(!NativeTurnToolAuthority(request).allowsResearch, "A stated refusal of research or of tools is kept: \(request)")
-        }
-        for request in ["Do not set up a schedule for this.", "No schedules please."] {
-            try require(!NativeTurnToolAuthority(request).allowsSchedule, "A stated refusal of a schedule is kept: \(request)")
-        }
-        for request in ["Don't use any tools.", "Don’t use tools.", "You must not call external tools.", "Answer without calling tools."] {
-            try require(!NativeTurnToolAuthority(request).allowsTools, "Explicit no-tools variants must be enforced")
-        }
-        try require(NativeTurnToolAuthority(second).filter(["apple-reminders", NativeWebTools.researchToolID]).isEmpty,
-                    "No-tools applies to every tool family")
+        try require(NativeTurnToolAuthority().allowedWorkerTypes == ["research", "document"]
+                    && NativeTurnToolAuthority(mentions: [NativeWebTools.researchToolID], companion: true).allowedWorkerTypes
+                        == ["research", "document", NativeTaskTools.generalWorkerType],
+                    "Which kinds of work are offered depends on the conversation, never on the wording of the message")
         try await concurrent()
         try await dispatchDenial()
         try durableEnrollment()
@@ -89,7 +56,10 @@ enum NativeTurnAuthorityFixture {
         let references = try repository.taskReferences(conversationID: nil)
         try require(bodies.count == 1 && references.count == 1, "A later no-tools turn must never reenroll previous research")
         let secondHistories = transport.records.filter { $0.messages.last(where: { $0.role == "user" })?.content == second }
-        try require(!secondHistories.isEmpty && secondHistories.allSatisfy { $0.tools.isEmpty }, "No-tools suppresses every advertised schema")
+        let refusal = NativeRefusalList.ruledOutSentence
+        try require(!secondHistories.isEmpty && secondHistories.contains { record in record.messages.contains { $0.role == "tool" && $0.content.contains(refusal) } }
+                    && transport.restrictionMessages.contains { $0.contains("Do not use any tools.") },
+                    "A message that says not to use tools is understood, and the proposed call is answered with the fixed sentence instead of running")
         try require(secondHistories[0].messages.filter { $0.role == "user" }.count == 1
             && secondHistories[0].messages.contains { $0.role == "assistant" && $0.content.contains("Read-only context") && $0.content.contains("NASA") },
                     "Pending research remains visible as quoted context, never another user instruction")
@@ -114,7 +84,7 @@ enum NativeTurnAuthorityFixture {
         let repository = try LocalChatRepository(inMemory: true)
         let store = ChatStore(veraAPI: VeraAPIClient(base: URL(string: "https://engine.test")!),
             nativeConfig: NativeSessionFixture.config, nativeTransport: NativeSessionFixtureTransport(), repository: repository,
-            nativeEnabledToolIDs: [NativeWebTools.researchToolID], nativeToolRegistry: NativeToolRegistry(definitions: []),
+            nativeEnabledToolIDs: [], nativeToolRegistry: NativeToolRegistry(definitions: []),
             nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         store.newConversation()
         store.suspendsTurnScheduling = true
@@ -131,7 +101,7 @@ enum NativeTurnAuthorityFixture {
         let current = await store.turnCurrency(turn)
         let dispatched = await store.prepareTurnDispatch(activity, turn: turn)
         try NativeTaskFixture.require(current == .current && !dispatched,
-                                      "Current request restrictions override legacy captured permissions before the dispatch marker")
+                                      "Current consent overrides legacy captured permissions before the dispatch marker")
         let saved = try repository.messages(conversationID: store.selectedID!)
         try NativeTaskFixture.require(saved.last?.toolActivities.isEmpty == true && repository.taskReferences(conversationID: nil).isEmpty,
                                       "Denied tools cannot persist effect markers or enroll tasks")
@@ -165,13 +135,24 @@ final class NativeTurnAuthorityTransport: NativeChatTransport, @unchecked Sendab
     struct Record: Sendable { let messages: [NativeChatMessage]; let tools: [NativeToolSchema] }
     private let lock = NSLock()
     private var captured: [Record] = []
+    private var restrictions: [String] = []
     private var waiting = false
     let gate: NativeSessionGate
     init(gate: NativeSessionGate) { self.gate = gate }
     var firstWaiting: Bool { lock.withLock { waiting } }
     var records: [Record] { lock.withLock { captured } }
+    var restrictionMessages: [String] { lock.withLock { restrictions } }
     func discoverModels() async throws -> [String] { ["local-model"] }
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) {
+            let asked = messages.last?.content ?? ""
+            lock.withLock { restrictions.append(asked) }
+            let refused = asked.contains("Do not use any tools.")
+            return NativeRequestAuthorizer.answered(refused ? NativeRequestAuthorizer.refusalsReply(["use any tools"]) : NativeRequestAuthorizer.noRestrictions)
+        }
+        if NativeRequestAuthorizer.asksRefusalCheck(messages) {
+            return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.refusalCheckReply(.ruledOut))
+        }
         lock.withLock { captured.append(Record(messages: messages, tools: tools)) }
         let current = messages.last(where: { $0.role == "user" })?.content ?? ""
         return AsyncThrowingStream { continuation in
