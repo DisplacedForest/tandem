@@ -93,7 +93,9 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
     }
 
     static func isTrashName(_ component: Substring) -> Bool {
-        let name = String(component).decomposedStringWithCompatibilityMapping
+        var visible = String.UnicodeScalarView()
+        visible.append(contentsOf: component.unicodeScalars.filter { !$0.properties.isDefaultIgnorableCodePoint })
+        let name = String(visible).decomposedStringWithCompatibilityMapping
             .folding(options: [.caseInsensitive, .widthInsensitive], locale: nil).lowercased()
         return name == ".trash" || name == ".trashes"
     }
@@ -106,7 +108,7 @@ struct FolderGrant: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     static func isTrashEntry(directory: String, name: String) -> Bool {
         guard let found = entryIdentity(directory + "/" + name) else { return false }
-        return [".Trash", ".Trashes"].contains { entryIdentity(directory + "/" + $0) == found }
+        return [".Trash", ".Trashes"].contains { NativeFolderIdentity.of(path: directory + "/" + $0) == found }
     }
 
     static func throughTrash(root: String, components: [String]) -> Bool {
@@ -298,11 +300,14 @@ struct NativeFolderAccess: Sendable {
         let matches = candidates.flatMap { candidate in
             roots.filter { Self.contains(root: $0.path, path: candidate) }.map { (root: $0, path: candidate) }
         }
+        for match in matches {
+            let under = String(match.path.dropFirst(match.root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+            guard !under.contains(where: { FolderGrant.isTrashName(Substring($0)) }),
+                  !FolderGrant.throughTrash(root: match.root.path, components: under) else { throw NativeFolderAccessError.inTrash(requested) }
+        }
         if let best = matches.max(by: { $0.root.path.count < $1.root.path.count }) {
             let relative = String(best.path.dropFirst(best.root.path.count)).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
             guard !relative.contains(where: { Self.reserved(Substring($0)) }) else { throw NativeFolderAccessError.invalidPath(requested) }
-            guard !relative.contains(where: { FolderGrant.isTrashName(Substring($0)) }),
-                  !FolderGrant.throughTrash(root: best.root.path, components: relative) else { throw NativeFolderAccessError.inTrash(requested) }
             return NativeFolderLocation(root: best.root, components: relative)
         }
         for candidate in candidates {

@@ -222,6 +222,33 @@ extension SelfTest {
             try require(error == .inTrash(bin.path) || error == .notFound(bin.path), "Another spelling never opens the Trash folder: \(error)")
         }
 
+        let bare = try FolderGrant.make(url: try folder("Bare"))
+        let unseen = bare.path + "/.Tra\u{200C}sh/child"
+        let unseenMade = try await failure(NativeFolderTools.mkdirName, [bare], ["path": .string(unseen)])
+        try require(unseenMade == "\(unseen) is in the Trash, which the file tools leave alone." && (try manager.contentsOfDirectory(atPath: bare.path)).isEmpty
+                    && FolderGrant.isTrashName(".Tra\u{200C}sh") && FolderGrant.isTrashName(".\u{200D}Trashes") && !FolderGrant.isTrashName(".Trash\u{200C}-notes"),
+                    "A name with an unseen character in it that a drive may read as the Trash's name is not created: \(unseenMade)")
+
+        let outer = try FolderGrant.make(url: try folder("Outer"))
+        let inner = try FolderGrant.make(url: try folder("Outer/safe"))
+        try manager.createDirectory(atPath: outer.path + "/.Trash", withIntermediateDirectories: true)
+        try manager.createSymbolicLink(atPath: outer.path + "/.Trash/back", withDestinationPath: inner.path)
+        let roundabout = outer.path + "/.Trash/back/note.txt"
+        let roundaboutWrite = try await failure(NativeFolderTools.writeName, [outer, inner], ["path": .string(roundabout), "content": .string("x")])
+        try require(roundaboutWrite == "\(roundabout) is in the Trash, which the file tools leave alone." && (try manager.contentsOfDirectory(atPath: inner.path)).isEmpty,
+                    "A path that goes through the Trash folder is refused even when a link there leads back into another share: \(roundaboutWrite)")
+        _ = try await tool(NativeFolderTools.writeName, [outer, inner]).execute(["path": .string(inner.path + "/note.txt"), "content": .string("direct")])
+        try require(try String(contentsOfFile: inner.path + "/note.txt", encoding: .utf8) == "direct", "The same file asked for directly is written")
+
+        let linked = try FolderGrant.make(url: try folder("Linked"))
+        try "plain".write(toFile: linked.path + "/notes.txt", atomically: true, encoding: .utf8)
+        try manager.linkItem(atPath: linked.path + "/notes.txt", toPath: linked.path + "/.Trash")
+        guard case .object = try await tool(NativeFolderTools.readName, [linked]).execute(["path": .string(linked.path + "/notes.txt")]) else {
+            throw NativeTaskFixture.Failure.assertion("An ordinary file is read even when a file named like the Trash shares its contents")
+        }
+        try require(!FolderGrant.isTrashEntry(directory: linked.path, name: "notes.txt") && !FolderGrant.throughTrash(root: linked.path, components: ["notes.txt"]),
+                    "Only a folder counts as the Trash folder in the on-disk comparison")
+
         try require(FolderGrant.inTrash("/home/.TRASH/Plans") && FolderGrant.inTrash("/home/.trashes/501/Plans") && FolderGrant.inTrash("/home/.Tra\u{17F}h/Plans")
                     && !FolderGrant.inTrash("/home/.Trash-notes/Plans") && !FolderGrant.inTrash("/home/Trash/Plans"),
                     "The Trash name is matched whatever its capitals or letter forms, and nothing else is")
