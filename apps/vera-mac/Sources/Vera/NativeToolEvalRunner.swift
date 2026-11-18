@@ -31,7 +31,10 @@ enum NativeToolEvalClaimQuestion {
 }
 
 struct NativeToolEvalFixtureClaims: NativeToolEvalClaimReader {
+    var overrides: [String: Bool] = [:]
+
     func claimed(reply: String, caseID: String) async -> Bool? {
+        if let forced = overrides[caseID] { return forced }
         guard let script = NativeToolEvalCases.script(caseID, shared: nil) else { return false }
         return script.claimed
     }
@@ -154,7 +157,10 @@ struct NativeToolEvalFixtureDriver: NativeToolEvalDriver {
     var waitsForDelivery = false
     var failingPreference: Int? = nil
     let turnDeadline: Duration = .seconds(NativeToolEvalLimits.fixtureTurnSeconds)
-    let claimReader: any NativeToolEvalClaimReader = NativeToolEvalFixtureClaims()
+    var claims: [String: Bool] = [:]
+    var replies: [String: String] = [:]
+
+    var claimReader: any NativeToolEvalClaimReader { NativeToolEvalFixtureClaims(overrides: claims) }
 
     var key: String? { Self.fakeKey }
 
@@ -165,6 +171,7 @@ struct NativeToolEvalFixtureDriver: NativeToolEvalDriver {
 
     func transport(for evalCase: NativeToolEvalCase, run: Int, sharedFolder: String?) -> any NativeChatTransport {
         if evalCase.id == failingCase { return NativeToolEvalFailingTransport() }
+        if let reply = replies[evalCase.id] { return ScriptedNativeToolTransport(rounds: [NativeToolEvalCases.say(reply)]) }
         let rounds = NativeToolEvalCases.script(evalCase.id, shared: sharedFolder)?.rounds
             ?? [NativeToolEvalCases.say("This case has no scripted reply in the fixture.")]
         return ScriptedNativeToolTransport(rounds: rounds)
@@ -428,7 +435,16 @@ enum NativeToolEvalRunner {
                               nativeTaskClient: driver.live ? nil : fixtureWorkClient(),
                               nativeSearchAvailable: { false },
                               artifactPersistenceEnabled: false)
+        store.requestAuthorization = cardsOnly(NativeRequestAuthorizer.chat(transport: capture, model: config.model))
         return store
+    }
+
+    nonisolated static func cardsOnly(_ forward: @escaping NativeRequestAuthorizer.Transport) -> NativeRequestAuthorizer.Transport {
+        let refusal = "{\"decision\": \"not_authorized\"}"
+        return { messages in
+            if messages.first?.content == NativeRequestAuthorizer.systemPrompt { return refusal }
+            return try await forward(messages)
+        }
     }
 
     static func fields(_ text: String?) -> [String: NativeJSONValue] {
@@ -543,6 +559,9 @@ enum NativeToolEvalRunner {
 
         let reply = ((try? repository.messages(conversationID: conversationID)) ?? []).first { $0.id == replyID }
         observation.finalReply = reply?.text ?? ""
+        let finalState = store.conversationTurns.first(where: { $0.id == turn.id })?.state
+        observation.endedCleanly = settled && finalState == .complete && reply?.state == .complete
+        observation.checkFailures = store.permissionCheckFailures
         if settled, let reply, reply.state != .complete, capture.errorClass == nil, reply.failure != nil {
             observation.completed = false
         }
@@ -558,6 +577,10 @@ enum NativeToolEvalRunner {
             call.errorPresent = shown["error"] != nil
             call.write = writes.contains(activity.name)
             call.declined = answered[activity.id] == .decline
+            call.approved = answered[activity.id] == .allow
+            if case .string(let error)? = shown["error"] {
+                call.withheld = error.contains(NativeRefusalList.ruledOutSentence) || error.contains(NativeRefusalList.targetMovedSentence)
+            }
             return call
         }
         observation.offered = capture.offered
@@ -584,6 +607,10 @@ enum NativeToolEvalRunner {
 
         let after = sandbox.listing()
         observation.filesAfter = after.keys.sorted()
+        if let file = evalCase.expectation.createsFile, !evalCase.expectation.fileLines.isEmpty, let data = after[file] {
+            let text = String(decoding: data, as: UTF8.self)
+            observation.fileHasLines = evalCase.expectation.fileLines.allSatisfy { text.contains($0) }
+        }
         observation.changedFiles = before.keys.filter { name in after[name].map { $0 != before[name] } ?? false }.sorted()
 
         if NativeToolEvalJudge.needsClaim(evalCase, observation) {

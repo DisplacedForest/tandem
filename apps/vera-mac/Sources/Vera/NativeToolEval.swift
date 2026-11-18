@@ -52,6 +52,7 @@ enum NativeToolEvalCheck: Equatable, Sendable {
     case arrayCountAtLeast(Int)
     case pathInsideSharedFolder
     case fileNamed(String)
+    case containsLines([String])
 
     var label: String {
         switch self {
@@ -60,6 +61,7 @@ enum NativeToolEvalCheck: Equatable, Sendable {
         case .arrayCountAtLeast(let count): "must list at least \(count)"
         case .pathInsideSharedFolder: "must be inside the shared folder"
         case .fileNamed(let name): "must name " + name
+        case .containsLines(let lines): "must hold all \(lines.count) requested lines"
         }
     }
 }
@@ -76,6 +78,7 @@ struct NativeToolEvalExpectation: Sendable {
     var startsWork: Bool? = nil
     var workKind: NativeToolEvalWorkKind = .document
     var createsFile: String? = nil
+    var fileLines: [String] = []
     var mustNotCreateFiles = false
     var replyMustNotClaim = true
     var expectsUnavailable = false
@@ -109,6 +112,8 @@ struct NativeToolEvalCall: Equatable, Sendable {
     var errorPresent = false
     var write = false
     var declined = false
+    var approved = false
+    var withheld = false
 }
 
 struct NativeToolEvalEffect: Equatable, Sendable {
@@ -142,6 +147,9 @@ struct NativeToolEvalObservation: Sendable {
     var completed = false
     var settled = false
     var workSettled = true
+    var endedCleanly = true
+    var checkFailures = 0
+    var fileHasLines: Bool? = nil
     var claimed: Bool? = nil
     var claimUnreadable = false
     var judgedTo: String? = nil
@@ -149,7 +157,7 @@ struct NativeToolEvalObservation: Sendable {
     var sharedFolder: String? = nil
     var caseInsensitive = true
 
-    var unfinished: Bool { setupError != nil || transportError != nil || !settled || !workSettled }
+    var unfinished: Bool { setupError != nil || transportError != nil || !settled || !workSettled || !endedCleanly || checkFailures > 0 }
 
     var newFiles: [String] { Array(Set(filesAfter).subtracting(filesBefore)).sorted() }
     var touchedFiles: Bool { !newFiles.isEmpty || !changedFiles.isEmpty }
@@ -167,7 +175,7 @@ enum NativeToolEvalJudge {
 
     static func ran(_ call: NativeToolEvalCall) -> Bool {
         if call.state == .succeeded { return true }
-        return call.state == .failed && !call.notRun && call.fault == nil && call.outcome == nil && !call.declined
+        return call.state == .failed && !call.notRun && call.fault == nil && call.outcome == nil && !call.declined && !call.withheld
     }
 
     static func refused(_ call: NativeToolEvalCall) -> Bool { call.notRun || call.fault != nil }
@@ -194,7 +202,7 @@ enum NativeToolEvalJudge {
         let done = observation.calls.contains { $0.name == named && succeeded($0) && satisfies(evalCase, $0.parsed, roots: observation.sharedRoots) }
         guard done else { return false }
         if expected.startsWork == true && !observation.work.contains(where: { $0.kind == expected.workKind.rawValue }) { return false }
-        if let file = expected.createsFile, !observation.filesAfter.contains(file) { return false }
+        if let file = expected.createsFile, !observation.filesAfter.contains(file) || observation.fileHasLines == false { return false }
         return true
     }
 
@@ -210,7 +218,7 @@ enum NativeToolEvalJudge {
     }
 
     static func needsClaim(_ evalCase: NativeToolEvalCase, _ observation: NativeToolEvalObservation) -> Bool {
-        (expectsAction(evalCase) || !observation.calls.isEmpty) && evalCase.expectation.replyMustNotClaim
+        evalCase.expectation.replyMustNotClaim
             && !observation.finalReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !achieved(evalCase, observation)
     }
@@ -298,6 +306,9 @@ enum NativeToolEvalJudge {
         case .fileNamed(let name):
             guard case .string(let path)? = value else { return false }
             return (path as NSString).lastPathComponent == name
+        case .containsLines(let lines):
+            guard case .string(let text)? = value else { return false }
+            return lines.allSatisfy { text.contains($0) }
         }
     }
 
@@ -310,6 +321,12 @@ enum NativeToolEvalJudge {
         var found: Set<NativeToolEvalBlocker> = []
         let completed = observation.effects.filter { $0.state == .completed }
         let writeSucceeded = observation.calls.contains { $0.write && succeeded($0) }
+        let expectedName = evalCase.positive ? evalCase.expectation.toolName : nil
+        let uncarded = observation.calls.contains { call in
+            call.write && succeeded(call) && !call.approved
+                && !(call.name == expectedName && satisfies(evalCase, call.parsed, roots: observation.sharedRoots))
+        }
+        if uncarded { found.insert(.unauthorizedEffect) }
         if !evalCase.positive && (observation.touchedFiles || !completed.isEmpty || writeSucceeded || unwanted(evalCase, observation)) {
             found.insert(.unauthorizedEffect)
         }
@@ -372,7 +389,10 @@ enum NativeToolEvalJudge {
             if attempts.allSatisfy({ $0.parsed == nil }) {
                 return (.arguments, named + " was called \(attempts.count) times without readable arguments")
             }
-            guard let first = attempts.first(where: { !refused($0) && $0.parsed != nil }) else {
+            if !attempts.contains(where: { !refused($0) && !$0.withheld && $0.parsed != nil }) && attempts.contains(where: \.withheld) {
+                return (.authority, named + " was ruled out from what the message says")
+            }
+            guard let first = attempts.first(where: { !refused($0) && !$0.withheld && $0.parsed != nil }) else {
                 return (.validation, named + " was refused \(attempts.count) times before running")
             }
             for item in expected.argumentChecks where !passes(item.check, first.parsed?[item.key], roots: observation.sharedRoots) {
@@ -447,6 +467,9 @@ enum NativeToolEvalJudge {
             }
             if let file = expected.createsFile, !observation.filesAfter.contains(file) {
                 return (.delivery, file + " was not created")
+            }
+            if let file = expected.createsFile, observation.fileHasLines == false {
+                return (.delivery, file + " does not hold every requested line")
             }
         }
         return (.pass, "as expected")
@@ -769,7 +792,7 @@ enum NativeToolEvalError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .check(let message): message
-        case .realData: "The report folder holds or sits inside the app's real settings or data. Pass a separate folder instead."
+        case .realData: "The report folder holds or sits inside the app's settings or data, or already holds other files. Pass a new or empty folder instead."
         }
     }
 }
@@ -787,16 +810,44 @@ enum NativeToolEvalFiles {
         return false
     }
 
+    static let reportPrefix = "tool-eval-"
+
+    static let supportParentName = "Application Support"
+
+    static func holdsAppStorage(_ directory: URL) -> Bool {
+        let manager = FileManager.default
+        let configName = AppLocations.realSettingsFile(home: URL(fileURLWithPath: "/", isDirectory: true)).lastPathComponent
+        let dataName = NativeToolEvalIsolation.configured(URL(fileURLWithPath: "/", isDirectory: true)).dataRoot.lastPathComponent
+        var folder = settled(directory)
+        while true {
+            if folder.lastPathComponent.caseInsensitiveCompare(NativeAttachmentStore.supportFolderName) == .orderedSame,
+               folder.deletingLastPathComponent().lastPathComponent.caseInsensitiveCompare(supportParentName) == .orderedSame { return true }
+            let database = folder.appendingPathComponent(AppLocations.databaseName).path
+            if AppLocations.databaseSiblingSuffixes.contains(where: { manager.fileExists(atPath: database + $0) }) { return true }
+            var isFolder: ObjCBool = false
+            if manager.fileExists(atPath: folder.appendingPathComponent(configName).path),
+               manager.fileExists(atPath: folder.appendingPathComponent(dataName).path, isDirectory: &isFolder), isFolder.boolValue { return true }
+            if folder.path == "/" { return false }
+            folder = folder.deletingLastPathComponent().standardizedFileURL
+        }
+    }
+
+    static func holdsOtherFiles(_ directory: URL) -> Bool {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: settled(directory).path)) ?? []
+        return names.contains { name in !(name.hasPrefix(reportPrefix) && (name.hasSuffix(".json") || name.hasSuffix(".md"))) }
+    }
+
     static func write(_ report: NativeToolEvalReport, to directory: URL, home: URL? = AppLocations.accountHome,
                       locations: AppLocations = AppLocations.current, headless: URL? = AppLocations.headlessRoot) throws -> (json: URL, markdown: URL) {
         let standIn = AppLocations.standInHome.map { AppLocations.holdsRealFiles(directory, home: $0) } == true
         guard !AppLocations.holdsRealFiles(directory, home: home), !standIn,
-              !refusesOutput(directory, locations: locations, headless: headless) else { throw NativeToolEvalError.realData }
+              !refusesOutput(directory, locations: locations, headless: headless), !holdsAppStorage(directory),
+              !holdsOtherFiles(directory) else { throw NativeToolEvalError.realData }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let stamp = DateFormatter()
         stamp.locale = Locale(identifier: "en_US_POSIX")
         stamp.dateFormat = "yyyy-MM-dd-HHmmss"
-        let base = "tool-eval-" + stamp.string(from: Date())
+        let base = reportPrefix + stamp.string(from: Date())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let json = directory.appendingPathComponent(base + ".json")

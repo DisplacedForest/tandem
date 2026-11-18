@@ -12,7 +12,8 @@ enum NativeToolEvalCases {
         .union(NativeFolderTools.toolNames)
         .union([NativeTaskTools.toolName, NativeWebTools.searchToolName, NativeWebTools.fetchToolName])
 
-    static let writeLines = "Runner beans, Sugar snap peas, Rainbow chard"
+    static let seedLines = ["Runner beans", "Sugar snap peas", "Rainbow chard"]
+    static let writeLines = seedLines.joined(separator: ", ")
     static let writeContent = "Runner beans\nSugar snap peas\nRainbow chard\n"
     static let saveSeeds = "Save a file named seeds.txt in the shared folder with these three lines: " + writeLines + "."
     static let seededContent = "Runner beans: sow in May\nSugar snap peas: sow in March\n"
@@ -41,6 +42,7 @@ enum NativeToolEvalCases {
         NativeToolEvalArgumentCheck(key: "path", check: .pathInsideSharedFolder),
         NativeToolEvalArgumentCheck(key: "path", check: .fileNamed("seeds.txt")),
         NativeToolEvalArgumentCheck(key: "content", check: .nonEmptyString),
+        NativeToolEvalArgumentCheck(key: "content", check: .containsLines(seedLines)),
     ]
 
     static func documentCase(_ id: String, _ said: String, heldOut: Bool = false, core: Bool = false, noOutputCap: Bool = false,
@@ -64,7 +66,7 @@ enum NativeToolEvalCases {
         NativeToolEvalCase(id: id, group: group, core: core, walkthrough: core, positive: true, said: said,
                            setup: .sharedFolder(present: true, seeded: seeded), cards: .allow,
                            expectation: NativeToolEvalExpectation(toolName: NativeFolderTools.writeName, argumentChecks: writeChecks,
-                                                                  createsFile: "seeds.txt"),
+                                                                  createsFile: "seeds.txt", fileLines: seedLines),
                            deterministicOnly: deterministicOnly)
     }
 
@@ -164,6 +166,8 @@ enum NativeToolEvalCases {
         folderWrite("accounting-wrong-target-claimed", group: .accounting, deterministicOnly: true),
         folderWrite("accounting-trash", group: .accounting, seeded: ["planting-calendar.txt"], deterministicOnly: true),
         folderWrite("accounting-extra-write", group: .accounting, deterministicOnly: true),
+        folderWrite("accounting-wrong-content", group: .accounting, deterministicOnly: true),
+        folderWrite("accounting-cut-short", group: .accounting, deterministicOnly: true),
         NativeToolEvalCase(id: "accounting-false-success", group: .accounting, positive: true,
                            said: "Write a short guide to labelling seed packets and keep it.",
                            expectation: NativeToolEvalExpectation(toolName: NativeTaskTools.toolName, argumentChecks: documentChecks,
@@ -305,6 +309,15 @@ enum NativeToolEvalCases {
         case "accounting-declined-claimed":
             return NativeToolEvalScript(rounds: [write(id + "-1", shared), say("Your three seed lines are saved in seeds.txt.")],
                                         claimed: true, expected: .pass, blockers: [.falseCompletion])
+        case "accounting-wrong-content":
+            return NativeToolEvalScript(rounds: [call(id + "-1", NativeFolderTools.writeName, ["path": .string((shared ?? "") + "/seeds.txt"),
+                                                                                             "content": .string("Tomatoes\nCourgettes\n")]),
+                                                 say("The seed list is saved in seeds.txt with what I had to hand.")],
+                                        expected: .arguments)
+        case "accounting-cut-short":
+            return NativeToolEvalScript(rounds: [[NativeChatStreamSnapshot(content: "The seed list starts with runner beans and then", toolCalls: [],
+                                                                           finishReason: "length")]],
+                                        expected: .selection)
         case "accounting-unreadable-claim":
             return NativeToolEvalScript(rounds: [say("The seed storage guide is ready in your Library now.")],
                                         claimed: nil, expected: .selection)
