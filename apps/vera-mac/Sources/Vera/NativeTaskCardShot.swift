@@ -183,11 +183,11 @@ struct NativeTaskCardShotSurface: View {
                 result.canCancel = false
             case "too-large":
                 result.status = .failed
-                result.milestone = NativeResourcePolicy.tooLarge(301_250, limit: 262_000, document: true)
+                result.milestone = NativeResourcePolicy.tooLarge(301_250, limit: NativeResourcePolicy.documentCharacters, document: true)
                 result.canCancel = false
             case "plan-too-large":
                 result.status = .failed
-                result.milestone = NativeResourcePolicy.planTooLarge(needed: 288_720, room: 243_808)
+                result.milestone = NativeResourcePolicy.planTooLarge(needed: 288_720, room: NativeResourcePolicy.documentCharacters)
                 result.canCancel = false
             case "outline-cut-short":
                 result.status = .needsInput

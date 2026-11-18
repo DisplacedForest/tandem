@@ -233,9 +233,9 @@ extension SelfTest {
                     && next.system.contains("at most 2496 characters"), "The cut-short section was asked for again at half the size")
         let checkpoint = try JSONDecoder().decode(NativeDocumentCheckpoint.self, from: try harness.engine.store.get(reference.remoteTaskID!).checkpoint)
         let report = try repository.taskProjection(id: reference.id)?.snapshot?.result?.report ?? ""
-        try require(checkpoint.drafts == ["Section from the wire.", "Section from the wire."]
-                    && !checkpoint.drafts.joined().contains(TaskReplyCauseWire.partial) && !report.contains(TaskReplyCauseWire.partial),
-                    "No cut-short text was kept")
+        try require(checkpoint.drafts == ["", ""] && checkpoint.revisions.count == 2
+                    && !checkpoint.revisions.joined().contains(TaskReplyCauseWire.partial) && !report.contains(TaskReplyCauseWire.partial),
+                    "No cut-short text was kept, and each draft is cleared once its section is revised")
         await harness.stop()
     }
 

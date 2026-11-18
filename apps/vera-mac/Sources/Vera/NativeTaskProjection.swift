@@ -117,6 +117,7 @@ enum NativeTaskProjection {
             case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large. Start a new document with a shorter brief." : "The research input is too large. Start a smaller research request."
             case "request_conflict": card.milestone = "The saved request could not be resumed safely. \(again)."
             case "profile_changed" where document: card.milestone = NativeTaskWorkerFailures.modelChangedMessage
+            case "progress_too_large": card.milestone = NativeDocumentWorker.progressTooLargeMessage
             case "plan_too_large":
                 let sizes = snapshot.checkpoint.oversize ?? []
                 card.milestone = sizes.count == 2

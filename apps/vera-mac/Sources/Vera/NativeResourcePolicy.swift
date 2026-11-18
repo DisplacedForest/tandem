@@ -27,6 +27,8 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
     static let progressSources = 6
     static let wireEncodingMultiple = 2
     static let sectionFrameCharacters = 8
+    static let roundingStep = 10_000
+    static let batchJoinBytes = 8
     static let jobBytes = 1_048_576
     static let jobFrameBytes = 16_384
     static let noteQuestionCharacters = 40
@@ -89,6 +91,8 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
         "jobBytes": "One model request travels inside the app as a job of at most this many bytes, so prompts stay under it even for models with very large context windows.",
         "jobFrameBytes": "Room in that job for everything around the prompt: ids, digests and the request settings.",
         "sectionFrameCharacters": "The heading marks and blank lines each section adds to a finished document.",
+        "roundingStep": "Sizes told to the person are rounded to a figure read at a glance, and the document limit is rounded down so a saved document never exceeds what the card says.",
+        "batchJoinBytes": "Room for the blank line that joins one source fragment to the next in a batch of notes.",
         "progressSources": "A progress update names only the first few new sources, so it stays inside one update's size.",
         "noteQuestionCharacters": "A troubleshooting note quotes only the start of the search it is about.",
         "shortestPlanCharacters": "Asking again for a shorter plan never asks for less than this.",
@@ -175,6 +179,78 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
 
     var sourceCharacters: Int? { legacy ? Self.legacySourceCharacters : nil }
 
+    static func wireCost(_ scalar: Unicode.Scalar) -> Int {
+        switch scalar.value {
+        case 0x22, 0x5C: return 4
+        case 0x2F: return 2
+        case 0x08, 0x09, 0x0A, 0x0C, 0x0D: return 3
+        case 0..<0x20: return 7
+        default: return String(scalar).utf8.count
+        }
+    }
+
+    static func wireCost<S: StringProtocol>(_ text: S) -> Int {
+        text.unicodeScalars.reduce(0) { $0 + wireCost($1) }
+    }
+
+    static func encodedSize(_ messages: [NativeTaskGenerationMessage]) -> Int {
+        (try? NativeTaskGenerationJob.wireBytes(messages, tools: nil)) ?? Int.max
+    }
+
+    func fits(_ messages: [NativeTaskGenerationMessage]) -> Bool {
+        legacy ? Self.promptSize(messages) <= promptBytes : Self.encodedSize(messages) <= wireBytes
+    }
+
+    var materialBytes: Int {
+        let snapshotRoom = Self.savedSnapshotBytes - Self.requestBytes - 2 * Self.documentCharacters - 4 * Self.jobFrameBytes
+        return max(1, min(wireBytes / Self.materialShareDivisor, snapshotRoom))
+    }
+
+    static func parts(_ items: [String], budget: Int, prefix: (Int) -> String = { _ in "" }) -> [String] {
+        let room = max(1, budget)
+        var pieces: [String] = []
+        for (index, item) in items.enumerated() {
+            let lead = prefix(index)
+            let space = max(1, room - wireCost(lead))
+            var current = String.UnicodeScalarView()
+            var used = 0
+            var lastBreak: Int?
+            for scalar in item.unicodeScalars {
+                let cost = wireCost(scalar)
+                if used + cost > space, !current.isEmpty {
+                    var cut = current.count
+                    if let lastBreak, lastBreak > 0 { cut = lastBreak }
+                    let head = String.UnicodeScalarView(current.prefix(cut))
+                    let tail = String.UnicodeScalarView(current.dropFirst(cut))
+                    pieces.append(lead + String(head))
+                    current = tail
+                    used = wireCost(String(tail))
+                    lastBreak = nil
+                }
+                current.append(scalar)
+                used += cost
+                if scalar == "\n" || scalar == " " { lastBreak = current.count }
+            }
+            if !current.isEmpty { pieces.append(lead + String(current)) }
+        }
+        var grouped: [String] = []
+        var current = ""
+        var used = 0
+        for piece in pieces {
+            let cost = wireCost(piece) + (current.isEmpty ? 0 : 4)
+            if !current.isEmpty, used + cost > room {
+                grouped.append(current)
+                current = piece
+                used = wireCost(piece)
+            } else {
+                current = current.isEmpty ? piece : current + "\n\n" + piece
+                used += cost
+            }
+        }
+        if !current.isEmpty { grouped.append(current) }
+        return grouped
+    }
+
     static func promptSize(_ messages: [NativeTaskGenerationMessage]) -> Int {
         messages.reduce(0) { total, message in
             var content = Substring(message.content)
@@ -185,15 +261,19 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
 
     static var sectionShare: Int { fullSectionCharacters + headingCharacters + sectionFrameCharacters }
 
-    static var sectionsThatFit: Int { max(1, (savedResultBytes - jobFrameBytes) / sectionShare) }
+    static var documentCharacters: Int { (savedResultBytes - jobFrameBytes) / roundingStep * roundingStep }
+
+    static var sectionsThatFit: Int { max(1, documentCharacters / sectionShare) }
+
+    static func roundedUp(_ value: Int) -> Int { (value + roundingStep - 1) / roundingStep * roundingStep }
 
     static func planTooLarge(needed: Int, room: Int) -> String {
-        "This document would need about \(NativeTaskInputSize.grouped(needed)) characters, and Tandem can save up to about \(NativeTaskInputSize.grouped(room)) in one document. Ask for it as two documents."
+        "This document would need about \(NativeTaskInputSize.grouped(roundedUp(needed))) characters, and Tandem can save up to about \(NativeTaskInputSize.grouped(room)) in one document. Ask for it as two documents."
     }
 
     static func tooLarge(_ characters: Int, limit: Int, document: Bool) -> String {
         let size = NativeTaskInputSize.grouped(characters)
-        let room = NativeTaskInputSize.grouped(limit)
+        let room = NativeTaskInputSize.grouped(limit / roundingStep * roundingStep)
         return document
             ? "The finished document is \(size) characters, and Tandem can save up to about \(room) in one document. Ask for it as two documents."
             : "The finished report is \(size) characters, and Tandem can save up to about \(room) in one report. Ask for a narrower report."
@@ -204,7 +284,7 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
 final class NativeModelContext {
     static let shared = NativeModelContext()
     private var known: [String: Int] = [:]
-    private var asked: Set<String> = []
+    private var lookups: [String: Task<Void, Never>] = [:]
 
     static func key(_ base: URL, _ model: String) -> String {
         ((try? NativeTaskEngineIdentity(base))?.base ?? base).absoluteString + "\n" + model
@@ -212,6 +292,7 @@ final class NativeModelContext {
 
     static func reported(_ profile: NativeTaskProfileBinding?) async -> NativeTaskProfileBinding? {
         guard var profile else { return nil }
+        await shared.settle(base: profile.provider.base)
         if let tokens = await shared.tokens(base: profile.provider.base, model: profile.executionModel) { profile.contextTokens = tokens }
         return profile
     }
@@ -222,11 +303,22 @@ final class NativeModelContext {
         for (model, tokens) in contexts where tokens > 0 { known[Self.key(base, model)] = tokens }
     }
 
+    func settle(base: URL) async {
+        await lookups[Self.key(base, "")]?.value
+    }
+
     func prepare(_ config: NativeChatConfig?, transport: (any NativeChatTransport)?) async {
         guard let config, let client = transport as? NativeChatClient else { return }
         let base = Self.key(config.baseURL, "")
-        guard !asked.contains(base) else { return }
-        asked.insert(base)
-        if let contexts = try? await client.modelContexts() { record(base: config.baseURL, contexts: contexts) }
+        if let running = lookups[base] {
+            await running.value
+            return
+        }
+        let url = config.baseURL
+        let lookup = Task { @MainActor in
+            if let contexts = try? await client.modelContexts() { self.record(base: url, contexts: contexts) }
+        }
+        lookups[base] = lookup
+        await lookup.value
     }
 }
