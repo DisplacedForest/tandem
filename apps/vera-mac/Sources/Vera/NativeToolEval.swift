@@ -853,21 +853,41 @@ enum NativeToolEvalFiles {
         AppLocations.fileType(url.path) == S_IFLNK
     }
 
-    static func ancestries(_ directory: URL) -> [URL] {
-        let written = absolute(directory)
-        var starts = [written, settled(written)]
-        let parts = written.pathComponents.filter { $0 != "/" }
-        var prefix = URL(fileURLWithPath: "/", isDirectory: true)
-        for (index, part) in parts.enumerated() {
-            prefix = prefix.appendingPathComponent(part)
-            guard isLink(prefix) else { continue }
-            var through = settled(prefix)
-            for rest in parts[(index + 1)...] { through = through.appendingPathComponent(rest) }
-            starts.append(through.standardizedFileURL)
-            starts.append(settled(through))
+    static func lexical(_ url: URL) -> URL {
+        var parts: [String] = []
+        for part in url.pathComponents where part != "/" && part != "." && !part.isEmpty {
+            if part == ".." { _ = parts.popLast() } else { parts.append(part) }
         }
-        var seen: Set<String> = []
-        return starts.filter { seen.insert($0.path).inserted }
+        return URL(fileURLWithPath: "/" + parts.joined(separator: "/"), isDirectory: true)
+    }
+
+    static func ancestries(_ directory: URL) -> [URL]? {
+        var current = absolute(directory)
+        var starts = [current]
+        for _ in 0..<64 {
+            let parts = current.pathComponents.filter { $0 != "/" }
+            var prefix = URL(fileURLWithPath: "/", isDirectory: true)
+            var next: URL?
+            for (index, part) in parts.enumerated() {
+                prefix = prefix.appendingPathComponent(part)
+                guard isLink(prefix) else { continue }
+                guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: prefix.path) else { return nil }
+                var through = destination.hasPrefix("/") ? URL(fileURLWithPath: destination)
+                    : prefix.deletingLastPathComponent().appendingPathComponent(destination)
+                for rest in parts[(index + 1)...] { through = through.appendingPathComponent(rest) }
+                next = lexical(through)
+                break
+            }
+            guard let next else {
+                starts.append(settled(current))
+                var seen: Set<String> = []
+                return starts.filter { seen.insert($0.path).inserted }
+            }
+            guard !starts.contains(where: { $0.path == next.path }) else { return nil }
+            current = next
+            starts.append(current)
+        }
+        return nil
     }
 
     static func inside(_ url: URL, _ folder: URL) -> Bool {
@@ -875,7 +895,7 @@ enum NativeToolEvalFiles {
     }
 
     static func refusesOutput(_ directory: URL, locations: AppLocations, headless: URL?) -> Bool {
-        let starts = ancestries(directory)
+        guard let starts = ancestries(directory) else { return true }
         for configured in [locations.configDirectory, locations.dataRoot] {
             if let headless, inside(configured, headless) || inside(settled(configured), headless) { continue }
             if starts.contains(where: { inside($0, configured) }) { return true }
@@ -884,8 +904,9 @@ enum NativeToolEvalFiles {
     }
 
     static func holdsRealFiles(_ directory: URL, home: URL?) -> Bool {
+        guard let starts = ancestries(directory) else { return true }
         let standIn = AppLocations.standInHome
-        return ancestries(directory).contains { start in
+        return starts.contains { start in
             AppLocations.holdsRealFiles(start, home: home) || standIn.map { AppLocations.holdsRealFiles(start, home: $0) } == true
         }
     }
@@ -908,7 +929,8 @@ enum NativeToolEvalFiles {
     }
 
     static func holdsAppStorage(_ directory: URL) -> Bool {
-        for start in ancestries(directory) {
+        guard let starts = ancestries(directory) else { return true }
+        for start in starts {
             var folder = start
             while true {
                 if storageAt(folder) { return true }
