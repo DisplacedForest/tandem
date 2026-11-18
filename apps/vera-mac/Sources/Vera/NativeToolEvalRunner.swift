@@ -498,7 +498,7 @@ enum NativeToolEvalRunner {
                 grants = [grant]
                 sharedPath = grant.path
                 observation.sharedFolder = grant.path
-                observation.sharedRoots = Array(Set(sandbox.roots + [grant.path]))
+                observation.sharedRoots = [grant.path] + Set(sandbox.roots).subtracting([grant.path]).sorted()
                 observation.caseInsensitive = AppLocations.isCaseInsensitiveVolume(sandbox.shared)
                 if !present { try FileManager.default.removeItem(at: sandbox.shared) }
             } catch {
@@ -579,7 +579,8 @@ enum NativeToolEvalRunner {
             call.declined = answered[activity.id] == .decline
             call.approved = answered[activity.id] == .allow
             if case .string(let error)? = shown["error"] {
-                call.withheld = error.contains(NativeRefusalList.ruledOutSentence) || error.contains(NativeRefusalList.targetMovedSentence)
+                let said = error.trimmingCharacters(in: .whitespacesAndNewlines)
+                call.withheld = said == NativeRefusalList.ruledOutSentence || said == NativeRefusalList.targetMovedSentence
             }
             return call
         }
@@ -609,7 +610,7 @@ enum NativeToolEvalRunner {
         observation.filesAfter = after.keys.sorted()
         if let file = evalCase.expectation.createsFile, !evalCase.expectation.fileLines.isEmpty, let data = after[file] {
             let text = String(decoding: data, as: UTF8.self)
-            observation.fileHasLines = evalCase.expectation.fileLines.allSatisfy { text.contains($0) }
+            observation.fileHasLines = NativeToolEvalJudge.holdsLines(text, requested: evalCase.expectation.fileLines, exact: evalCase.expectation.exactLines)
         }
         observation.changedFiles = before.keys.filter { name in after[name].map { $0 != before[name] } ?? false }.sorted()
 

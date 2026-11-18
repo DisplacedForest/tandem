@@ -42,7 +42,7 @@ enum NativeToolEvalCases {
         NativeToolEvalArgumentCheck(key: "path", check: .pathInsideSharedFolder),
         NativeToolEvalArgumentCheck(key: "path", check: .fileNamed("seeds.txt")),
         NativeToolEvalArgumentCheck(key: "content", check: .nonEmptyString),
-        NativeToolEvalArgumentCheck(key: "content", check: .containsLines(seedLines)),
+        NativeToolEvalArgumentCheck(key: "content", check: .holdsLines(seedLines, exact: true)),
     ]
 
     static func documentCase(_ id: String, _ said: String, heldOut: Bool = false, core: Bool = false, noOutputCap: Bool = false,
@@ -66,7 +66,7 @@ enum NativeToolEvalCases {
         NativeToolEvalCase(id: id, group: group, core: core, walkthrough: core, positive: true, said: said,
                            setup: .sharedFolder(present: true, seeded: seeded), cards: .allow,
                            expectation: NativeToolEvalExpectation(toolName: NativeFolderTools.writeName, argumentChecks: writeChecks,
-                                                                  createsFile: "seeds.txt", fileLines: seedLines),
+                                                                  createsFile: "seeds.txt", fileLines: seedLines, exactLines: true),
                            deterministicOnly: deterministicOnly)
     }
 

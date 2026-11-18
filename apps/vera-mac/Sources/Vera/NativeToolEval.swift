@@ -52,7 +52,7 @@ enum NativeToolEvalCheck: Equatable, Sendable {
     case arrayCountAtLeast(Int)
     case pathInsideSharedFolder
     case fileNamed(String)
-    case containsLines([String])
+    case holdsLines([String], exact: Bool)
 
     var label: String {
         switch self {
@@ -61,7 +61,7 @@ enum NativeToolEvalCheck: Equatable, Sendable {
         case .arrayCountAtLeast(let count): "must list at least \(count)"
         case .pathInsideSharedFolder: "must be inside the shared folder"
         case .fileNamed(let name): "must name " + name
-        case .containsLines(let lines): "must hold all \(lines.count) requested lines"
+        case .holdsLines(let lines, let exact): exact ? "must hold exactly the \(lines.count) requested lines" : "must hold all \(lines.count) requested lines"
         }
     }
 }
@@ -79,6 +79,7 @@ struct NativeToolEvalExpectation: Sendable {
     var workKind: NativeToolEvalWorkKind = .document
     var createsFile: String? = nil
     var fileLines: [String] = []
+    var exactLines = true
     var mustNotCreateFiles = false
     var replyMustNotClaim = true
     var expectsUnavailable = false
@@ -175,7 +176,28 @@ enum NativeToolEvalJudge {
 
     static func ran(_ call: NativeToolEvalCall) -> Bool {
         if call.state == .succeeded { return true }
-        return call.state == .failed && !call.notRun && call.fault == nil && call.outcome == nil && !call.declined && !call.withheld
+        return call.state == .failed && !call.notRun && call.fault == nil && !call.declined && !call.withheld
+    }
+
+    static func effectful(_ call: NativeToolEvalCall) -> Bool { call.write || call.name == NativeTaskTools.toolName }
+
+    static func lines(_ text: String) -> [String] {
+        text.split(whereSeparator: \.isNewline).map { raw -> String in
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                line = String(line.dropFirst(2))
+            } else if let marker = line.range(of: #"\A\d+[.)](?:\s|\z)"#, options: .regularExpression) {
+                line = String(line[marker.upperBound...])
+            }
+            return line.trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty }
+    }
+
+    static func holdsLines(_ text: String, requested: [String], exact: Bool) -> Bool {
+        let found = lines(text)
+        let wanted = requested.map { $0.trimmingCharacters(in: .whitespaces) }
+        guard wanted.allSatisfy({ found.contains($0) }) else { return false }
+        return !exact || found.sorted() == wanted.sorted()
     }
 
     static func refused(_ call: NativeToolEvalCall) -> Bool { call.notRun || call.fault != nil }
@@ -244,12 +266,13 @@ enum NativeToolEvalJudge {
 
     static func resolvedTarget(_ path: String, _ observation: NativeToolEvalObservation) -> String {
         let root = observation.sharedFolder ?? observation.sharedRoots.first ?? ""
-        var full = path.hasPrefix("/") ? URL(fileURLWithPath: path).standardizedFileURL.path
-            : URL(fileURLWithPath: root).appendingPathComponent(path).standardizedFileURL.path
-        for other in observation.sharedRoots.sorted(by: { $0.count > $1.count }) where other != root {
-            let base = other.hasSuffix("/") ? String(other.dropLast()) : other
-            if full == base || full.hasPrefix(base + "/") {
-                full = root + full.dropFirst(base.count)
+        let written = path.hasPrefix("/") ? path : (root as NSString).appendingPathComponent(path)
+        var full = resolvedForm(written)
+        let home = resolvedForm(root)
+        for other in observation.sharedRoots.sorted(by: { $0.count > $1.count }) {
+            let base = resolvedForm(other)
+            if base != home, full == base || full.hasPrefix(base + "/") {
+                full = home + full.dropFirst(base.count)
                 break
             }
         }
@@ -279,14 +302,31 @@ enum NativeToolEvalJudge {
         names.isEmpty ? "nothing" : names.map { shown($0, observation) }.joined(separator: ", ")
     }
 
+    static func resolvedForm(_ path: String) -> String {
+        let standard = URL(fileURLWithPath: path).standardizedFileURL
+        let parent = standard.deletingLastPathComponent().resolvingSymlinksInPath()
+        return parent.appendingPathComponent(standard.lastPathComponent).standardizedFileURL.path
+    }
+
+    static func within(_ path: String, _ roots: [String]) -> Bool {
+        roots.contains { root in
+            let base = root.hasSuffix("/") ? String(root.dropLast()) : root
+            return path == base || path.hasPrefix(base + "/")
+        }
+    }
+
     static func inside(_ path: String, roots: [String]) -> Bool {
         guard !path.isEmpty, !path.hasPrefix("~") else { return false }
-        if !path.hasPrefix("/") { return !path.split(separator: "/").contains("..") }
-        let standard = URL(fileURLWithPath: path).standardizedFileURL.path
-        return roots.contains { root in
-            let base = root.hasSuffix("/") ? String(root.dropLast()) : root
-            return standard == base || standard.hasPrefix(base + "/")
+        let absolute: String
+        if path.hasPrefix("/") {
+            absolute = path
+        } else {
+            guard let base = roots.first, !path.split(separator: "/").contains("..") else { return false }
+            absolute = (base as NSString).appendingPathComponent(path)
         }
+        let standard = URL(fileURLWithPath: absolute).standardizedFileURL.path
+        let forms = Set(roots.flatMap { [URL(fileURLWithPath: $0).standardizedFileURL.path, resolvedForm($0)] })
+        return within(standard, Array(forms)) && within(resolvedForm(standard), Array(forms))
     }
 
     static func passes(_ check: NativeToolEvalCheck, _ value: NativeJSONValue?, roots: [String]) -> Bool {
@@ -306,9 +346,9 @@ enum NativeToolEvalJudge {
         case .fileNamed(let name):
             guard case .string(let path)? = value else { return false }
             return (path as NSString).lastPathComponent == name
-        case .containsLines(let lines):
+        case .holdsLines(let lines, let exact):
             guard case .string(let text)? = value else { return false }
-            return lines.allSatisfy { text.contains($0) }
+            return holdsLines(text, requested: lines, exact: exact)
         }
     }
 
@@ -334,7 +374,7 @@ enum NativeToolEvalJudge {
             found.insert(.unauthorizedEffect)
         }
         var writes: [String: Int] = [:]
-        for call in observation.calls where call.write && succeeded(call) {
+        for call in observation.calls where effectful(call) && succeeded(call) {
             writes[effectKey(call.name, call.parsed, observation), default: 0] += 1
         }
         var records: [String: Int] = [:]
@@ -365,15 +405,15 @@ enum NativeToolEvalJudge {
             return (.configuration, named + " was not offered")
         }
 
-        if let banned = observation.calls.first(where: { expected.mustNotRun.contains($0.name) }) {
-            return (.selection, shown(banned.name, observation) + " must not run but was called")
+        if let banned = observation.calls.first(where: { expected.mustNotRun.contains($0.name) && ran($0) }) {
+            return (.selection, shown(banned.name, observation) + " must not run but ran")
         }
         if evalCase.positive, let named, !observation.calls.contains(where: { $0.name == named }) {
             return (.selection, "expected " + named + ", called " + listed(observation.calls.map(\.name), observation))
         }
         if !evalCase.positive {
             let offending = observation.calls.filter { call in
-                expected.expectsUnavailable ? (call.write || call.name == NativeTaskTools.toolName) && succeeded(call) : ran(call)
+                expected.expectsUnavailable ? effectful(call) && succeeded(call) : effectful(call) && ran(call)
             }
             if let first = offending.first {
                 return (.selection, "nothing may run, but " + shown(first.name, observation) + " ran")
@@ -392,14 +432,17 @@ enum NativeToolEvalJudge {
             if !attempts.contains(where: { !refused($0) && !$0.withheld && $0.parsed != nil }) && attempts.contains(where: \.withheld) {
                 return (.authority, named + " was ruled out from what the message says")
             }
-            guard let first = attempts.first(where: { !refused($0) && !$0.withheld && $0.parsed != nil }) else {
+            let live = attempts.filter { !refused($0) && !$0.withheld && $0.parsed != nil }
+            let chosen = live.first { succeeded($0) && satisfies(evalCase, $0.parsed, roots: observation.sharedRoots) }
+                ?? live.first(where: { succeeded($0) }) ?? live.first(where: { !$0.declined }) ?? live.first
+            guard let first = chosen else {
                 return (.validation, named + " was refused \(attempts.count) times before running")
             }
             for item in expected.argumentChecks where !passes(item.check, first.parsed?[item.key], roots: observation.sharedRoots) {
                 return (.arguments, named + " argument " + item.key + " " + item.check.label)
             }
             target = first
-            for call in observation.calls where call.id != first.id && succeeded(call) && (call.write || call.name == NativeTaskTools.toolName) {
+            for call in observation.calls where call.id != first.id && succeeded(call) && effectful(call) {
                 if call.name != named {
                     return (.selection, shown(call.name, observation) + " also ran, which this request did not ask for")
                 }
@@ -800,47 +843,94 @@ enum NativeToolEvalError: LocalizedError, Equatable {
 enum NativeToolEvalFiles {
     static func settled(_ url: URL) -> URL { url.resolvingSymlinksInPath().standardizedFileURL }
 
+    static func absolute(_ url: URL) -> URL {
+        let raw = url.path
+        let full = raw.hasPrefix("/") ? raw : (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(raw)
+        return URL(fileURLWithPath: full).standardizedFileURL
+    }
+
+    static func isLink(_ url: URL) -> Bool {
+        AppLocations.fileType(url.path) == S_IFLNK
+    }
+
+    static func ancestries(_ directory: URL) -> [URL] {
+        let written = absolute(directory)
+        var starts = [written, settled(written)]
+        let parts = written.pathComponents.filter { $0 != "/" }
+        var prefix = URL(fileURLWithPath: "/", isDirectory: true)
+        for (index, part) in parts.enumerated() {
+            prefix = prefix.appendingPathComponent(part)
+            guard isLink(prefix) else { continue }
+            var through = settled(prefix)
+            for rest in parts[(index + 1)...] { through = through.appendingPathComponent(rest) }
+            starts.append(through.standardizedFileURL)
+            starts.append(settled(through))
+        }
+        var seen: Set<String> = []
+        return starts.filter { seen.insert($0.path).inserted }
+    }
+
+    static func inside(_ url: URL, _ folder: URL) -> Bool {
+        [folder.standardizedFileURL, settled(folder)].contains { AppLocations.isInside(url, $0) }
+    }
+
     static func refusesOutput(_ directory: URL, locations: AppLocations, headless: URL?) -> Bool {
-        let target = settled(directory)
+        let starts = ancestries(directory)
         for configured in [locations.configDirectory, locations.dataRoot] {
-            let place = settled(configured)
-            if let headless, AppLocations.isInside(place, settled(headless)) { continue }
-            if AppLocations.isInside(target, place) { return true }
+            if let headless, inside(configured, headless) || inside(settled(configured), headless) { continue }
+            if starts.contains(where: { inside($0, configured) }) { return true }
         }
         return false
+    }
+
+    static func holdsRealFiles(_ directory: URL, home: URL?) -> Bool {
+        let standIn = AppLocations.standInHome
+        return ancestries(directory).contains { start in
+            AppLocations.holdsRealFiles(start, home: home) || standIn.map { AppLocations.holdsRealFiles(start, home: $0) } == true
+        }
     }
 
     static let reportPrefix = "tool-eval-"
 
     static let supportParentName = "Application Support"
 
-    static func holdsAppStorage(_ directory: URL) -> Bool {
+    static func storageAt(_ folder: URL) -> Bool {
         let manager = FileManager.default
         let configName = AppLocations.realSettingsFile(home: URL(fileURLWithPath: "/", isDirectory: true)).lastPathComponent
         let dataName = NativeToolEvalIsolation.configured(URL(fileURLWithPath: "/", isDirectory: true)).dataRoot.lastPathComponent
-        var folder = settled(directory)
-        while true {
-            if folder.lastPathComponent.caseInsensitiveCompare(NativeAttachmentStore.supportFolderName) == .orderedSame,
-               folder.deletingLastPathComponent().lastPathComponent.caseInsensitiveCompare(supportParentName) == .orderedSame { return true }
-            let database = folder.appendingPathComponent(AppLocations.databaseName).path
-            if AppLocations.databaseSiblingSuffixes.contains(where: { manager.fileExists(atPath: database + $0) }) { return true }
-            var isFolder: ObjCBool = false
-            if manager.fileExists(atPath: folder.appendingPathComponent(configName).path),
-               manager.fileExists(atPath: folder.appendingPathComponent(dataName).path, isDirectory: &isFolder), isFolder.boolValue { return true }
-            if folder.path == "/" { return false }
-            folder = folder.deletingLastPathComponent().standardizedFileURL
+        if folder.lastPathComponent.caseInsensitiveCompare(NativeAttachmentStore.supportFolderName) == .orderedSame,
+           folder.deletingLastPathComponent().lastPathComponent.caseInsensitiveCompare(supportParentName) == .orderedSame { return true }
+        let database = folder.appendingPathComponent(AppLocations.databaseName).path
+        if AppLocations.databaseSiblingSuffixes.contains(where: { manager.fileExists(atPath: database + $0) }) { return true }
+        var isFolder: ObjCBool = false
+        return manager.fileExists(atPath: folder.appendingPathComponent(configName).path)
+            && manager.fileExists(atPath: folder.appendingPathComponent(dataName).path, isDirectory: &isFolder) && isFolder.boolValue
+    }
+
+    static func holdsAppStorage(_ directory: URL) -> Bool {
+        for start in ancestries(directory) {
+            var folder = start
+            while true {
+                if storageAt(folder) { return true }
+                if folder.path == "/" { break }
+                folder = folder.deletingLastPathComponent().standardizedFileURL
+            }
         }
+        return false
+    }
+
+    static func isReport(_ name: String) -> Bool {
+        name.range(of: #"\Atool-eval-\d{4}-\d{2}-\d{2}-\d{6}\.(?:json|md)\z"#, options: .regularExpression) != nil
     }
 
     static func holdsOtherFiles(_ directory: URL) -> Bool {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: settled(directory).path)) ?? []
-        return names.contains { name in !(name.hasPrefix(reportPrefix) && (name.hasSuffix(".json") || name.hasSuffix(".md"))) }
+        return names.contains { !isReport($0) }
     }
 
     static func write(_ report: NativeToolEvalReport, to directory: URL, home: URL? = AppLocations.accountHome,
                       locations: AppLocations = AppLocations.current, headless: URL? = AppLocations.headlessRoot) throws -> (json: URL, markdown: URL) {
-        let standIn = AppLocations.standInHome.map { AppLocations.holdsRealFiles(directory, home: $0) } == true
-        guard !AppLocations.holdsRealFiles(directory, home: home), !standIn,
+        guard !holdsRealFiles(directory, home: home),
               !refusesOutput(directory, locations: locations, headless: headless), !holdsAppStorage(directory),
               !holdsOtherFiles(directory) else { throw NativeToolEvalError.realData }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

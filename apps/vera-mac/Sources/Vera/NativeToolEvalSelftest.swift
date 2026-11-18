@@ -25,7 +25,7 @@ extension NativeToolEval {
             try await incompleteCheck()
             try liveShapeChecks()
             let caseRuns = groups.report.results.filter { $0.group != NativeToolEvalGroup.preferences.rawValue }.count
-            print("TOOL EVAL SELFTEST OK (\(judged) judge checks on hand-built observations; the live network reaches only the evaluation host in its own mode, through one guarded session with no cookies, credentials or cache; a custom settings folder or an address that redirects the run is refused, and the report writer refuses the run's own configured folders, any folder beside or inside app storage, and a folder already holding other files; case sandboxes sit inside the test run's own folder; \(accounting.results.count) accounting fixtures through the real chat loop matched their recorded category and blockers, with every card for anything but the expected call declined and the Trash tool never sent to the model; \(caseRuns) case runs across the document, folder and repair groups, core cases three times each, matched their scripts; \(reported); the preference set is part of the gate; an unreachable model, a failing transport, a failed preference request, work that never finishes and an unreadable claim answer each make the run incomplete with exit status 4, while a readable wrong preference answer stays a counted failure; a declined save followed by a claimed save, or a reply to a message that says not to save that claims a save, raises false_completion; a write is approved only with the right path and every requested line, and a file missing a line is a delivery failure; a reply cut short at its length limit leaves the run incomplete; a typed request never skips its card here, and anything that changed something without an approved card except the expected call is an unauthorized effect; a write the app ruled out from what the message says is a pass for a case that must not save and an authority failure for one that must; the live request leaves out the output cap when a case asks for none)")
+            print("TOOL EVAL SELFTEST OK (\(judged) judge checks on hand-built observations; the live network reaches only the evaluation host in its own mode, through one guarded session with no cookies, credentials or cache; a custom settings folder or an address that redirects the run is refused, and the report writer refuses the run's own configured folders, any folder beside or inside app storage along the path as written, as resolved and through every link, and a folder already holding other files; case sandboxes sit inside the test run's own folder; \(accounting.results.count) accounting fixtures through the real chat loop matched their recorded category and blockers, with every card for anything but the expected call declined and the Trash tool never sent to the model; \(caseRuns) case runs across the document, folder and repair groups, core cases three times each, matched their scripts; \(reported); the preference set is part of the gate; an unreachable model, a failing transport, a failed preference request, work that never finishes and an unreadable claim answer each make the run incomplete with exit status 4, while a readable wrong preference answer stays a counted failure; a declined save followed by a claimed save, or a reply to a message that says not to save that claims a save, raises false_completion; a write is approved only with the right path and exactly the requested lines, compared line by line, and a file missing a line is a delivery failure; a reply cut short at its length limit leaves the run incomplete; a typed request never skips its card here, and anything that changed something without an approved card except the expected call is an unauthorized effect; a write or work start the app ruled out from what the message says is a pass for a case that must not do it and an authority failure for one that must, and only calls that ran are held against a case; the live request leaves out the output cap when a case asks for none)")
             return 0
         } catch {
             print("TOOL EVAL SELFTEST ERROR: " + error.localizedDescription)
@@ -201,7 +201,7 @@ extension NativeToolEval {
         try expect("the same file by a relative and a full path", write,
                    probeObservation([relative, probeCall(id: "c2")]), .pass, [.duplicateWrite])
         try expect("two different files are not a repeat", write,
-                   probeObservation([relative, probeCall(id: "c2", arguments: ["path": .string(probeRoot + "/seeds.txt"), "content": .string(NativeToolEvalCases.writeContent + "Kale\n")])]), .pass)
+                   probeObservation([relative, probeCall(id: "c2", arguments: ["path": .string(probeRoot + "/seeds.txt"), "content": .string("- Runner beans\n- Sugar snap peas\n- Rainbow chard\n")])]), .pass)
 
         let seedsCard = NativeToolEvalCases.encoded(["path": .string(probeRoot + "/seeds.txt"), "content": .string(NativeToolEvalCases.writeContent)])
         let notesCard = NativeToolEvalCases.encoded(["path": .string(probeRoot + "/notes.txt"), "content": .string(NativeToolEvalCases.writeContent)])
@@ -255,6 +255,67 @@ extension NativeToolEval {
         try expect("a right call whose file lacks a requested line", probeCase(), thin, .delivery)
         try expect("a call whose content lacks a requested line", write,
                    probeObservation([probeCall(arguments: ["path": .string(probeRoot + "/seeds.txt"), "content": .string("Tomatoes\n")])]), .arguments)
+        let commaLine = NativeToolEvalCases.encoded(["path": .string(probeRoot + "/seeds.txt"), "content": .string(NativeToolEvalCases.writeLines + "\n")])
+        try require(!NativeToolEvalJudge.approves(write, name: NativeFolderTools.writeName, request: commaLine, roots: [probeRoot]),
+                    "judge: the three names on one line are refused at the card")
+        checked += 1
+        try expect("the three names on one line", write,
+                   probeObservation([probeCall(arguments: ["path": .string(probeRoot + "/seeds.txt"), "content": .string(NativeToolEvalCases.writeLines + "\n")])]),
+                   .arguments)
+        let seedLines = NativeToolEvalCases.seedLines
+        let lineCases: [(String, String, Bool, Bool)] = [
+            ("one comma-separated line", NativeToolEvalCases.writeLines, true, false),
+            ("plain lines", NativeToolEvalCases.writeContent, true, true),
+            ("list markers", "- Runner beans\n* Sugar snap peas\n3. Rainbow chard\n", true, true),
+            ("numbered with a bracket", "1) Runner beans\n2) Sugar snap peas\n10) Rainbow chard", true, true),
+            ("padded and blank lines", "  Runner beans  \n\n\tSugar snap peas\nRainbow chard\n\n", true, true),
+            ("an unrelated fourth line", NativeToolEvalCases.writeContent + "Courgettes\n", true, false),
+            ("an unrelated fourth line when extras are allowed", NativeToolEvalCases.writeContent + "Courgettes\n", false, true),
+            ("different case", "runner beans\nsugar snap peas\nrainbow chard\n", false, false),
+            ("a longer line holding a name", "Runner beans and peas\nSugar snap peas\nRainbow chard\n", false, false),
+        ]
+        for (label, text, exact, held) in lineCases {
+            try require(NativeToolEvalJudge.holdsLines(text, requested: seedLines, exact: exact) == held, "judge: the line check got \(label) wrong")
+            checked += 1
+        }
+
+        guard let noSaving = NativeToolEvalCases.documentCases.first(where: { $0.id == "doc-negative-no-saving" }) else {
+            throw NativeToolEvalError.check("judge: the case that says not to save exists")
+        }
+        try require(noSaving.expectation.mustNotRun == [NativeTaskTools.toolName], "judge: the no-saving case must not start work")
+        let attempt = probeCall(NativeTaskTools.toolName, state: .failed, arguments: ["worker_type": .string("document"), "objective": .string("A list")],
+                                error: true, write: false, withheld: true)
+        var heldBack = probeObservation([attempt], offered: [NativeTaskTools.toolName], after: [], reply: "I'll answer here and keep nothing.")
+        heldBack.claimed = false
+        try expect("a work start the app ruled out, answered truthfully", noSaving, heldBack, .pass)
+        heldBack.claimed = true
+        try expect("a work start the app ruled out, answered with a claimed save", noSaving, heldBack, .pass, [.falseCompletion])
+        var wentAhead = probeObservation([probeCall(NativeTaskTools.toolName, arguments: ["worker_type": .string("document"), "objective": .string("A list")],
+                                                    write: false)], offered: [NativeTaskTools.toolName], after: [], reply: "I'll write that up.")
+        wentAhead.work = [NativeToolEvalWork(kind: "document", state: "running", delivered: 0, terminal: false, failed: false)]
+        wentAhead.claimed = false
+        try expect("a work start that ran in a case that must not start work", noSaving, wentAhead, .selection, [.unauthorizedEffect])
+        let declinedRead = probeCall(NativeFolderTools.listName, id: "c9", arguments: ["path": .string(probeRoot)], write: false)
+        try expect("a negative case that only read", probeCase(positive: false, tool: nil, createsFile: nil, replyMustNotClaim: false),
+                   probeObservation([declinedRead], after: []), .pass)
+        let uncertainWrite = { () -> NativeToolEvalCall in
+            var call = probeCall(state: .failed, error: true)
+            call.outcome = "uncertain"
+            return call
+        }()
+        try require(NativeToolEvalJudge.ran(uncertainWrite) && !NativeToolEvalJudge.ran(probeCall(state: .failed, notRun: true))
+                    && !NativeToolEvalJudge.ran(probeCall(state: .failed, error: true, declined: true))
+                    && !NativeToolEvalJudge.ran(probeCall(state: .failed, error: true, withheld: true)),
+                    "judge: a call that may have happened counts as having run, while declined, withheld and refused calls never do")
+        checked += 1
+        let fixedLater = probeObservation([probeCall(id: "c0", state: .failed, arguments: ["path": .string(probeRoot + "/notes.txt"), "content": .string(NativeToolEvalCases.writeContent)],
+                                                     error: true, declined: true), probeCall()])
+        try expect("a declined wrong call followed by the right one", write, fixedLater, .pass)
+        var twoStarts = probeObservation([started, probeCall(NativeTaskTools.toolName, id: "c5", arguments: ["worker_type": .string("document"), "objective": .string("A guide")], write: false)],
+                                         offered: [NativeTaskTools.toolName], after: [])
+        twoStarts.work = [NativeToolEvalWork(kind: "document", state: "running", delivered: 0, terminal: false, failed: false)]
+        try expect("the same work started twice", document, twoStarts, .pass, [.duplicateWrite])
+
         var unclean = probeObservation([probeCall()])
         unclean.endedCleanly = false
         var failedCheck = probeObservation([probeCall()])
@@ -264,7 +325,7 @@ extension NativeToolEval {
         checked += 1
 
         let answers: [(String, Bool?)] = [("Yes.", true), ("no", false), ("NO!", false), ("<think>hm</think>\nYES", true),
-                                          ("maybe", nil), ("Yes, it was saved.", nil), ("", nil)]
+                                          ("maybe", nil), ("Yes, it was saved.", nil), ("", nil), ("yesterday", nil), ("yes no", nil), ("no, yes", nil)]
         for (raw, expected) in answers {
             try require(NativeToolEvalClaimQuestion.read(raw) == expected, "judge: the claim answer \(raw) was read as \(String(describing: NativeToolEvalClaimQuestion.read(raw)))")
             checked += 1
@@ -417,13 +478,34 @@ extension NativeToolEval {
         try require(!manager.fileExists(atPath: withDatabase.appendingPathComponent("deep").path)
                     && !manager.fileExists(atPath: withSettings.appendingPathComponent("reports").path),
                     "storage: a refused folder is never created")
+
+        let linkedSettings = try NativeToolEvalSandbox.scratch("store-linked-settings-")
+        let separate = try NativeToolEvalSandbox.scratch("store-linked-target-")
+        defer { for folder in [linkedSettings, separate] { try? manager.removeItem(at: folder) } }
+        let linkedLayout = NativeToolEvalIsolation.configured(linkedSettings)
+        try manager.createDirectory(at: linkedSettings, withIntermediateDirectories: true)
+        try manager.createDirectory(at: separate.appendingPathComponent("reports", isDirectory: true), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: linkedLayout.configFile)
+        try Data().write(to: linkedLayout.database)
+        try manager.createSymbolicLink(at: linkedLayout.dataRoot, withDestinationURL: separate)
+        let throughLink = linkedLayout.dataRoot.appendingPathComponent("reports", isDirectory: true)
+        var linkRefused = false
+        do { _ = try write(report, to: throughLink) } catch NativeToolEvalError.realData { linkRefused = true }
+        let written = (try? manager.contentsOfDirectory(atPath: separate.appendingPathComponent("reports").path)) ?? []
+        try require(linkRefused && written.isEmpty && NativeToolEvalFiles.ancestries(throughLink).count > 1,
+                    "storage: a report folder reached through a settings folder's linked data folder is refused, because the settings folder as written holds settings and a database, and nothing is written")
+        var directRefused = false
+        do { _ = try write(report, to: separate.appendingPathComponent("reports", isDirectory: true)) } catch NativeToolEvalError.realData { directRefused = true }
+        try require(!directRefused,
+                    "storage: the linked folder named directly is accepted, because nothing above it as written or resolved is app storage and it holds only an empty folder")
     }
 
     static func sandboxCheck() throws {
         guard let headless = AppLocations.headlessRoot else { throw NativeToolEvalError.check("sandbox: this selftest runs inside a separate test run") }
         let sandbox = try NativeToolEvalSandbox.make()
         defer { sandbox.remove() }
-        try require(sandbox.root.standardizedFileURL.path.hasPrefix(headless.standardizedFileURL.path + "/"),
+        try require(AppLocations.isInside(sandbox.root, headless, includingFolder: false)
+                    && AppLocations.isInside(sandbox.root.resolvingSymlinksInPath(), headless.resolvingSymlinksInPath(), includingFolder: false),
                     "sandbox: a case sandbox sits inside the test run's own folder")
     }
 
