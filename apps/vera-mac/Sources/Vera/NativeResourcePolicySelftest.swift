@@ -49,6 +49,18 @@ extension SelfTest {
         try await documentRetryAfterStuck()
         try await researchLongQuestion()
         try encodedSplitting()
+        try await contextLookupBounded()
+    }
+
+    private static func contextLookupBounded() async throws {
+        let base = URL(string: "https://slow-models.test/v1")!
+        let held = Task<Void, Never> { try? await Task.sleep(for: .seconds(30)) }
+        defer { held.cancel() }
+        NativeModelContext.shared.watch(base: base, lookup: held)
+        let started = ContinuousClock.now
+        await NativeModelContext.shared.settle(base: base, within: .milliseconds(300))
+        let waited = ContinuousClock.now - started
+        try NativeTaskFixture.require(waited < .seconds(5), "A model list still loading past the bound doesn't hold up starting work: \(waited)")
     }
 
     private static func encodedSplitting() throws {

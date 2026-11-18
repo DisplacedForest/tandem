@@ -313,14 +313,17 @@ final class NativeModelContext {
         for (model, tokens) in contexts where tokens > 0 { known[Self.key(base, model)] = tokens }
     }
 
-    func settle(base: URL) async {
+    func settle(base: URL, within limit: Duration = .seconds(NativeResourcePolicy.contextLookupSeconds)) async {
         guard let lookup = lookups[Self.key(base, "")] else { return }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await lookup.value }
-            group.addTask { try? await Task.sleep(for: .seconds(NativeResourcePolicy.contextLookupSeconds)) }
-            await group.next()
-            group.cancelAll()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let once = NativeModelContextResume(continuation)
+            Task { await lookup.value; once.resume() }
+            Task { try? await Task.sleep(for: limit); once.resume() }
         }
+    }
+
+    func watch(base: URL, lookup: Task<Void, Never>) {
+        lookups[Self.key(base, "")] = lookup
     }
 
     func prepare(_ config: NativeChatConfig?, transport: (any NativeChatTransport)?) async {
@@ -334,7 +337,22 @@ final class NativeModelContext {
         let lookup = Task { @MainActor in
             if let contexts = try? await client.modelContexts() { self.record(base: url, contexts: contexts) }
         }
-        lookups[base] = lookup
+        watch(base: url, lookup: lookup)
         await lookup.value
+    }
+}
+
+final class NativeModelContextResume: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = continuation }
+
+    func resume() {
+        let waiting = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            defer { continuation = nil }
+            return continuation
+        }
+        waiting?.resume()
     }
 }
