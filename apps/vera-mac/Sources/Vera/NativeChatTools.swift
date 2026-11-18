@@ -781,8 +781,6 @@ struct NativeToolLoop: Sendable {
                     var turnSources: [String: Int] = [:]
                     var refusals: NativeRefusalList?
                     var refusalsDown = false
-                    var ranCalls = restrictionCheck?.history() ?? []
-                    let historyLost = restrictionCheck.map { $0.history() == nil } ?? false
                     var repairs = NativeToolRepairs()
                     var unconfirmedWrites: Set<Data> = []
                     var repairsSpent = false
@@ -939,12 +937,10 @@ struct NativeToolLoop: Sendable {
                                                 refusals = try await restrictionCheck.refusals()
                                                 try await checkAuthorization()
                                             }
-                                            if let said = refusals, !said.refusesNothing, historyLost {
-                                                refusalCard = true
-                                            } else if let said = refusals, !said.refusesNothing {
+                                            if let said = refusals, !said.refusesNothing {
                                                 try await checkAuthorization()
                                                 let proposedCall = NativeProposedCall(definition, arguments: arguments)
-                                                let outcome = try await restrictionCheck.outcome(proposedCall, refusals: said, ran: ranCalls)
+                                                let outcome = try await restrictionCheck.outcome(proposedCall, refusals: said)
                                                 try await checkAuthorization()
                                                 switch outcome {
                                                 case .allowed:
@@ -1091,11 +1087,6 @@ struct NativeToolLoop: Sendable {
                                             }
                                         }
                                     } catch {
-                                        if let restrictionCheck, boundary.reached {
-                                            let done = NativeActionDescription.describe(definition, arguments: arguments)
-                                            ranCalls.append(done)
-                                            restrictionCheck.ran(done)
-                                        }
                                         let outcome = NativeChatEffects.settlement(for: error, boundary: boundary,
                                                                                    marks: NativeChatEffects.marksBoundary(definition))
                                         if let recording, let ticket { await recording.settle(ticket, outcome) }
@@ -1104,11 +1095,6 @@ struct NativeToolLoop: Sendable {
                                             throw NativeToolRepair.uncertain(error.localizedDescription)
                                         }
                                         throw error
-                                    }
-                                    if let restrictionCheck, boundary.reached || Self.ran(value, toolName: call.name) {
-                                        let done = NativeActionDescription.describe(definition, arguments: arguments)
-                                        ranCalls.append(done)
-                                        restrictionCheck.ran(done)
                                     }
                                     if let fault = NativeToolRepair.resultProblem(definition, value, write: writeKey != nil) {
                                         value = fault.value
@@ -1360,12 +1346,6 @@ struct NativeToolLoop: Sendable {
             try Task.checkCancellation()
             return (Self.partialFindings(activities), true)
         }
-    }
-
-    static func ran(_ value: NativeJSONValue, toolName: String) -> Bool {
-        if resultFailed(value, toolName: toolName) { return false }
-        if case .object(let fields) = value, fields["started"] == .bool(false) { return false }
-        return true
     }
 
     static func resultFailed(_ value: NativeJSONValue, toolName: String) -> Bool {

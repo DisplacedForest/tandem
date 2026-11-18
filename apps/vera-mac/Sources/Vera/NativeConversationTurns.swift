@@ -80,7 +80,6 @@ struct NativeConversationTurn: Codable, Sendable, Identifiable {
     var dotContext: String?
     var companionEvent: NativeCompanionEvent?
     var preferenceEligible: Bool?
-    var dispatched: Bool?
 
     static func processBirth(_ pid: Int32) -> String? {
         var info = kinfo_proc()
@@ -373,7 +372,6 @@ extension LocalChatRepository: NativeConversationTurnRepository {
             if let index = message.toolActivities.firstIndex(where: { $0.id == activity.id }) { message.toolActivities[index] = activity }
             else { message.toolActivities.append(activity) }
             turn.mayHaveEffect = turn.mayHaveEffect || !NativeTurnSafety.canReplay(activity)
-            turn.dispatched = true
             try Self.saveMessage(message, conversationID: turn.conversationID, ordinal: ordinal, db: db)
             try Self.writeTurn(turn, db: db)
         }

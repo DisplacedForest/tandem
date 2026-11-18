@@ -112,11 +112,9 @@ extension SelfTest {
         try await restrictionUnclear()
         try await restrictionUnavailable()
         try await restrictionOncePerMessage()
-        try await restrictionOrder()
+        try await restrictionOrderAsks()
         try await restrictionResolvedTarget()
-        try await restrictionNeverRan()
         try await restrictionTargetMoves()
-        try await restrictionRetry()
         try await restrictionPromptShape()
         try await restrictionCancellation()
         try await restrictionNotice()
@@ -156,10 +154,10 @@ extension SelfTest {
                                              cache: NativeRequestRestrictionCache = NativeRequestRestrictionCache(),
                                              deadline: Duration = .seconds(2), cards: NativeRestrictionCards = NativeRestrictionCards(approves: false),
                                              observe: NativeRequestAuthorizer.Observer? = nil,
-                                             history: [NativeChatMessage]? = nil, earlierAttempt: Bool = false) async throws -> (activities: [NativeToolActivity], transport: ScriptedNativeToolTransport) {
+                                             history: [NativeChatMessage]? = nil) async throws -> (activities: [NativeToolActivity], transport: ScriptedNativeToolTransport) {
         let transport = ScriptedNativeToolTransport(rounds: rounds)
         let authorizer = NativeRequestAuthorizer(transport: script.transport, deadline: deadline, observe: observe)
-        let check = NativeRestrictionCheck(authorizer: authorizer, messageID: message, text: text, cache: cache, earlierAttempt: earlierAttempt)
+        let check = NativeRestrictionCheck(authorizer: authorizer, messageID: message, text: text, cache: cache)
         let loop = NativeToolLoop(transport: transport, registry: NativeToolRegistry(definitions: definitions),
                                   confirm: { await cards.confirm($0) }, authorizer: authorizer, restrictions: check)
         var final: NativeToolTurnSnapshot?
@@ -311,9 +309,6 @@ extension SelfTest {
                     && starts.count == 1 && reads.count == 2, "Calls the list doesn't rule out run as usual")
         try require(cards.names.isEmpty && script.calls == 1 && script.checkCalls == 4,
                     "Every call is asked about, and the same call again in a later round is asked again: \(script.checkCalls)")
-        let last = script.checkRequests.last?.last?.content ?? ""
-        try require(last.contains(NativeRequestAuthorizer.ranLabel + "\n1. ") && last.contains("\n2. ") && !last.contains("\n3. "),
-                    "A later call is asked about with the calls that already ran in this reply: \(last)")
     }
 
     private static func restrictionScheduledResearch() async throws {
@@ -426,19 +421,21 @@ extension SelfTest {
         try require(failing.calls == 1, "A question that failed is not repeated within the reply")
     }
 
-    private static func restrictionOrder() async throws {
+    private static func restrictionOrderAsks() async throws {
         let require = NativeTaskFixture.require
+        let prompt = NativeRequestAuthorizer.refusalCheckPrompt
+        try require(prompt.contains("Answer unclear if whether this action is ruled out depends on what has already been done, how many times, or in what order."),
+                    "The per call question sends a refusal that depends on what already happened to unclear")
         let hits = NativeChatRulesCounter()
-        let script = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["use any tools after reading notes once"]))) { content in
-            .text(NativeRequestAuthorizer.refusalCheckReply(content.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun) ? .notRuledOut : .ruledOut))
+        let script = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes more than once"]))) { _ in
+            .text(NativeRequestAuthorizer.refusalCheckReply(.unclear))
         }
-        let (activities, _) = try await restrictionDrive([restrictionReader(hits)],
-            [restrictionRound([restrictionCall("first", "read_notes")]), restrictionRound([restrictionCall("second", "read_notes")]), restrictionDone],
-            script: script)
-        func activity(_ id: String) -> NativeToolActivity? { activities.first { $0.id == id } }
-        try require(hits.count == 1 && activity("first")?.state == .succeeded && activity("second")?.state == .failed
-                    && (activity("second")?.result ?? "").contains(NativeRefusalList.ruledOutSentence) && script.checkCalls == 2,
-                    "A limit on how many times or in what order is kept: the same call in a later round is asked again and doesn't inherit the first answer")
+        let cards = NativeRestrictionCards(approves: true)
+        let (activities, _) = try await restrictionDrive([restrictionReader(hits), restrictionReader(hits, name: "read_more")],
+            [restrictionRound([restrictionCall("first", "read_notes")]), restrictionRound([restrictionCall("second", "read_more")]), restrictionDone],
+            script: script, cards: cards)
+        try require(cards.names == ["read_notes", "read_more"] && hits.count == 2 && activities.allSatisfy { $0.confirmationRequired },
+                    "A limit on how many times or in what order puts every call in that reply on a card, and the person decides each one")
     }
 
     private static func restrictionResolvedTarget() async throws {
@@ -472,39 +469,6 @@ extension SelfTest {
                     "A relative path is described by the folder it resolves to: \(before) | \(after)")
         try require(first == .allowed && second == .ruledOut && script.checkCalls == 2,
                     "When the shared folder changes, the same arguments are asked about again by where they now point")
-    }
-
-    private static func restrictionNeverRan() async throws {
-        let require = NativeTaskFixture.require
-        let hits = NativeChatRulesCounter()
-        let failing = NativeToolDefinition(id: "fixture-check", name: "check_first", title: "Check the build", description: "Fixture",
-                                           parameters: .object(["type": .string("object")]), confirmation: .none, timeout: .seconds(5), effect: .read,
-                                           isAvailable: { true }, execute: { _ in throw NativeToolError.failed("Refused by a rule.") })
-        let script = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes before checking the build"]))) { content in
-            .text(NativeRequestAuthorizer.refusalCheckReply(SelfTest.restrictionAction(content).contains("Read the notes")
-                && content.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun) ? .ruledOut : .notRuledOut))
-        }
-        let (activities, _) = try await restrictionDrive([failing, restrictionReader(hits)],
-            [restrictionRound([restrictionCall("check", "check_first")]), restrictionRound([restrictionCall("read", "read_notes")]), restrictionDone],
-            script: script)
-        let last = script.checkRequests.last?.last?.content ?? ""
-        try require(activities.first { $0.id == "check" }?.state == .failed && hits.count == 0
-                    && last.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun),
-                    "A call that failed without running is never listed as already run, so a later call waiting on it stays refused: \(last)")
-
-        let declining = NativeToolDefinition(id: "fixture-start", name: "start_plan", title: "Start the plan", description: "Fixture",
-                                             parameters: .object(["type": .string("object")]), confirmation: .none, timeout: .seconds(5), effect: .read,
-                                             isAvailable: { true }, execute: { _ in .object(["message": .string("Not started."), "started": .bool(false)]) })
-        let waiting = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes before the plan starts"]))) { content in
-            .text(NativeRequestAuthorizer.refusalCheckReply(SelfTest.restrictionAction(content).contains("Read the notes")
-                && content.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun) ? .ruledOut : .notRuledOut))
-        }
-        let (declined, _) = try await restrictionDrive([declining, restrictionReader(hits)],
-            [restrictionRound([restrictionCall("start", "start_plan")]), restrictionRound([restrictionCall("read", "read_notes")]), restrictionDone],
-            script: waiting)
-        try require(declined.first { $0.id == "start" }?.state == .succeeded && hits.count == 0
-                    && (waiting.checkRequests.last?.last?.content ?? "").contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun),
-                    "A call that answers that it didn't start is never listed as already run")
     }
 
     private static func restrictionTargetMoves() async throws {
@@ -553,42 +517,6 @@ extension SelfTest {
                     "When the shared folder changes while the call is being dispatched, it doesn't run and the model is told why")
     }
 
-    private static func restrictionRetry() async throws {
-        let require = NativeTaskFixture.require
-        let hits = NativeChatRulesCounter()
-        let script = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes more than once"]))) { content in
-            .text(NativeRequestAuthorizer.refusalCheckReply(content.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun) ? .notRuledOut : .ruledOut))
-        }
-        let cache = NativeRequestRestrictionCache()
-        let message = UUID()
-        let rounds = [restrictionRound([restrictionCall("read", "read_notes")]), restrictionDone]
-        _ = try await restrictionDrive([restrictionReader(hits)], rounds, script: script, message: message, cache: cache)
-        let (again, _) = try await restrictionDrive([restrictionReader(hits)], rounds, script: script, message: message, cache: cache, earlierAttempt: true)
-        try require(hits.count == 1 && again.first?.state == .failed && (again.first?.result ?? "").contains(NativeRefusalList.ruledOutSentence),
-                    "Trying the same message again keeps what already ran, so a limit on how many times holds across attempts")
-        let cards = NativeRestrictionCards(approves: false)
-        let fresh = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes more than once"])))
-        let (lost, _) = try await restrictionDrive([restrictionReader(hits)], rounds, script: fresh, cache: NativeRequestRestrictionCache(),
-                                                   cards: cards, earlierAttempt: true)
-        try require(hits.count == 1 && cards.names == ["read_notes"] && lost.first?.confirmationRequired == true && fresh.checkCalls == 0,
-                    "When an earlier attempt ran something and what it ran is no longer known, every call asks first")
-        let quiet = NativeRestrictionScript(.text(NativeRequestAuthorizer.noRestrictions))
-        _ = try await restrictionDrive([restrictionReader(hits)], rounds, script: quiet, cache: NativeRequestRestrictionCache(), earlierAttempt: true)
-        try require(hits.count == 2, "A message with nothing refused carries on as usual on a later attempt")
-
-        let partial = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes more than twice"])))
-        let partialCache = NativeRequestRestrictionCache()
-        let partialMessage = UUID()
-        let approving = NativeRestrictionCards(approves: true)
-        _ = try await restrictionDrive([restrictionReader(hits)], rounds, script: partial, message: partialMessage, cache: partialCache,
-                                       cards: approving, earlierAttempt: true)
-        let declining = NativeRestrictionCards(approves: false)
-        _ = try await restrictionDrive([restrictionReader(hits)], rounds, script: partial, message: partialMessage, cache: partialCache,
-                                       cards: declining, earlierAttempt: true)
-        try require(hits.count == 3 && approving.names == ["read_notes"] && declining.names == ["read_notes"] && partial.checkCalls == 0,
-                    "Once what ran is lost, it stays lost for that message: a call approved after a relaunch doesn't make the next try look complete")
-    }
-
     private static func restrictionPromptShape() async throws {
         let require = NativeTaskFixture.require
         let hits = NativeChatRulesCounter()
@@ -613,13 +541,11 @@ extension SelfTest {
         try require(checked.count == 2 && checked[0].role == "system" && checked[0].content == NativeRequestAuthorizer.refusalCheckPrompt
                     && checked[1].role == "user" && checked[1].content == NativeRequestAuthorizer.refusalCheckContent(text, refusals: refusals, action: action)
                     && checked[1].content == NativeRequestAuthorizer.messageLabel + "\n" + NativeActionDescription.literal(text) + "\n\n"
-                        + NativeRequestAuthorizer.refusalsLabel + "\n[\"use tools after this one\"]\n\n"
-                        + NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun + "\n\n" + NativeRequestAuthorizer.actionLabel + "\n" + action,
-                    "The per call question receives the message as a JSON string, the list as a JSON array, what has run so far and the app's description: \(checked.map(\.content))")
+                        + NativeRequestAuthorizer.refusalsLabel + "\n[\"use tools after this one\"]\n\n" + NativeRequestAuthorizer.actionLabel + "\n" + action,
+                    "The per call question receives the message as a JSON string, the list as a JSON array and the app's description: \(checked.map(\.content))")
         let second = script.checkRequests.dropFirst().first?.last?.content ?? ""
-        try require(script.checkCalls == 2 && second == NativeRequestAuthorizer.refusalCheckContent(text, refusals: refusals, action: action, ran: [action])
-                    && second.contains(NativeRequestAuthorizer.ranLabel + "\n1. " + action + "\n\n"),
-                    "The second call's question lists the first call as already run: \(second)")
+        try require(script.checkCalls == 2 && second == checked[1].content,
+                    "A later call gets the same question with no record of what already ran: \(second)")
         let joined = (asked + checked).map(\.content).joined()
         try require(["SYSTEM-PROMPT-TEXT", "EARLIER-MESSAGE-TEXT", "EARLIER-REPLY-TEXT", "ATTACHMENT-TEXT", "Water the beans", "read_notes"].allSatisfy { !joined.contains($0) },
                     "No history, attachment, tool name or tool result reaches either question")
