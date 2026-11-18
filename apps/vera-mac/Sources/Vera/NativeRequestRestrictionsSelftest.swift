@@ -491,6 +491,20 @@ extension SelfTest {
         try require(activities.first { $0.id == "check" }?.state == .failed && hits.count == 0
                     && last.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun),
                     "A call that failed without running is never listed as already run, so a later call waiting on it stays refused: \(last)")
+
+        let declining = NativeToolDefinition(id: "fixture-start", name: "start_plan", title: "Start the plan", description: "Fixture",
+                                             parameters: .object(["type": .string("object")]), confirmation: .none, timeout: .seconds(5), effect: .read,
+                                             isAvailable: { true }, execute: { _ in .object(["message": .string("Not started."), "started": .bool(false)]) })
+        let waiting = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes before the plan starts"]))) { content in
+            .text(NativeRequestAuthorizer.refusalCheckReply(SelfTest.restrictionAction(content).contains("Read the notes")
+                && content.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun) ? .ruledOut : .notRuledOut))
+        }
+        let (declined, _) = try await restrictionDrive([declining, restrictionReader(hits)],
+            [restrictionRound([restrictionCall("start", "start_plan")]), restrictionRound([restrictionCall("read", "read_notes")]), restrictionDone],
+            script: waiting)
+        try require(declined.first { $0.id == "start" }?.state == .succeeded && hits.count == 0
+                    && (waiting.checkRequests.last?.last?.content ?? "").contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun),
+                    "A call that answers that it didn't start is never listed as already run")
     }
 
     private static func restrictionTargetMoves() async throws {
@@ -517,6 +531,26 @@ extension SelfTest {
         let told = (transport.histories.last ?? []).map(\.content).joined()
         try require(activities.first?.state != .succeeded && cards.names == [NativeFolderTools.readName] && !told.contains("KEPT-CONTENT"),
                     "When the shared folder changes while the question is out, the answer doesn't carry over: the call asks first and nothing is read")
+
+        shared.set([FolderGrant(path: open.path)])
+        let calm = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read anything in Kept"]))) { content in
+            .text(NativeRequestAuthorizer.refusalCheckReply(SelfTest.restrictionAction(content).contains(kept.path) ? .ruledOut : .notRuledOut))
+        }
+        let authorizer = NativeRequestAuthorizer(transport: calm.transport, deadline: .seconds(2))
+        let check = NativeRestrictionCheck(authorizer: authorizer, messageID: UUID(), text: restrictionText, cache: NativeRequestRestrictionCache())
+        let dispatching = ScriptedNativeToolTransport(rounds: [restrictionRound([restrictionCall("late", NativeFolderTools.readName, "{\"path\":\"notes.md\"}")]), restrictionDone])
+        let loop = NativeToolLoop(transport: dispatching, registry: NativeToolRegistry(definitions: [read]),
+                                  willExecute: { _ in shared.set([FolderGrant(path: kept.path)]); return true },
+                                  confirm: { _ in false }, authorizer: authorizer, restrictions: check)
+        var final: NativeToolTurnSnapshot?
+        for try await snapshot in loop.stream(messages: [NativeChatMessage(role: "user", content: restrictionText)], model: "local-model",
+                                              enabledToolIDs: [read.id]) {
+            final = snapshot
+        }
+        let late = final?.activities.first
+        let lateTold = (dispatching.histories.last ?? []).map(\.content).joined()
+        try require(late?.state == .failed && (late?.result ?? "").contains(NativeRefusalList.targetMovedSentence) && !lateTold.contains("KEPT-CONTENT"),
+                    "When the shared folder changes while the call is being dispatched, it doesn't run and the model is told why")
     }
 
     private static func restrictionRetry() async throws {
@@ -541,6 +575,18 @@ extension SelfTest {
         let quiet = NativeRestrictionScript(.text(NativeRequestAuthorizer.noRestrictions))
         _ = try await restrictionDrive([restrictionReader(hits)], rounds, script: quiet, cache: NativeRequestRestrictionCache(), earlierAttempt: true)
         try require(hits.count == 2, "A message with nothing refused carries on as usual on a later attempt")
+
+        let partial = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes more than twice"])))
+        let partialCache = NativeRequestRestrictionCache()
+        let partialMessage = UUID()
+        let approving = NativeRestrictionCards(approves: true)
+        _ = try await restrictionDrive([restrictionReader(hits)], rounds, script: partial, message: partialMessage, cache: partialCache,
+                                       cards: approving, earlierAttempt: true)
+        let declining = NativeRestrictionCards(approves: false)
+        _ = try await restrictionDrive([restrictionReader(hits)], rounds, script: partial, message: partialMessage, cache: partialCache,
+                                       cards: declining, earlierAttempt: true)
+        try require(hits.count == 3 && approving.names == ["read_notes"] && declining.names == ["read_notes"] && partial.checkCalls == 0,
+                    "Once what ran is lost, it stays lost for that message: a call approved after a relaunch doesn't make the next try look complete")
     }
 
     private static func restrictionPromptShape() async throws {

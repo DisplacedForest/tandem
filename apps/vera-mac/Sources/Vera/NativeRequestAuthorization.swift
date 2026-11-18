@@ -290,6 +290,7 @@ final class NativeRequestRestrictionCache: @unchecked Sendable {
     private var lists: [String: NativeRefusalList] = [:]
     private var decisions: [String: NativeRefusalDecision] = [:]
     private var histories: [String: [String]] = [:]
+    private var incomplete: Set<String> = []
 
     static func key(_ messageID: UUID, _ text: String) -> String {
         messageID.uuidString + "|" + NativeTrustedRequest.digest(text)
@@ -311,7 +312,21 @@ final class NativeRequestRestrictionCache: @unchecked Sendable {
     }
 
     func history(_ key: String) -> [String]? {
-        lock.withLock { histories[key] }
+        lock.withLock { incomplete.contains(key) ? nil : histories[key] }
+    }
+
+    func known(_ key: String) -> Bool {
+        lock.withLock { histories[key] != nil || incomplete.contains(key) }
+    }
+
+    func lose(_ key: String) {
+        lock.withLock {
+            if incomplete.count >= Self.capacity {
+                incomplete.removeAll()
+                histories.removeAll()
+            }
+            incomplete.insert(key)
+        }
     }
 
     func begin(_ key: String) {
@@ -349,8 +364,11 @@ struct NativeRestrictionCheck: Sendable {
 
     func history() -> [String]? {
         let key = NativeRequestRestrictionCache.key(messageID, text)
-        if let kept = cache.history(key) { return kept }
-        guard !earlierAttempt else { return nil }
+        if cache.known(key) { return cache.history(key) }
+        guard !earlierAttempt else {
+            cache.lose(key)
+            return nil
+        }
         cache.begin(key)
         return []
     }

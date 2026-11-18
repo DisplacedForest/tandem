@@ -1078,7 +1078,8 @@ struct NativeToolLoop: Sendable {
                                                                             try await NativeToolCallContext.$replyCallOrdinal.withValue(replyOrdinal) {
                                                                                 try await Self.execute(
                                                                                     definition, arguments: arguments, activity: activity, afterOnlyRefusals: afterOnlyRefusals,
-                                                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute,
+                                                                                    expected: evaluated)
                                                                             }
                                                                         }
                                                                     }
@@ -1104,7 +1105,7 @@ struct NativeToolLoop: Sendable {
                                         }
                                         throw error
                                     }
-                                    if let restrictionCheck, boundary.reached || !Self.resultFailed(value, toolName: call.name) {
+                                    if let restrictionCheck, boundary.reached || Self.ran(value, toolName: call.name) {
                                         let done = NativeActionDescription.describe(definition, arguments: arguments)
                                         ranCalls.append(done)
                                         restrictionCheck.ran(done)
@@ -1194,7 +1195,7 @@ struct NativeToolLoop: Sendable {
         _ definition: NativeToolDefinition,
         arguments: [String: NativeJSONValue], activity: NativeToolActivity, afterOnlyRefusals: Bool,
         timeout: Duration, authorize: @escaping @Sendable () async -> Bool,
-        willExecute: @escaping @Sendable (NativeToolActivity) async -> Bool
+        willExecute: @escaping @Sendable (NativeToolActivity) async -> Bool, expected: String? = nil
     ) async throws -> NativeJSONValue {
         try await bounded(timeout: timeout) {
             try Task.checkCancellation()
@@ -1204,6 +1205,9 @@ struct NativeToolLoop: Sendable {
             try Task.checkCancellation()
             guard await authorize() else { throw CancellationError() }
             try Task.checkCancellation()
+            if let expected, NativeActionDescription.describe(definition, arguments: arguments) != expected {
+                throw NativeToolError.failed(NativeRefusalList.targetMovedSentence)
+            }
             return try await NativeToolCallContext.$activityID.withValue(activity.id) {
                 try await NativeToolCallContext.$request.withValue(activity.request) {
                     try await NativeToolCallContext.$round.withValue(activity.round) {
@@ -1356,6 +1360,12 @@ struct NativeToolLoop: Sendable {
             try Task.checkCancellation()
             return (Self.partialFindings(activities), true)
         }
+    }
+
+    static func ran(_ value: NativeJSONValue, toolName: String) -> Bool {
+        if resultFailed(value, toolName: toolName) { return false }
+        if case .object(let fields) = value, fields["started"] == .bool(false) { return false }
+        return true
     }
 
     static func resultFailed(_ value: NativeJSONValue, toolName: String) -> Bool {
