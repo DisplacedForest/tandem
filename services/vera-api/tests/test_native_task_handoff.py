@@ -25,6 +25,13 @@ HEADER_DELAY = 4
 pytestmark = pytest.mark.skipif(os.environ.get('VERA_NATIVE_TASK_TEST') != '1', reason='Run the build-dependent native-task-test task')
 
 
+def refusal_list_reply(body):
+    first = body['messages'][0] if body['messages'] else {}
+    if first.get('role') == 'system' and first.get('content', '').startswith('You read one message a person typed to an assistant.'):
+        return {'choices': [{'message': {'role': 'assistant', 'content': json.dumps({'refusals': []})}, 'finish_reason': 'stop'}]}
+    return None
+
+
 def test_native_card_persistence_fixtures():
     result = subprocess.run([str(BINARY), '--selftest'], env={**os.environ, 'VERA_TASK_SELFTEST_CONFIG': 'cards-unit'},
                             capture_output=True, text=True, timeout=HANG_CEILING)
@@ -60,6 +67,8 @@ async def test_native_session_second_input_during_blocked_http_tool(tmp_path):
     @app.post('/v1/chat/completions')
     async def completion(request: Request):
         body = await request.json()
+        if (checked := refusal_list_reply(body)) is not None:
+            return checked
         calls.append(body)
         question = next(message['content'] for message in reversed(body['messages']) if message['role'] == 'user')
         if question == 'slow question':
@@ -120,6 +129,8 @@ async def test_native_session_process_restart_does_not_repeat_effect(tmp_path, s
     @app.post('/v1/chat/completions')
     async def completion(request: Request):
         body = await request.json()
+        if (checked := refusal_list_reply(body)) is not None:
+            return checked
         question = next(message['content'] for message in reversed(body['messages']) if message['role'] == 'user')
         questions.append(question)
         if question == 'slow question':

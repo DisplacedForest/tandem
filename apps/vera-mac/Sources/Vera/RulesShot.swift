@@ -25,6 +25,7 @@ enum RulesShot {
         store.ensureVeraThread()
         store.prepareRuleRecords()
         if variant == "rules-saved" || variant == "rules-saved-kind" || showsMenu { seed(store, folder: directory.appendingPathComponent("Seedlings").path) }
+        if variant == "rules-questions-failing" { store.permissionCheckFailures = ChatStore.permissionFailuresBeforeNotice }
         if variant == "rules-saved-kind" { store.addRuleRecord(RuleOffer.record(.fileEdits, conversationID: "rules-greenhouse")) }
         if variant == "rules-saved-literal" { seedLiteral(store, root: directory.path) }
         if variant == "rules-shared" || showsSharingInfo { seedShared(store, root: directory.path) }

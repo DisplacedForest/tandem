@@ -31,9 +31,10 @@ extension SelfTest {
 
 @MainActor
 enum NativeInstructionSpentFixture {
-    nonisolated static let typed = "Turn on the bedroom air purifier to 3"
-    nonisolated static let other = "Could you look after the bedroom air tonight?"
-    nonisolated static let argumentsJSON = "{\"device\":\"bedroom air purifier\",\"level\":\"3\"}"
+    nonisolated static let typed = "Send the bedroom notes to ana@example.com"
+    nonisolated static let other = "Could you look after the bedroom notes tonight?"
+    nonisolated static let argumentsJSON = "{\"body\":\"bedroom notes\",\"to\":\"ana@example.com\"}"
+    nonisolated static let yes = "{\"decision\": \"authorized\"}"
 
     struct Chat {
         let repository: LocalChatRepository
@@ -57,23 +58,27 @@ enum NativeInstructionSpentFixture {
         try await failedEditThenCorrected()
         try await unresolvedOrigin()
         try await lapsedDuringCheck()
-        print("  instruction spent once OK (store, removal, fails closed, reply then work, work then reply, two works, resumed work, written assignment, old work, stopped and admitted replies, concurrent admissions, failed edit then corrected asks, unknown origin asks, lapsed during check asks)")
+        print("  instruction spent once OK (store, refusals, removal, fails closed, reply then work, work then reply, two works, resumed work, written assignment, old work, stopped and admitted replies, concurrent admissions, failed edit then corrected asks, unknown origin asks, rules changed during the check asks)")
     }
+
+    nonisolated static let toolID = "fixture-mail"
+    nonisolated static let toolName = "send_mail"
 
     nonisolated static func device(_ box: NativeInstructionSpentDevice) -> NativeToolDefinition {
         let text: NativeJSONValue = .object(["type": .string("string")])
-        var made = NativeToolDefinition(id: "fixture-home", name: "set_device", title: "Set a device", description: "Fixture",
-                                        parameters: .object(["type": .string("object"), "properties": .object(["device": text, "level": text])]),
-                                        confirmation: .none, effect: .write, action: .otherChanges, isAvailable: { true },
+        var made = NativeToolDefinition(id: toolID, name: toolName, title: "Send mail", description: "Fixture",
+                                        parameters: .object(["type": .string("object"), "properties": .object(["to": text, "body": text])]),
+                                        confirmation: .none, effect: .write, action: .networkSends, isAvailable: { true },
                                         execute: { _ in try await box.run() })
-        made.verbs = ["turn on"]
-        made.instructionNames = { arguments in
-            [arguments["device"], arguments["level"]].compactMap { if case .string(let value)? = $0 { value } else { nil } }
+        made.ruleSubjects = { arguments in
+            guard case .string(let to)? = arguments["to"], let target = NativeRuleTarget.make(.recipient, to) else { return [] }
+            return [[target]]
         }
+        made.authorizable = true
         return made
     }
 
-    static func chat(_ text: String = typed, rules choices: [NativeActionClass: NativeRuleChoice] = [.otherChanges: .ask]) throws -> Chat {
+    static func chat(_ text: String = typed, rules choices: [NativeActionClass: NativeRuleChoice] = [.networkSends: .ask]) throws -> Chat {
         let repository = try LocalChatRepository(inMemory: true)
         let store = ChatStore(nativeConfig: SelfTest.chatLedgerConfig, nativeTransport: ScriptedNativeToolTransport(rounds: []), repository: repository,
                               nativeEnabledToolIDs: [], nativeToolRegistry: NativeToolRegistry(definitions: []), artifactPersistenceEnabled: false)
@@ -100,8 +105,8 @@ enum NativeInstructionSpentFixture {
         try chat.repository.database.read { db in try String.fetchAll(db, sql: "SELECT holder FROM native_instruction_uses ORDER BY created_at, rowid") }
     }
 
-    static func reply(_ chat: Chat, cards: NativeChatRulesCounter, check: @escaping NativeInstructionAnswerer = { _, _ in true },
-                      calls: [[NativeChatToolCall]] = [[NativeChatToolCall(id: "set-1", name: "set_device", arguments: argumentsJSON)]],
+    static func reply(_ chat: Chat, cards: NativeChatRulesCounter, check: NativeAuthorizationScript = NativeAuthorizationScript(.authorized),
+                      calls: [[NativeChatToolCall]] = [[NativeChatToolCall(id: "set-1", name: toolName, arguments: argumentsJSON)]],
                       tools: ((NativeTypedWords, NativeInstructionUses) -> [NativeToolDefinition])? = nil)
         async throws -> NativeToolTurnSnapshot? {
         let turn = chat.turn
@@ -125,8 +130,9 @@ enum NativeInstructionSpentFixture {
         let rounds = calls.map { [NativeChatStreamSnapshot(content: "", toolCalls: $0, finishReason: "tool_calls")] }
             + [[NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")]]
         let loop = NativeToolLoop(transport: ScriptedNativeToolTransport(rounds: rounds), registry: NativeToolRegistry(definitions: definitions),
-                                  executionTimeout: .seconds(5), instructionCheck: check, instructionTimeout: .seconds(5),
-                                  said: words.said, effects: hook)
+                                  executionTimeout: .seconds(5), authorizer: check.authorizer(.seconds(5)),
+                                  request: NativeTrustedRequest.typed(words, messageID: turn.userMessageID, conversationID: turn.conversationID),
+                                  effects: hook)
         var final: NativeToolTurnSnapshot?
         for try await snapshot in loop.stream(messages: [NativeChatMessage(role: "user", content: words.said)], model: "local-model",
                                               enabledToolIDs: Set(definitions.map(\.id))) {
@@ -165,10 +171,10 @@ enum NativeInstructionSpentFixture {
     static func model(calls: Int = 1) -> NativeCompanionScriptedModel {
         let made = NativeCompanionScriptedModel { messages in
             let results = NativeCompanionScriptedModel.toolResults(messages).count
-            if results < calls { return NativeCompanionScriptedModel.call("set_device", argumentsJSON, id: "call-\(results + 1)") }
+            if results < calls { return NativeCompanionScriptedModel.call(toolName, argumentsJSON, id: "call-\(results + 1)") }
             return NativeCompanionScriptedModel.text("Done.")
         }
-        made.checks { .text("{\"run\": true}") }
+        made.checks { .text(yes) }
         return made
     }
 
@@ -221,6 +227,21 @@ enum NativeInstructionSpentFixture {
                         && !store.used(message, signature: "other", excluding: nil),
                     "Uses read the saved record and only spend in memory")
         try require(NativeInstructionUses().take("s") && !NativeInstructionUses().used("s"), "Uses without a record behave as before")
+        try require(store.refuse(message, conversationID: conversation, signature: "r") && !store.refuse(message, conversationID: conversation, signature: "r")
+                        && store.refused(message, signature: "r") && store.used(message, signature: "r", excluding: nil)
+                        && store.used(message, signature: "r", excluding: NativeInstructionUseStore.refusalHolder)
+                        && !store.take(message, conversationID: conversation, signature: "r", holder: "one")
+                        && !store.take(message, conversationID: conversation, signature: "r", holder: NativeInstructionUseStore.refusalHolder),
+                    "A refusal is saved once, reads as used and can never be spent")
+        try require(!store.refuse(message, conversationID: conversation, signature: "s") && !store.refused(message, signature: "s")
+                        && !store.refused(UUID(), signature: "r"),
+                    "A refusal never replaces a spend and belongs to its own message")
+        let remembered = NativeInstructionUses(store: store, messageID: message, conversationID: conversation, holder: nil)
+        remembered.refuse("q")
+        try require(store.refused(message, signature: "q") && remembered.used("q")
+                        && NativeInstructionUses(store: NativeInstructionUseStore(database: chat.repository.database), messageID: message,
+                                                 conversationID: conversation, holder: "later").used("q"),
+                    "Refusing through the uses saves it for later attempts and after a restart")
         chat.store.deleteConversation(conversation)
         try require(try rows(chat).isEmpty && !store.used(message, signature: "s", excluding: nil), "Deleting the conversation removes its rows")
 
@@ -326,7 +347,8 @@ enum NativeInstructionSpentFixture {
         let legacyEnvironment = environment(legacy, tools: [device(legacy.device)])
         _ = try work(legacy, index: 1, said: nil)
         let legacyDone = try await settle(legacyEnvironment, model())
-        try require(legacyDone.state == .completed && legacy.device.count == 1, "Old work without the message runs on its own assignment as before")
+        try require(legacyDone.state == .needsDecision && legacy.device.count == 0 && (try rows(legacy)).isEmpty,
+                    "Old work without the message never treats its own assignment as typed and asks")
         let silent = try chat()
         let silentEnvironment = environment(silent, tools: [device(silent.device)])
         _ = try work(silent, index: 1, said: "")
@@ -338,20 +360,17 @@ enum NativeInstructionSpentFixture {
     static func stoppedReply() async throws {
         let require = NativeTaskFixture.require
         var chat = try chat()
-        let entered = NativeChatRulesCounter()
         let cards = NativeChatRulesCounter()
         let stopped = chat
+        let hanging = NativeAuthorizationScript(.silence)
         let running = Task {
-            try await reply(stopped, cards: cards) { _, _ in
-                entered.hit()
-                try? await Task.sleep(for: .seconds(30))
-                return true
-            }
+            try await reply(stopped, cards: cards, check: hanging)
         }
-        for _ in 0..<400 where entered.count == 0 { try await Task.sleep(for: .milliseconds(5)) }
+        for _ in 0..<400 where hanging.calls == 0 { try await Task.sleep(for: .milliseconds(5)) }
         running.cancel()
         _ = try? await running.value
-        try require(entered.count == 1 && chat.device.count == 0 && (try rows(chat)).isEmpty, "A reply stopped before its action ran leaves nothing saved")
+        try require(hanging.calls == 1 && chat.device.count == 0 && (try rows(chat)).isEmpty && cards.count == 0,
+                    "A reply stopped during the check leaves nothing saved, not even a refusal")
         try retry(&chat)
         let retried = try await reply(chat, cards: cards)
         try require(ranWithoutCard(retried, cards: cards) && chat.device.count == 1, "Retrying it runs the instruction with no card")
@@ -367,8 +386,8 @@ enum NativeInstructionSpentFixture {
         let ledger = NativeEffectLedgerStore(database: chat.repository.database)
         func proposed(_ key: String, later: TimeInterval = 0) throws -> NativeEffectRecord {
             try ledger.propose(NativeEffectProposal(id: UUID().uuidString.lowercased(), taskID: NativeEffectProposal.turnTaskID(chat.turn.id.uuidString),
-                                                    generation: 0, toolID: "fixture-home", function: "set_device", argumentsJSON: argumentsJSON,
-                                                    target: nil, action: .otherChanges, rulesRevision: 0, grantsRevision: 0,
+                                                    generation: 0, toolID: toolID, function: toolName, argumentsJSON: argumentsJSON,
+                                                    target: nil, action: .networkSends, rulesRevision: 0, grantsRevision: 0,
                                                     conversationID: chat.turn.conversationID, expiresAtMilliseconds: NativeEffectProposal.expiry(from: Date().addingTimeInterval(later)),
                                                     idempotencyKey: key, turnID: chat.turn.id.uuidString, turnAttempt: attempt))
         }
@@ -422,13 +441,12 @@ enum NativeInstructionSpentFixture {
 
     static func lapsedDuringCheck() async throws {
         let require = NativeTaskFixture.require
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("spent-beside-" + UUID().uuidString)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("spent-lapsed-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let grant = try FolderGrant.make(url: directory)
         let draft = grant.path + "/draft.md"
-        let readme = grant.path + "/README.md"
-        let message = "Update README to match draft.md"
+        let message = "Update draft.md"
         try Data("old".utf8).write(to: URL(fileURLWithPath: draft))
         let chat = try chat(message, rules: [.fileEdits: .ask])
         let rules = chat.rules
@@ -445,21 +463,22 @@ enum NativeInstructionSpentFixture {
                 return NativeCompanionScriptedModel.text("Updated it.")
             }
         }
+        guard let folder = NativeRuleTarget.make(.folder, grant.path) else { throw NativeTaskFixture.Failure.assertion("The folder is a target") }
         let checked = NativeChatRulesCounter()
         let first = writer()
         first.checks {
             checked.hit()
-            try Data().write(to: URL(fileURLWithPath: readme))
-            return .text("{\"run\": true}")
+            rules.setRecords([NativeRuleRecord(action: .fileEdits, target: folder, effect: .ask, statement: "Always ask before editing here")])
+            return .text(yes)
         }
         _ = try work(chat, index: 1, assignment: message, said: message)
         let asked = try await settle(environment, first)
         let unchanged = String(decoding: try Data(contentsOf: URL(fileURLWithPath: draft)), as: UTF8.self)
         try require(checked.count == 1 && asked.state == .needsDecision && unchanged == "old" && (try rows(chat)).isEmpty,
                     "An instruction that stops qualifying during the check asks, changes nothing and is not spent: \(asked.state)")
-        try FileManager.default.removeItem(atPath: readme)
+        rules.setRecords([])
         let second = writer()
-        second.checks { .text("{\"run\": true}") }
+        second.checks { .text(yes) }
         _ = try work(chat, index: 2, assignment: message, said: message)
         let ran = try await settle(environment, second)
         let changed = String(decoding: try Data(contentsOf: URL(fileURLWithPath: draft)), as: UTF8.self)
@@ -478,25 +497,24 @@ enum NativeInstructionSpentFixture {
         let chat = try chat("Update notes.md", rules: [.fileEdits: .ask])
         let rules = chat.rules
         let conversation = chat.turn.conversationID
-        let roots = [grant.path]
         func edit(_ id: String, _ old: String) -> NativeChatToolCall {
             NativeChatToolCall(id: id, name: NativeFolderTools.editName,
                                arguments: "{\"path\":\"\(notes)\",\"old_text\":\"\(old)\",\"new_text\":\"new line\"}")
         }
         let cards = NativeChatRulesCounter()
-        let checks = NativeChatRulesCounter()
-        let final = try await reply(chat, cards: cards, check: { _, _ in checks.hit(); return true },
+        let checks = NativeAuthorizationScript(.authorized)
+        let final = try await reply(chat, cards: cards, check: checks,
                                     calls: [[edit("edit-1", "missing line")], [edit("edit-2", "old line")]]) { words, uses in
             NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask,
                                           live: { rules.resolver(for: conversation, requestText: words.said, typed: words).decision(for: $0) },
                                           liveTargets: { ChatStore.folderDecision(rules, conversationID: conversation, requestText: words.said, typed: words,
-                                                                                  uses: uses, action: $0, subjects: $1, roots: roots) },
+                                                                                  uses: uses, action: $0, subjects: $1) },
                                           instruction: { ChatStore.folderInstruction(rules, conversationID: conversation, requestText: words.said, typed: words,
-                                                                                     uses: uses, action: $0, subjects: $1, about: $2, roots: roots) })
+                                                                                     uses: uses, action: $0, subjects: $1, call: $2) })
         }
         let steps = final?.activities ?? []
         let content = String(decoding: try Data(contentsOf: URL(fileURLWithPath: notes)), as: UTF8.self)
-        try require(steps.count == 2 && checks.count == 1 && steps[0].state == .failed && !steps[0].confirmationRequired
+        try require(steps.count == 2 && checks.calls == 1 && steps[0].state == .failed && !steps[0].confirmationRequired
                         && (steps[0].result ?? "").contains("old_text was not found") && (try rows(chat)).count == 1,
                     "The first edit ran on the instruction, failed before changing anything and kept its spend: \(steps.map(\.state))")
         try require(cards.count == 1 && steps[1].state == .failed && steps[1].confirmationRequired && content == "old line",

@@ -10,6 +10,7 @@ struct NativeInstructionSpend: Equatable, Sendable {
 
 struct NativeInstructionUseStore: Sendable {
     static let migration = "nativeInstructionUsesV42"
+    static let refusalHolder = "#refused"
 
     let database: DatabaseQueue
 
@@ -28,6 +29,7 @@ struct NativeInstructionUseStore: Sendable {
     }
 
     static func spend(_ db: Database, _ spend: NativeInstructionSpend, at date: Date) throws -> Bool {
+        guard spend.holder != refusalHolder else { return false }
         try db.execute(sql: """
             INSERT INTO native_instruction_uses(message_id, signature, conversation_id, holder, created_at) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(message_id, signature) DO NOTHING
@@ -55,12 +57,32 @@ struct NativeInstructionUseStore: Sendable {
         return (try? database.write { db in try Self.spend(db, spend, at: date) }) ?? false
     }
 
+    func refuse(_ messageID: UUID, conversationID: String, signature: String, at date: Date = Date()) -> Bool {
+        let row = NativeInstructionSpend(messageID: messageID, conversationID: conversationID, signature: signature, holder: Self.refusalHolder)
+        let written = try? database.write { db -> Bool in
+            try db.execute(sql: """
+                INSERT INTO native_instruction_uses(message_id, signature, conversation_id, holder, created_at) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(message_id, signature) DO NOTHING
+                """, arguments: [row.messageID.uuidString, row.signature, row.conversationID, row.holder, date.timeIntervalSince1970])
+            return db.changesCount == 1
+        }
+        return written ?? false
+    }
+
+    func refused(_ messageID: UUID, signature: String) -> Bool {
+        let found = try? database.read { db in
+            try String.fetchOne(db, sql: "SELECT holder FROM native_instruction_uses WHERE message_id = ? AND signature = ?",
+                                arguments: [messageID.uuidString, signature])
+        }
+        return found.flatMap { $0 } == Self.refusalHolder
+    }
+
     func used(_ messageID: UUID, signature: String, excluding holder: String?) -> Bool {
         do {
             return try database.read { db in
                 try Bool.fetchOne(db, sql: """
-                    SELECT EXISTS(SELECT 1 FROM native_instruction_uses WHERE message_id = ? AND signature = ? AND (? IS NULL OR holder != ?))
-                    """, arguments: [messageID.uuidString, signature, holder, holder]) ?? true
+                    SELECT EXISTS(SELECT 1 FROM native_instruction_uses WHERE message_id = ? AND signature = ? AND (? IS NULL OR holder != ? OR holder = ?))
+                    """, arguments: [messageID.uuidString, signature, holder, holder, Self.refusalHolder]) ?? true
             }
         } catch {
             return true

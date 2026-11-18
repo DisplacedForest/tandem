@@ -35,7 +35,7 @@ final class NativeCompanionScriptedModel: @unchecked Sendable {
     private var classified: [String] = []
     private var classifierReply: @Sendable () throws -> NativeTaskGenerationCompletion = { .text("{\"keep\": false}") }
     private var checked: [(attempt: String, content: String)] = []
-    private var checkReply: @Sendable () throws -> NativeTaskGenerationCompletion = { .text("{\"run\": false}") }
+    private var checkReply: @Sendable () throws -> NativeTaskGenerationCompletion = { .text("{\"decision\": \"not_authorized\"}") }
     let script: @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion
 
     init(_ script: @escaping @Sendable ([NativeTaskGenerationMessage]) -> NativeTaskGenerationCompletion) {
@@ -59,7 +59,7 @@ final class NativeCompanionScriptedModel: @unchecked Sendable {
             }
             return try reply()
         }
-        if messages.first?.content == NativeInstructionCheck.systemPrompt {
+        if messages.first?.content == NativeRequestAuthorizer.systemPrompt {
             let reply = lock.withLock { () -> @Sendable () throws -> NativeTaskGenerationCompletion in
                 checked.append((attempt, messages.last?.content ?? ""))
                 return checkReply
@@ -268,7 +268,6 @@ extension SelfTest {
         try await companionActWrite()
         try await companionTypedRecipients()
         try await companionInstructedSends()
-        try await companionInstructedFileNamesBeside()
         try await companionOneUseGrant()
         try await companionToolOwnChecks()
         try await companionAdmittedFolderWrites()
@@ -720,9 +719,16 @@ extension SelfTest {
             return made
         }
         let named = try harness("orders@workshop.example")
-        _ = try named.create("Email orders@workshop.example that the order is ready")
+        _ = try named.create("Email orders@workshop.example that the order is ready", said: "Email orders@workshop.example that the order is ready")
         let namedDone = try await named.runUntilSettled()
-        try require(namedDone.state == .completed && sent.count == 1, "Work whose assignment names the address sends with no question")
+        try require(namedDone.state == .completed && sent.count == 1, "Work whose typed message names the address sends with no question")
+
+        sent.reset()
+        let written = try harness("orders@workshop.example")
+        let writtenID = try written.create("Email orders@workshop.example that the order is ready")
+        let writtenDone = try await written.runUntilSettled()
+        try require(writtenDone.state == .needsDecision && sent.count == 0 && (try written.effects(writtenID)).allSatisfy { $0.state != .completed },
+                    "An address only the assignment names was never typed, so the send asks")
 
         sent.reset()
         let unnamed = try harness("ana@example.com")
@@ -735,15 +741,17 @@ extension SelfTest {
         let manual = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "manual")
         let scheduled = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "scheduled", scheduleID: "schedule-1")
         let proactive = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "proactive")
-        try require(manual.typedRequest == "Email orders@workshop.example" && scheduled.typedRequest.isEmpty && proactive.typedRequest.isEmpty,
-                    "Only work the person started by hand counts its assignment as their own words")
+        try require(manual.typedRequest.isEmpty && scheduled.typedRequest.isEmpty && proactive.typedRequest.isEmpty,
+                    "An assignment is never counted as the person's own words")
+        let typedOne = try NativeCompanionTaskPayload(assignment: "Email the supplier", mode: "manual", said: "Email orders@workshop.example")
+        try require(typedOne.typedRequest == "Email orders@workshop.example", "Only the typed message counts as the person's words")
         let silent = try NativeCompanionTaskPayload(assignment: "Email orders@workshop.example", mode: "manual", said: "")
         try require(silent.typedRequest.isEmpty, "Work started from the conversation counts nothing as typed")
         let oldBytes = try nativeTaskEncoded(manual)
         let reread = try JSONDecoder().decode(NativeCompanionTaskPayload.self, from: oldBytes)
         try require(reread.said == nil && reread.typedRequest == manual.typedRequest && (try nativeTaskEncoded(reread)) == oldBytes
                         && !(String(data: oldBytes, encoding: .utf8) ?? "").contains("said"),
-                    "A saved request without the message decodes, counts as before and encodes back byte for byte")
+                    "A saved request without the message decodes, counts nothing as typed and encodes back byte for byte")
         do {
             _ = try NativeCompanionTaskPayload(assignment: "Check", mode: "manual", said: String(repeating: "a", count: 5001))
             throw NativeTaskFixture.Failure.assertion("An overlong message is refused")
@@ -761,14 +769,12 @@ extension SelfTest {
             guard case .string(let to)? = arguments["to"], let made = NativeRuleTarget.make(.recipient, to) else { return [] }
             return [[made]]
         }
-        mail.verbs = ["send"]
+        mail.authorizable = true
         let tools = [mail]
         let call = "{\"to\":\"ana@greenhouse.test\"}"
-        func harness(repeats: Bool) throws -> NativeCompanionHarness {
+        func harness() throws -> NativeCompanionHarness {
             var made = try NativeCompanionHarness(rules: [.networkSends: .ask]) { messages in
-                let results = NativeCompanionScriptedModel.toolResults(messages)
-                if results.isEmpty { return NativeCompanionScriptedModel.call("send_notes", call) }
-                if repeats && results.count == 1 { return NativeCompanionScriptedModel.call("send_notes", call, id: "call-2") }
+                if NativeCompanionScriptedModel.toolResults(messages).isEmpty { return NativeCompanionScriptedModel.call("send_notes", call) }
                 return NativeCompanionScriptedModel.text("Sent the notes.")
             }
             let thread = made.thread
@@ -782,58 +788,23 @@ extension SelfTest {
             }
             return made
         }
-        let once = try harness(repeats: false)
-        once.model.checks { .text("{\"run\": true}") }
-        let onceID = try once.create("Send the notes to ana@greenhouse.test")
-        let onceDone = try await once.runUntilSettled()
-        try require(onceDone.state == .completed && sent.count == 1 && (try once.effects(onceID)).filter { $0.state == .completed }.count == 1,
-                    "Work started by hand with the send typed in its assignment sends once with no question")
-
-        sent.reset()
-        let twice = try harness(repeats: true)
-        twice.model.checks { .text("{\"run\": true}") }
-        let twiceID = try twice.create("Send the notes to ana@greenhouse.test")
-        let twiceDone = try await twice.runUntilSettled()
-        try require(twiceDone.state == .needsDecision && sent.count == 1 && (try twice.effects(twiceID)).filter { $0.state == .completed }.count == 1,
-                    "A second identical send in the same work asks: \(twiceDone.state)")
-
-        sent.reset()
-        let scheduled = try harness(repeats: false)
-        let scheduledID = try scheduled.create("Send the notes to ana@greenhouse.test", mode: "scheduled", scheduleID: "schedule-1")
-        let scheduledDone = try await scheduled.runUntilSettled()
-        try require(sent.count == 0 && (try scheduled.effects(scheduledID)).allSatisfy { $0.state != .completed },
-                    "Scheduled work never sends on the words of its assignment: \(scheduledDone.state)")
-
         let command = "Send the notes to ana@greenhouse.test"
+        let untraced: [String?] = [nil, "", command]
+        for said in untraced {
+            sent.reset()
+            let made = try harness()
+            made.model.checks { .text("{\"decision\": \"authorized\"}") }
+            let id = try made.create(command, said: said)
+            let done = try await made.runUntilSettled()
+            try require(done.state == .needsDecision && sent.count == 0 && made.model.instructionChecks.isEmpty
+                            && (try made.effects(id)).allSatisfy { $0.state != .completed },
+                        "Work with no typed message it can trace back to never asks the model and sends nothing: \(String(describing: said))")
+        }
         for message in [command, "Could you look after the greenhouse notes this week?"] {
             let started = try ChatStore.companionRequest(command, connectedToolIDs: nil, said: "")
             try require(started.dot?.typedRequest == "" && started.dot?.said == "",
                         "Work started from the conversation counts nothing as typed, whatever the message was: \(message)")
-            sent.reset()
-            let asked = try harness(repeats: false)
-            asked.model.checks { .text("{\"run\": true}") }
-            let askedID = try asked.create(command, said: started.dot?.said)
-            let askedDone = try await asked.runUntilSettled()
-            try require(askedDone.state == .needsDecision && sent.count == 0 && (try asked.effects(askedID)).allSatisfy { $0.state != .completed },
-                        "Work started from the conversation asks before an Ask first send, even when the message was the command: \(askedDone.state)")
         }
-        sent.reset()
-        let pair = try harness(repeats: false)
-        pair.model.checks { .text("{\"run\": true}") }
-        let firstID = try pair.create(command, said: "")
-        let firstDone = try await pair.runUntilSettled()
-        let secondID = try pair.create(command, said: "")
-        let secondDone = try await pair.runUntilSettled()
-        try require(firstDone.state == .needsDecision && secondDone.state == .needsDecision && sent.count == 0
-                        && (try pair.effects(firstID) + pair.effects(secondID)).allSatisfy { $0.state != .completed },
-                    "Two pieces of work from one send instruction both ask, and nothing is sent without an answer")
-        sent.reset()
-        let box = try harness(repeats: false)
-        box.model.checks { .text("{\"run\": true}") }
-        let boxID = try box.create(command)
-        let boxDone = try await box.runUntilSettled()
-        try require(boxDone.state == .completed && sent.count == 1 && (try box.effects(boxID)).filter { $0.state == .completed }.count == 1,
-                    "Work saved before, with its assignment typed by hand, still sends once with no question")
 
         let authority = NativeCompanionWorkerAuthority(resolver: {
             var resolver = NativeRuleResolver(global: { var made = NativeRules.defaults; made.set(.ask, for: .networkSends); return made }(),
@@ -843,61 +814,39 @@ extension SelfTest {
         }(), grantsRevision: 0)
         try require(NativeCompanionWorker.ruleDecision(mail, ["to": .string("ana@greenhouse.test")], resolver: authority.resolver, honoringLimitedUse: true,
                                                        uses: NativeInstructionUses()).decision == .ask,
-                    "With nothing typed, as for scheduled or self-started work, nothing is instructed")
-    }
+                    "With nothing typed, as for scheduled or self-started work, nothing is eligible")
+        let typedAuthority = NativeCompanionWorkerAuthority(resolver: {
+            var resolver = NativeRuleResolver(global: { var made = NativeRules.defaults; made.set(.ask, for: .networkSends); return made }(),
+                                              conversation: NativeConversationRules(), requestText: command)
+            resolver.typed = NativeTypedWords(typed: command)
+            return resolver
+        }(), grantsRevision: 0)
+        try require(NativeCompanionWorker.ruleDecision(mail, ["to": .string("ana@greenhouse.test")], resolver: typedAuthority.resolver, honoringLimitedUse: true,
+                                                       uses: NativeInstructionUses()).decision == .act(.instruction),
+                    "A typed address on a tool that names its destination is eligible, pending the check")
+        var unclaimed = mail
+        unclaimed.authorizable = false
+        try require(NativeCompanionWorker.ruleDecision(unclaimed, ["to": .string("ana@greenhouse.test")], resolver: typedAuthority.resolver,
+                                                       honoringLimitedUse: true, uses: NativeInstructionUses()).decision == .ask
+                        && NativeCompanionWorker.instructionClaim(unclaimed, ["to": .string("ana@greenhouse.test")], action: .networkSends) == nil,
+                    "A tool whose destination the app doesn't know is never eligible")
 
-    private static func companionInstructedFileNamesBeside() async throws {
-        let require = NativeTaskFixture.require
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("worker-beside-" + UUID().uuidString)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("worker-claims-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let grant = try FolderGrant.make(url: directory)
-        let draft = grant.path + "/draft.md"
-        let readme = grant.path + "/README.md"
-        let assignment = "Update README to match draft.md"
-        for present in [true, false] {
-            try Data("old".utf8).write(to: URL(fileURLWithPath: draft))
-            if present { try Data().write(to: URL(fileURLWithPath: readme)) } else { try? FileManager.default.removeItem(atPath: readme) }
-            var harness = try NativeCompanionHarness(rules: [.fileEdits: .ask]) { messages in
-                if NativeCompanionScriptedModel.toolResults(messages).isEmpty {
-                    return NativeCompanionScriptedModel.call(NativeFolderTools.writeName, "{\"path\":\"\(draft)\",\"content\":\"new\"}")
-                }
-                return NativeCompanionScriptedModel.text("Updated it.")
-            }
-            harness.model.checks { .text("{\"run\": true}") }
-            let rules = harness.rules
-            let thread = harness.thread
-            let grants = harness.grants
-            let tools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { action in
-                rules.resolver(for: thread.current, requestText: "").decision(for: action)
-            })
-            harness.environment.context = { _, _ in NativeCompanionWorkerContext(assistantName: "Ada", threadID: thread.current, tools: tools) }
-            harness.environment.authority = { conversation, request in
-                NativeCompanionWorkerAuthority(resolver: rules.resolver(for: conversation, requestText: request,
-                                                                        typed: NativeTypedWords(typed: request.isEmpty ? nil : request)),
-                                               grantsRevision: grants.revision)
-            }
-            _ = try harness.create(assignment)
-            let done = try await harness.runUntilSettled()
-            let content = String(decoding: try Data(contentsOf: URL(fileURLWithPath: draft)), as: UTF8.self)
-            if present {
-                try require(done.state == .needsDecision && content == "old",
-                            "Work started by hand asks when another word names a file beside the one being changed: \(done.state)")
-            } else {
-                try require(done.state == .completed && content == "new",
-                            "Work started by hand runs the typed edit once when nothing beside it is named: \(done.state)")
-            }
-        }
-        let locked = grant.path + "/locked"
-        try FileManager.default.createDirectory(atPath: locked, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked) }
-        let tools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { _ in .ask })
-        if let write = tools.first(where: { $0.name == NativeFolderTools.writeName }), (try? NativeFolderTools.entries(locked)) == nil {
-            let arguments: [String: NativeJSONValue] = ["path": .string(locked + "/notes.md"), "content": .string("new")]
-            try require(NativeCompanionWorker.instructionClaim(write, arguments, action: .fileEdits) == nil
+        let folderTools = NativeFolderTools.definitions(grants: { [grant] }, ledger: NativeFileChangeLedger(), edits: .ask, trash: .ask, live: { _ in .ask })
+        if let write = folderTools.first(where: { $0.name == NativeFolderTools.writeName }) {
+            let arguments: [String: NativeJSONValue] = ["path": .string(grant.path + "/notes.md"), "content": .string("new")]
+            try require(NativeCompanionWorker.instructionClaim(write, arguments, action: .fileEdits) != nil
                             && NativeCompanionWorker.instructionSignature(write, arguments, action: .fileEdits) != nil,
-                        "A folder that can't be listed gives no instruction, yet a spent one is still recognised")
+                        "A shared-folder edit can be checked, and a spent one is recognised")
+        }
+        let commandTools = NativeCommandTools.definitions(grants: { [grant] }, decision: .ask, reason: { _ in nil }, record: { _ in })
+        if let runner = commandTools.first {
+            try require(NativeCompanionWorker.instructionClaim(runner, ["command": .string("make pdf")], action: .commands) != nil
+                            && NativeCompanionWorker.instructionClaim(runner, ["command": .string("make pdf && rm x")], action: .commands) == nil,
+                        "Only a simple command can be checked")
         }
     }
 

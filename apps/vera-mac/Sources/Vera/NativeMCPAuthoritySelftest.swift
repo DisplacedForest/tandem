@@ -32,6 +32,7 @@ final class NativeMCPChatFixture: NativeChatTransport, @unchecked Sendable {
     init(name: String, arguments: String = "{\"query\":{\"tags\":[\"safe\"],\"count\":1}}", beforeDispatch: @escaping @Sendable () async -> Void = {}) { self.name = name; self.arguments = arguments; self.beforeDispatch = beforeDispatch }
     func discoverModels() async throws -> [String] { ["fixture"] }
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.noRestrictions) }
         lock.withLock { catalogs.append(tools) }
         return AsyncThrowingStream { continuation in
             let calls = messages.last?.role == "user" ? [NativeChatToolCall(id: UUID().uuidString, name: name, arguments: arguments) ] : []

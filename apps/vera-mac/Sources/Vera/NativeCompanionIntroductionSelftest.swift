@@ -11,6 +11,7 @@ final class NativeCompanionIntroductionTransport: NativeChatTransport, @unchecke
     func discoverModels() async throws -> [String] { ["local-model"] }
 
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.noRestrictions) }
         lock.withLock { captured.append(messages); capturedTools.append(tools) }
         let current = messages.last(where: { $0.role == "user" })?.content ?? ""
         var call: NativeChatToolCall?

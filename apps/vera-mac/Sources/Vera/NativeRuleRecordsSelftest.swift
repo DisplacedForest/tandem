@@ -56,6 +56,7 @@ enum NativeRuleRecordsSelftest {
         try strictReload(require)
         try projectMap(require)
         try await storeScenario(require)
+        try instructionEligibility(require)
         print("NATIVE RULE RECORDS SELFTEST OK (\(counter.value) checks)")
     }
 
@@ -66,6 +67,107 @@ enum NativeRuleRecordsSelftest {
     static func resolver(_ records: [NativeRuleRecord], context: NativeRuleContext? = NativeRuleContext(conversationID: "c1"),
                          global: NativeRules = .defaults, now: Date = start) -> NativeRuleResolver {
         NativeRuleResolver(global: global, conversation: NativeConversationRules(), requestText: "", records: records, context: context, now: now)
+    }
+
+    private static func instructionEligibility(_ require: (Bool, String) throws -> Void) throws {
+        let told = "Send the notes to ana@greenhouse.test"
+        guard let ana = NativeRuleTarget.make(.recipient, "ana@greenhouse.test"),
+              let bo = NativeRuleTarget.make(.recipient, "bo@greenhouse.test") else { throw NativeTaskFixture.Failure.assertion("The addresses are targets") }
+        let sent = NativeChatRulesCounter()
+        func rules(_ choice: NativeRuleChoice, for action: NativeActionClass = .networkSends, base: NativeRules = .defaults) -> NativeRules {
+            var made = base
+            made.set(choice, for: action)
+            return made
+        }
+        func resolver(_ global: NativeRules = rules(.ask), typed: String = told, claim: NativeInstructionClaim? = NativeInstructionClaim(),
+                      records: [NativeRuleRecord] = [], targets: [NativeRuleTarget] = [ana], uses: NativeInstructionUses = NativeInstructionUses(),
+                      tool: String = "fixture-notes") -> NativeRuleResolver {
+            var made = NativeRuleResolver(global: global, conversation: NativeConversationRules(), requestText: typed,
+                                          records: records, context: NativeRuleContext(conversationID: "c1"))
+            made.typed = NativeTypedWords(typed: typed.isEmpty ? nil : typed)
+            made.asked = claim
+            made.uses = uses
+            return made.tool(tool, targets: targets)
+        }
+        func eligible(_ made: NativeRuleResolver, _ action: NativeActionClass = .networkSends) -> Bool {
+            made.decision(for: action) == .act(.instruction) && made.instructed(made.query(for: action), honoringLimitedUse: false) != nil
+        }
+        try require(eligible(resolver()), "A typed address on an Ask first send is eligible, pending the check")
+        try require(eligible(resolver(typed: "Don't send the notes to ana@greenhouse.test")) && eligible(resolver(typed: "Can you send the notes to ana@greenhouse.test?")),
+                    "Wording is no longer judged here, so negations and questions go to the check")
+        try require(!eligible(resolver(typed: "Can you send it to \"ana@greenhouse.test\"?")),
+                    "An address only inside quote marks still doesn't count as typed for the recipient rule")
+        try require(!eligible(resolver(typed: "Send the notes to the supplier")) && resolver(typed: "Send the notes to the supplier").decision(for: .networkSends) == .ask,
+                    "A recipient found by lookup and never typed is never eligible")
+        try require(!eligible(resolver(typed: "Send the notes to bo@greenhouse.test")), "An address typed for someone else doesn't make this one eligible")
+        try require(!eligible(resolver(typed: "")), "With nothing typed nothing is eligible")
+        try require(!eligible(resolver(claim: nil)), "A tool with no claim is never eligible")
+        try require(!eligible(resolver(targets: [])), "An action with no known target is never eligible")
+        try require(resolver(rules(.handOff)).decision(for: .networkSends) == .handOff, "Leave it to me is never eligible")
+        try require(resolver(rules(.act)).decision(for: .networkSends) == .act(.rule), "An action the rules allow needs no check")
+        try require(resolver(records: [record(.forbid, target: ana)]).decision(for: .networkSends) == .handOff,
+                    "A saved never is never eligible")
+        try require(!eligible(resolver(rules(.act), records: [record(.ask, target: ana)])) && !eligible(resolver(records: [record(.ask, target: ana)])),
+                    "A saved always ask is never eligible")
+        try require(eligible(resolver(records: [record(.forbid, target: bo)])), "A saved rule for another address leaves this one alone")
+        var broken = resolver()
+        broken.failed = true
+        try require(!eligible(broken) && broken.decision(for: .networkSends) == .ask, "Rules that failed to load are never eligible")
+        let spent = NativeInstructionUses()
+        let first = resolver(uses: spent)
+        guard let signature = first.instructed(first.query(for: .networkSends), honoringLimitedUse: false) else {
+            throw NativeTaskFixture.Failure.assertion("The typed send gives a signature")
+        }
+        spent.take(signature)
+        let refused = NativeInstructionUses()
+        refused.refuse(signature)
+        try require(!eligible(resolver(uses: spent)) && !eligible(resolver(uses: refused)), "A spent or refused send is never eligible again")
+        guard let payments = NativeFloorItem.payments.actionClass else { throw NativeTaskFixture.Failure.assertion("payments has an action") }
+        try require(resolver(.defaults, typed: "Pay the invoice", targets: [ana]).decision(for: payments) == .handOff,
+                    "Payments that aren't turned on stay with the person")
+        var opened = NativeRules.defaults
+        opened.lift(.payments, choice: .ask)
+        try require(eligible(resolver(opened, typed: "Pay ana@greenhouse.test", targets: [ana]), payments),
+                    "Once payments are turned on and set to ask, they're eligible like any other kind")
+
+        let commands = rules(.ask, for: .commands)
+        func commandEligible(_ typed: String, _ line: String) -> Bool {
+            resolver(commands, typed: typed, targets: [], tool: NativeCommandTools.toolID).decision(forCommand: line) == .act(.instruction)
+        }
+        try require(commandEligible("Run `make pdf`", "make pdf") && commandEligible("Please run make pdf now", "make pdf"),
+                    "A command that appears in the typed message is eligible")
+        try require(!commandEligible("Run the tests", "make test") && !commandEligible("Run `make pdf`", "make pdfs")
+                        && !commandEligible("Run make", "make pdf"),
+                    "A command that doesn't appear in the typed message is never eligible")
+        try require(!commandEligible("Run make test", "make TEST") && !commandEligible("Run `Make pdf`", "make pdf") && commandEligible("Run make TEST", "make TEST"),
+                    "A command is eligible only in the case the person typed")
+
+        let message = UUID()
+        func pending(_ definition: NativeToolDefinition, typed: String = told, global: NativeRules? = nil) -> NativeInstructionPending? {
+            let made = NativeRuleSource()
+            made.setGlobal(global ?? rules(.ask))
+            let wrapped = ChatStore.ruled(definition, rules: made, store: nil, conversationID: "c1", requestText: typed,
+                                          typed: NativeTypedWords(typed: typed), uses: NativeInstructionUses(messageID: message, conversationID: "c1"))
+            return wrapped.instructionFor?(["to": .string("ana@greenhouse.test")])
+        }
+        func sender(_ confirmation: NativeToolConfirmation = .none, authorizable: Bool = true) -> NativeToolDefinition {
+            var made = NativeToolDefinition(id: "fixture-notes", name: "send_notes", title: "Send the notes", description: "Fixture",
+                                            parameters: .object(["type": .string("object")]), confirmation: confirmation, effect: .write,
+                                            action: .networkSends, isAvailable: { true },
+                                            execute: { _ in sent.hit(); return .object(["sent": .bool(true)]) })
+            made.ruleSubjects = { arguments in
+                guard case .string(let to)? = arguments["to"], let target = NativeRuleTarget.make(.recipient, to) else { return [] }
+                return [[target]]
+            }
+            made.authorizable = authorizable
+            return made
+        }
+        try require(pending(sender()) != nil, "An eligible send is offered for the check")
+        try require(pending(sender(.required)) == nil, "A tool that always asks is never offered for the check")
+        try require(pending(sender(authorizable: false)) == nil, "A tool that doesn't name its destination is never offered for the check")
+        try require(pending(sender(), typed: "Send the notes to the supplier") == nil, "An untyped recipient is never offered for the check")
+        try require(pending(sender(), global: rules(.handOff)) == nil && pending(sender(), global: rules(.act)) == nil,
+                    "Hand-off and act by rule are never offered for the check")
     }
 
     static func record(_ effect: NativeRuleEffect, _ action: NativeActionClass? = .networkSends, scope: NativeRuleScope = .everywhere,

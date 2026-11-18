@@ -302,45 +302,6 @@ enum NativeCommandPrefix {
     }
 }
 
-enum NativeRequestPreapproval {
-    static let negations = ["not", "n't", "never", "unless", "without my", "ask me", "ask first", "check with me", "before you", "only if", "only after",
-                            "if ", "when ", "whenever ", "once ", "after ", "before ", "later", "pending", "until", "provided", "providing", "assuming", "condition", "conditions", "contingent", "subject to", "as long as", "so long as", "so long", "in the event", "in case", "given that", "while", "as soon as", "depending", "depends", "depend", "whether", "otherwise", "cancel", "cancelled", "canceled", "stop", "abort", "disregard", "ignore", "forget", "scratch", "nevermind", "never mind", "retract", "withdraw", "undo", "hold", "hold off", "hold on", "hang on", "wait", "not yet", "one moment", "let me", "pause", "review first", "before that", "do nothing", "on second thought", "actually", "instead", "no", "nope", "changed my mind", "change of mind", "on reflection", "rather not", "revoke", "revoked", "rescind", "rescinded", "retracted", "reverse", "strike that", "belay", "void", "nullify", "explain", "why ", "what ", "whether", "mean", "should ", "would ", "could ", "is it", "dangerous", "risky"]
-
-    static let openers = ["please", "yes", "ok", "okay", "sure", "fine", "alright", "just", "you can", "you may", "feel free", "feel free to"].sorted { $0.count > $1.count }
-    static let framing = ["translate", "summarize", "summarise", "describe", "compare", "define", "discuss", "quote", "repeat", "rewrite", "paraphrase", "proofread", "phrase", "sentence", "wording", "example", "sample", "instruction", "says", "said", "wrote", "means", "meaning", "distinguish", "here is", "here's", "this is", "like this", "such as",
-                          "permission", "approval", "authorization", "authorisation", "consent", "express", "expresses", "analyze", "analyse", "analysis", "grammar", "grammatical", "parse", "syntax", "language", "linguistic", "imperative", "verb", "noun", "following"]
-    static let speech = ["says", "said", "saying", "replied", "replies", "answered", "answers", "told", "tells", "wrote", "writes", "texted", "messaged", "asked", "asks", "mentioned", "mentions", "suggested", "suggests", "noted", "quoted", "quotes", "responded", "responds", "whispered", "whispers", "shouted", "shouts", "yelled", "muttered", "insisted", "added", "remarked"]
-
-    static func normalized(_ text: String) -> String {
-        text.lowercased()
-            .replacingOccurrences(of: "’", with: "'").replacingOccurrences(of: "‘", with: "'")
-            .replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
-    }
-
-    static func words(_ text: String) -> [String] {
-        text.split(whereSeparator: { !($0.isLetter || $0 == "'") }).map(String.init)
-    }
-
-    static func negated(_ text: String) -> Bool {
-        let list = words(text)
-        let joined = " " + list.joined(separator: " ") + " "
-        return negations.contains { negation in
-            let trimmed = negation.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("n't") { return list.contains { $0.hasSuffix("n't") } }
-            return joined.contains(" " + trimmed + " ")
-        }
-    }
-
-    static func settled(_ remainder: String, original: String) -> Bool {
-        if negated(remainder) { return false }
-        if original.contains("?") { return false }
-        let wordList = " " + words(remainder).joined(separator: " ") + " "
-        if framing.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
-        if speech.contains(where: { wordList.contains(" " + $0 + " ") }) { return false }
-        return true
-    }
-}
-
 enum NativeCommandClassifier {
     static let separators = ["&&", "||", ";", "|"]
     static let privileged: Set<String> = ["sudo", "doas", "su", "security", "diskutil", "launchctl", "csrutil", "spctl", "nvram", "systemsetup", "dscl", "passwd", "ssh-add", "ssh-keygen", "gpg", "op", "keychain"]

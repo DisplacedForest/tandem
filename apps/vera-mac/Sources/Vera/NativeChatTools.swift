@@ -221,16 +221,14 @@ struct NativeToolDefinition: Sendable {
     var ruleDecision: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleDecision)? = nil
     var ruleWhy: (@Sendable ([String: NativeJSONValue], NativeRuleResolver) -> NativeRuleWhy?)? = nil
     var ruleSubjects: (@Sendable ([String: NativeJSONValue]) -> [[NativeRuleTarget]])? = nil
+    var place: (@Sendable ([String: NativeJSONValue], String) -> String?)? = nil
     var access: NativeToolAccess? = nil
     var wants: String? = nil
     var governed = false
     var proposes = false
     var alwaysAsks = false
     var fixedDestination = false
-    var verbs: [String] = []
-    var namesNothing = false
-    var instructionNames: (@Sendable ([String: NativeJSONValue]) -> [String])? = nil
-    var folderRoots: (@Sendable () -> [String])? = nil
+    var authorizable = false
     var proposesFor: (@Sendable ([String: NativeJSONValue]) -> Bool)? = nil
     var preflight: (@Sendable ([String: NativeJSONValue]) throws -> Void)? = nil
     var instructionFor: (@Sendable ([String: NativeJSONValue]) -> NativeInstructionPending?)? = nil
@@ -421,7 +419,7 @@ protocol NativeRemindersService: AnyObject, Sendable {
 enum NativeRemindersTools {
     static let toolID = "apple-reminders"
     static func definitions(service: any NativeRemindersService) -> [NativeToolDefinition] {
-        let available: @Sendable () -> Bool = { service.nativeAuthorization == .authorized }
+        let available: @Sendable () -> Bool = { service.nativeAuthorization != .denied }
         let access = NativeToolAccess(
             subject: "Reminders",
             settingsPane: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders"),
@@ -727,10 +725,11 @@ struct NativeToolLoop: Sendable {
     let authorize: @Sendable () async -> Bool
     let willExecute: @Sendable (NativeToolActivity) async -> Bool
     let confirm: @Sendable (NativeToolActivity) async -> Bool
-    let instructionCheck: NativeInstructionAnswerer?
-    let instructionTimeout: Duration
-    let said: String
+    let authorizer: NativeRequestAuthorizer?
+    let request: NativeTrustedRequest?
+    let restrictionCheck: NativeRestrictionCheck?
     let effects: NativeChatEffectHook?
+    let systemAccess: @Sendable (String, NativeToolAccess) async -> Void
 
     init(
         transport: any NativeChatTransport,
@@ -741,10 +740,11 @@ struct NativeToolLoop: Sendable {
         authorize: @escaping @Sendable () async -> Bool = { true },
         willExecute: @escaping @Sendable (NativeToolActivity) async -> Bool = { _ in true },
         confirm: @escaping @Sendable (NativeToolActivity) async -> Bool = { _ in false },
-        instructionCheck: NativeInstructionAnswerer? = nil,
-        instructionTimeout: Duration = NativeInstructionCheck.timeout,
-        said: String = "",
-        effects: NativeChatEffectHook? = nil
+        authorizer: NativeRequestAuthorizer? = nil,
+        request: NativeTrustedRequest? = nil,
+        restrictions: NativeRestrictionCheck? = nil,
+        effects: NativeChatEffectHook? = nil,
+        systemAccess: @escaping @Sendable (String, NativeToolAccess) async -> Void = { _, _ in }
     ) {
         self.transport = transport
         self.registry = registry
@@ -754,10 +754,11 @@ struct NativeToolLoop: Sendable {
         self.authorize = authorize
         self.willExecute = willExecute
         self.confirm = confirm
-        self.instructionCheck = instructionCheck
-        self.instructionTimeout = instructionTimeout
-        self.said = said
+        self.authorizer = authorizer
+        self.request = request
+        self.restrictionCheck = restrictions
         self.effects = effects
+        self.systemAccess = systemAccess
     }
 
     func stream(
@@ -778,6 +779,8 @@ struct NativeToolLoop: Sendable {
                     var issuedCallIDs: Set<String> = []
                     var searchResults: [String: NativeJSONValue] = [:]
                     var turnSources: [String: Int] = [:]
+                    var refusals: NativeRefusalList?
+                    var refusalsDown = false
                     var repairs = NativeToolRepairs()
                     var unconfirmedWrites: Set<Data> = []
                     var repairsSpent = false
@@ -923,21 +926,54 @@ struct NativeToolLoop: Sendable {
                                         stopped = true
                                         throw NativeToolError.failed("The lookup limit was reached. This call was not run.")
                                     }
+                                    var refusalCard = false
+                                    var evaluated: String?
+                                    if let restrictionCheck {
+                                        if refusalsDown {
+                                            refusalCard = true
+                                        } else {
+                                            if refusals == nil {
+                                                try await checkAuthorization()
+                                                refusals = try await restrictionCheck.refusals()
+                                                try await checkAuthorization()
+                                            }
+                                            if let said = refusals, !said.refusesNothing {
+                                                try await checkAuthorization()
+                                                let proposedCall = NativeProposedCall(definition, arguments: arguments)
+                                                let outcome = try await restrictionCheck.outcome(proposedCall, refusals: said)
+                                                try await checkAuthorization()
+                                                switch outcome {
+                                                case .allowed:
+                                                    evaluated = proposedCall.description
+                                                    if NativeActionDescription.describe(definition, arguments: arguments) != proposedCall.description { refusalCard = true }
+                                                case .ruledOut:
+                                                    throw NativeToolError.failed(NativeRefusalList.ruledOutSentence)
+                                                case .unclear:
+                                                    refusalCard = true
+                                                case .unavailable:
+                                                    refusalsDown = true
+                                                    refusalCard = true
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if !refusalCard { try await grantAccess(definition) }
                                     let recording = effects.flatMap { NativeChatEffects.records(definition, arguments) ? $0 : nil }
                                     let writeKey = NativeChatEffects.records(definition, arguments)
                                         ? Data((definition.name + "\u{0}" + (try Self.serializedResult(.object(arguments)))).utf8) : nil
                                     if let writeKey, unconfirmedWrites.contains(writeKey) { throw NativeToolRepair.repeatedWrite() }
                                     let revisions = recording?.revisions()
                                     var needsConfirmation = definition.confirmationFor?(arguments) ?? (definition.confirmation == .required)
-                                    var cleared: String?
+                                    if refusalCard { needsConfirmation = true }
+                                    var cleared: NativeAuthorizationDecision?
                                     if !needsConfirmation, let pending = definition.instructionFor?(arguments) {
                                         try await checkAuthorization()
-                                        let yes = await confirmsInstruction(pending)
+                                        let decided = try await authorization(pending)
                                         try await checkAuthorization()
-                                        if yes {
-                                            cleared = pending.signature
+                                        if let decided, decided.authorizes {
+                                            cleared = decided
                                         } else {
-                                            pending.refuse()
+                                            if decided?.remembersRefusal == true { pending.refuse() }
                                             needsConfirmation = true
                                         }
                                     }
@@ -983,7 +1019,7 @@ struct NativeToolLoop: Sendable {
                                     }
                                     if let recording, let current = ticket, let activity = activities.first(where: { $0.id == call.id }) {
                                         let admitted = try await Self.admit(current, recording: recording, definition: definition, arguments: arguments,
-                                                                            activity: activity, answer: answer, instruction: cleared)
+                                                                            activity: activity, answer: answer, instruction: cleared?.signature)
                                         ticket = admitted
                                         if admitted == nil { handsOff = true }
                                         if let answer, admitted != nil { await recording.answered(activity, answer) }
@@ -994,7 +1030,17 @@ struct NativeToolLoop: Sendable {
                                         if let recording, let ticket { await recording.settle(ticket, .absent("stopped")) }
                                         throw error
                                     }
+                                    if refusalCard {
+                                        do { try await grantAccess(definition) } catch {
+                                            if let recording, let ticket { await recording.settle(ticket, .absent(error is CancellationError ? "stopped" : "refused")) }
+                                            throw error
+                                        }
+                                    }
                                     if isSearch { webSearchCount += 1 }
+                                    if let evaluated, NativeActionDescription.describe(definition, arguments: arguments) != evaluated {
+                                        if let recording, let ticket { await recording.settle(ticket, .absent("refused")) }
+                                        throw NativeToolError.failed(NativeRefusalList.targetMovedSentence)
+                                    }
                                     guard let activity = activities.first(where: { $0.id == call.id }) else {
                                         throw NativeToolError.failed("The tool call could not be matched to its request")
                                     }
@@ -1019,7 +1065,7 @@ struct NativeToolLoop: Sendable {
                                         value = try await NativeToolProgressReporter.$report.withValue(report) {
                                             try await NativeToolCallContext.$confirmed.withValue(approved) {
                                                 try await NativeToolCallContext.$reason.withValue(reasonSink) {
-                                                    try await NativeInstructionCheck.$cleared.withValue(clearing) {
+                                                    try await NativeRequestAuthorizer.$cleared.withValue(clearing) {
                                                         try await NativeRuleAdmission.$expectsHandOff.withValue(expectsHandOff) {
                                                             try await NativeToolCallContext.$boundary.withValue(boundary) {
                                                                 try await NativeToolCallContext.$otherToolRan.withValue(ranOther) {
@@ -1028,7 +1074,8 @@ struct NativeToolLoop: Sendable {
                                                                             try await NativeToolCallContext.$replyCallOrdinal.withValue(replyOrdinal) {
                                                                                 try await Self.execute(
                                                                                     definition, arguments: arguments, activity: activity, afterOnlyRefusals: afterOnlyRefusals,
-                                                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute)
+                                                                                    timeout: definition.timeout ?? executionTimeout, authorize: authorize, willExecute: willExecute,
+                                                                                    expected: evaluated)
                                                                             }
                                                                         }
                                                                     }
@@ -1134,7 +1181,7 @@ struct NativeToolLoop: Sendable {
         _ definition: NativeToolDefinition,
         arguments: [String: NativeJSONValue], activity: NativeToolActivity, afterOnlyRefusals: Bool,
         timeout: Duration, authorize: @escaping @Sendable () async -> Bool,
-        willExecute: @escaping @Sendable (NativeToolActivity) async -> Bool
+        willExecute: @escaping @Sendable (NativeToolActivity) async -> Bool, expected: String? = nil
     ) async throws -> NativeJSONValue {
         try await bounded(timeout: timeout) {
             try Task.checkCancellation()
@@ -1144,11 +1191,14 @@ struct NativeToolLoop: Sendable {
             try Task.checkCancellation()
             guard await authorize() else { throw CancellationError() }
             try Task.checkCancellation()
+            if let expected, NativeActionDescription.describe(definition, arguments: arguments) != expected {
+                throw NativeToolError.failed(NativeRefusalList.targetMovedSentence)
+            }
             return try await NativeToolCallContext.$activityID.withValue(activity.id) {
                 try await NativeToolCallContext.$request.withValue(activity.request) {
                     try await NativeToolCallContext.$round.withValue(activity.round) {
                         try await NativeToolCallContext.$afterOnlyRefusals.withValue(afterOnlyRefusals) {
-                            try await definition.execute(arguments)
+                            try await NativeRequestAuthorizer.bound(definition, arguments) { try await definition.execute(arguments) }
                         }
                     }
                 }
@@ -1164,17 +1214,24 @@ struct NativeToolLoop: Sendable {
         try Task.checkCancellation()
     }
 
-    private func confirmsInstruction(_ pending: NativeInstructionPending) async -> Bool {
-        guard let instructionCheck else { return false }
-        let said = self.said
-        let about = pending.about
-        return await NativeInstructionCheck.bounded(instructionTimeout) { await instructionCheck(said, about) }
+    private func authorization(_ pending: NativeInstructionPending) async throws -> NativeAuthorizationDecision? {
+        guard let authorizer, let request else { return nil }
+        return try await authorizer.decide(request, pending.action)
     }
 
     private func checkAuthorization() async throws {
         try Task.checkCancellation()
         guard await authorize() else { throw CancellationError() }
         try Task.checkCancellation()
+    }
+
+    private func grantAccess(_ definition: NativeToolDefinition) async throws {
+        guard let access = definition.access, access.state() == .notAsked else { return }
+        try await checkAuthorization()
+        await systemAccess(definition.id, access)
+        try await checkAuthorization()
+        let state = access.state()
+        guard state == .granted else { throw NativeToolError.failed(access.note(state) ?? NativeToolError.unavailable.localizedDescription) }
     }
 
     private static func effectCall(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], _ activity: NativeToolActivity,

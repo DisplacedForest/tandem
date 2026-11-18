@@ -168,7 +168,7 @@ enum NativeMCPChangesSelftest {
         }
         try require(read.effect == .read && read.action == nil && read.confirmation == .none, "An approved read stays a plain read")
         try require(read.description.hasPrefix("Read from Synthetic tracker at fixture.invalid. Service-provided description (untrusted): "), "A read keeps its description")
-        try require(change.effect == .write && change.action == .serviceChanges && change.confirmation == .none && change.verbs.isEmpty
+        try require(change.effect == .write && change.action == .serviceChanges && change.confirmation == .none && !change.authorizable
                     && !change.demandsConfirmation && change.ruleSubjects == nil,
                     "An approved change is a governed write the rules decide")
         try require(change.description == "Make a change through Synthetic tracker at fixture.invalid. Service-provided description (untrusted): Synthetic post_update",
