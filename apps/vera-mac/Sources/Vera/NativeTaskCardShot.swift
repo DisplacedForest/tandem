@@ -162,7 +162,7 @@ struct NativeTaskCardShotSurface: View {
         default: break
         }
         let documentState = variant.components(separatedBy: "-card-document-")
-        if documentState.count == 2, ["cut-short", "empty", "unusable", "model-changed", "shorter", "credential", "outline-cut-short"].contains(documentState[1]) {
+        if documentState.count == 2, ["cut-short", "empty", "unusable", "model-changed", "shorter", "credential", "outline-cut-short", "condensing", "unrevised", "too-large", "plan-too-large"].contains(documentState[1]) {
             result.title = "Workshop plan"
             result.workerType = "document"
             switch documentState[1] {
@@ -175,6 +175,20 @@ struct NativeTaskCardShotSurface: View {
                 if let checkpoint = try? JSONDecoder().decode(NativeTaskCheckpoint.self, from: Data(saved.utf8)) {
                     result.milestone = NativeTaskProjection.documentMilestone(checkpoint)
                 }
+            case "condensing":
+                result.milestone = NativeTaskProjection.condensingLine
+            case "unrevised":
+                result.status = .completed
+                result.milestone = NativeTaskProjection.unrevisedLine(1)
+                result.canCancel = false
+            case "too-large":
+                result.status = .failed
+                result.milestone = NativeResourcePolicy.tooLarge(301_250, limit: NativeResourcePolicy.documentCharacters, document: true)
+                result.canCancel = false
+            case "plan-too-large":
+                result.status = .failed
+                result.milestone = NativeResourcePolicy.planTooLarge(needed: 288_720, room: NativeResourcePolicy.documentCharacters)
+                result.canCancel = false
             case "outline-cut-short":
                 result.status = .needsInput
                 result.milestone = NativeTaskWorkerFailures.outlineCutShortMessage

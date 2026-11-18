@@ -773,8 +773,8 @@ extension SelfTest {
             ("No deliverables", arguments("document", brief, nil)),
             ("An empty list of deliverables", arguments("document", brief, [])),
             ("Forty deliverables", arguments("document", brief, (1...40).map { "Bed number \($0) and what grows there" })),
-            ("A document exactly at the limit", arguments("document", "Write a guide.", [String(repeating: "p", count: NativeResearchTaskRequest.documentInputCharacters - 14)])),
-            ("Research exactly at the limit", arguments("research", "Find out about lunar ice.", [String(repeating: "q", count: NativeResearchTaskRequest.researchInputCharacters - 25)])),
+            ("A document of thirty inputs and 60,000 characters", arguments("document", "Write a guide.", (1...30).map { "Input \($0): " + String(repeating: "p", count: 1990) })),
+            ("Research with 60,000 characters to cover", arguments("research", "Find out about lunar ice.", [String(repeating: "q", count: 60000)])),
         ]
         for item in accepted {
             let value = try NativeJSONValue(any: try JSONSerialization.jsonObject(with: Data(item.raw.utf8)))
@@ -792,13 +792,12 @@ extension SelfTest {
         try require(posts.count == accepted.count, "Each saved piece of work was offered for starting once")
 
         let refusedTotals: [(label: String, raw: String, message: String)] = try [
-            ("A document over the limit", arguments("document", "Write a guide.", [String(repeating: "p", count: NativeResearchTaskRequest.documentInputCharacters - 14 + 5)]),
-             "The brief and the things to include are 14,005 characters together, and a document can take about 14,000 for now. Nothing was started. Shorten them, or split this into more than one document."),
-            ("Research over the limit", arguments("research", "Find out about lunar ice.", [String(repeating: "q", count: NativeResearchTaskRequest.researchInputCharacters - 25 + 3)]),
-             "The question and the things to cover are 20,003 characters together, and research can take about 20,000 for now. Nothing was started. Shorten them, or split this into more than one request."),
+            ("A document larger than one request holds", arguments("document", "Write a guide.", [String(repeating: "p", count: 250000)]),
+             "The brief and the things to include are 250,014 characters together, and one request can hold about 245,700. Nothing was started. Split this into more than one document."),
+            ("Research larger than one request holds", arguments("research", "Find out about lunar ice.", [String(repeating: "q", count: 250000)]),
+             "The question and the things to cover are 250,025 characters together, and one request can hold about 245,700. Nothing was started. Split this into more than one request."),
         ]
-        try require(NativeResearchTaskRequest.documentInputCharacters == 14000 && NativeResearchTaskRequest.researchInputCharacters == 20000,
-                    "The fixture messages assume the current total sizes")
+        try require(NativeResearchTaskRequest.inputBytes == 245760, "The fixture messages assume one request holds 245,760 bytes, the local store's size less room for the rest of the request")
         let invalid = NativeJSONValue.string(NativeToolCallFault.invalidArguments.rawValue)
         let lead = NativeToolError.invalidArguments("").localizedDescription
         for item in refusedTotals {
@@ -832,16 +831,16 @@ extension SelfTest {
         let crowdValues = try sample.validatedArguments(crowd)
         try require(crowdValues["deliverables"].map { if case .array(let items) = $0 { items.count == 3000 } else { false } } == true,
                     "Three thousand short deliverables pass the checks")
-        let throng = try arguments("document", "Write a short guide.", (1...8200).map { _ in "p" })
+        let throng = try arguments("document", "Write a short guide.", (1...2000).map { _ in String(repeating: "p", count: 120) })
         var throngRefusal: String?
         do { _ = try sample.validatedArguments(throng) } catch NativeToolError.invalidArguments(let message) { throngRefusal = message }
-        try require(throngRefusal == "The brief and the things to include are 8,220 characters together, and a document can take about 4,000 for now. Nothing was started. Shorten them, or split this into more than one document.",
-                    "Eight thousand two hundred short deliverables are refused by their size as sent: \(throngRefusal ?? "accepted")")
-        let wide = String(repeating: "\u{6F22}", count: 5000)
-        let wideItem = String(repeating: "\u{5B57}", count: 500)
+        try require(throngRefusal == "The brief and the things to include are 240,020 characters together, and one request can hold about 239,700. Nothing was started. Split this into more than one document.",
+                    "Two thousand deliverables are refused by their size as sent: \(throngRefusal ?? "accepted")")
+        let wide = String(repeating: "\u{6F22}", count: 80000)
+        let wideItem = String(repeating: "\u{5B57}", count: 5000)
         let legacy = try JSONSerialization.data(withJSONObject: ["objective": wide, "deliverables": [wideItem], "worker_type": "document"] as [String: Any])
         let decoded = try JSONDecoder().decode(NativeResearchTaskRequest.self, from: legacy)
-        let wideRefusal = "The brief and the things to include are 5,500 characters together, and a document can take about 5,300 for now. Nothing was started. Shorten them, or split this into more than one document."
+        let wideRefusal = "The brief and the things to include are 85,000 characters together, and one request can hold about 81,900. Nothing was started. Split this into more than one document."
         var admitted: String?
         do { _ = try NativeResearchTaskRequest(objective: wide, deliverables: [wideItem], workerType: "document") }
         catch NativeTaskError.invalidRequest(let message) { admitted = message }
@@ -911,7 +910,7 @@ extension SelfTest {
             ("blank brief", "   ", ["Soil"], nil, nil),
             ("two-line title", brief, ["Soil"], "First\nSecond", nil),
             ("201-character title", brief, ["Soil"], String(repeating: "t", count: 201), "Field 'title' must be at most 200 characters"),
-            ("oversized", "Write a guide.", [String(repeating: "p", count: NativeResearchTaskRequest.documentInputCharacters)], nil, nil),
+            ("oversized", "Write a guide.", [String(repeating: "p", count: 250000)], nil, nil),
             ("blank items only", brief, ["  ", ""], nil, nil),
             ("title with a CRLF", brief, ["Soil"], "a\r\nb", nil),
         ]
@@ -1131,19 +1130,18 @@ extension SelfTest {
         try require(emptyDocument.deliverables.isEmpty && emptyResearch.deliverables.isEmpty, "No deliverables is accepted for a document and for research")
         let blanks = try NativeResearchTaskRequest(objective: "Write a planting guide.", deliverables: ["Soil", "   ", ""], workerType: "document")
         try require(blanks.deliverables == ["Soil"], "Blank deliverables are dropped: \(blanks.deliverables)")
-        let full = try NativeResearchTaskRequest(objective: String(repeating: "o", count: NativeResearchTaskRequest.documentInputCharacters),
-                                                 deliverables: [], workerType: "document")
-        try require(full.objective.count == NativeResearchTaskRequest.documentInputCharacters, "A brief exactly at the limit is accepted")
-        try require(refusal { _ = try NativeResearchTaskRequest(objective: String(repeating: "o", count: NativeResearchTaskRequest.documentInputCharacters),
-                                                                deliverables: ["i"], workerType: "document") }
-                    == "The brief and the things to include are 14,001 characters together, and a document can take about 14,000 for now. Nothing was started. Shorten them, or split this into more than one document.",
-                    "One character past the document limit is refused with both sizes")
-        try require(NativeResearchTaskRequest.documentInputBytes == 16000, "A document can carry 16000 bytes")
-        let accented = String(repeating: "\u{00E9}", count: 8001)
-        try require(accented.count == 8001 && accented.utf8.count == 16002, "The accented fixture is 8001 characters in 16002 bytes")
+        let limit = NativeResearchTaskRequest.inputBytes
+        try require(limit == 245760, "The fixture messages assume one request holds 245,760 bytes")
+        let full = try NativeResearchTaskRequest(objective: String(repeating: "o", count: limit - 4), deliverables: [], workerType: "document")
+        try require(full.objective.count == limit - 4, "A brief that exactly fills one request is accepted")
+        try require(refusal { _ = try NativeResearchTaskRequest(objective: String(repeating: "o", count: limit - 3), deliverables: [], workerType: "document") }
+                    == "The brief and the things to include are 245,757 characters together, and one request can hold about 245,700. Nothing was started. Split this into more than one document.",
+                    "One character past what one request holds is refused with both sizes")
+        let accented = String(repeating: "\u{00E9}", count: 122879)
+        try require(accented.count == 122879 && accented.utf8.count == 245758, "The accented fixture is 122,879 characters in 245,758 bytes")
         try require(refusal { _ = try NativeResearchTaskRequest(objective: accented, deliverables: [], workerType: "document") }
-                    == "The brief and the things to include are 8,001 characters together, and a document can take about 7,900 for now. Nothing was started. Shorten them, or split this into more than one document.",
-                    "Text within the character limit but over the byte limit is refused with a character count it could take")
+                    == "The brief and the things to include are 122,879 characters together, and one request can hold about 122,800. Nothing was started. Split this into more than one document.",
+                    "Text that is short in characters but over the size in bytes is refused with a character count it could take")
         try require(refusal { _ = try NativeResearchTaskRequest(objective: "   ", deliverables: [], workerType: "document") }
                     == "The document brief is empty. Nothing was started.", "An empty brief is refused")
         let titles = ["Two\nlines", String(repeating: "t", count: 201)]
@@ -1160,20 +1158,19 @@ extension SelfTest {
                         == "The title must be one line of at most 200 characters.",
                         "New titles with a Unicode line separator or CRLF get the existing title refusal")
         }
-        let limit = NativeCompanionTaskPayload.assignmentCharacters
-        try require(limit == 50000, "The fixture messages assume the current assignment size")
-        let fits = try NativeCompanionTaskPayload(assignment: String(repeating: "a", count: limit), mode: "manual")
-        try require(fits.assignment.count == limit, "An assignment exactly at the limit is accepted")
-        try require(refusal { _ = try NativeCompanionTaskPayload(assignment: String(repeating: "a", count: limit + 1), mode: "manual") }
-                    == "The assignment is 50,001 characters, and this can take about 50,000 for now. Nothing was started. Shorten it, or split it into more than one request.",
-                    "One character past the assignment limit is refused with both sizes")
-        let marked = String(repeating: "a" + String(repeating: "\u{0301}", count: 120), count: 100)
-        try require(marked.count == 100 && marked.utf8.count == 24100, "The marked fixture is 100 characters in 24100 bytes")
-        let markedRefusal = "The question and the things to cover are 100 characters together, and research can take about 99 for now. Nothing was started. Shorten them, or split this into more than one request."
+        let assignmentLimit = NativeCompanionTaskPayload.assignmentBytes
+        let fits = try NativeCompanionTaskPayload(assignment: String(repeating: "a", count: assignmentLimit - 4), mode: "manual")
+        try require(fits.assignment.count == assignmentLimit - 4, "An assignment that exactly fills one request is accepted")
+        try require(refusal { _ = try NativeCompanionTaskPayload(assignment: String(repeating: "a", count: assignmentLimit - 3), mode: "manual") }
+                    == "The assignment is 245,757 characters, and one request can hold about 245,700. Nothing was started. Split it into more than one request.",
+                    "One character past what one request holds is refused with both sizes")
+        let marked = String(repeating: "a" + String(repeating: "\u{0301}", count: 120), count: 1100)
+        try require(marked.count == 1100 && marked.utf8.count == 265100, "The marked fixture is 1,100 characters in 265,100 bytes")
+        let markedRefusal = "The question and the things to cover are 1,100 characters together, and one request can hold about 1,000. Nothing was started. Split this into more than one request."
         try require(NativeResearchTaskRequest.sizeRefusal(objective: marked, deliverables: [], workerType: "research") == markedRefusal
                     && refusal { _ = try NativeResearchTaskRequest(objective: marked, deliverables: [], workerType: "research") } == markedRefusal,
-                    "A short text over the byte limit is offered a smaller amount, never none")
-        let longAssignment = String(repeating: "a", count: limit + 1)
+                    "A short text over the byte size is offered a smaller amount, never none")
+        let longAssignment = String(repeating: "a", count: assignmentLimit - 3)
         let savedPayload = try JSONSerialization.data(withJSONObject: ["assignment": longAssignment, "mode": "manual"] as [String: Any])
         let decodedPayload = try JSONDecoder().decode(NativeCompanionTaskPayload.self, from: savedPayload)
         try require(decodedPayload.assignment == longAssignment
@@ -1305,10 +1302,10 @@ extension SelfTest {
                         && sentence == lead + "Field '" + item.path + "' " + item.expected && sentence?.contains("has an item") == false,
                         "\(item.raw) names its bound: \(listed) | \(sentence ?? "accepted")")
         }
-        let piled = "a" + String(repeating: "\u{0301}", count: 8000)
+        let piled = "a" + String(repeating: "\u{0301}", count: 123000)
         try require(piled.count == 1, "The piled fixture is one character")
         try require(NativeResearchTaskRequest.sizeRefusal(objective: piled, deliverables: [], workerType: "document")
-                    == "The brief and the things to include, written this way, take more room than a document can carry for now. Nothing was started. Use plainer text, or split this into more than one document.",
+                    == "The brief and the things to include, written this way, take more room than one request can hold. Nothing was started. Use plainer text, or split this into more than one document.",
                     "One character too heavy to carry has no smaller amount to offer")
         return "every supported bound is named in the sentence, typeless bounds use the value's own kind, and a list is blamed on an item only when an item is the problem"
     }

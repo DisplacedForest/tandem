@@ -111,8 +111,12 @@ struct NativeTaskGenerationBudget: Equatable, Sendable {
                                           maximumBytes: budget.transcriptBytes, allowsTools: true)
     }
 
-    static func forWorker(_ workerType: String) -> NativeTaskGenerationBudget {
-        workerType == "companion" ? dot : standard
+    static func forWorker(_ workerType: String, binding: NativeTaskAdmissionBinding? = nil) -> NativeTaskGenerationBudget {
+        if workerType == "companion" { return dot }
+        let policy = NativeResourcePolicy(binding)
+        guard !policy.legacy else { return standard }
+        return NativeTaskGenerationBudget(maximumMessages: standard.maximumMessages,
+                                          maximumBytes: max(standard.maximumBytes, policy.wireBytes), allowsTools: false)
     }
 }
 
@@ -276,13 +280,9 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
         guard let name = parts.first.map(String.init), NativeTaskTransportTiming.Phase(rawValue: name) != nil else { return false }
         if parts.count == 1 { return ["plan", "review", "synthesize", "outline"].contains(name) }
         let index = parts[1]
-        let digits = name == "work" ? 1...9 : 1...2
-        guard digits.contains(index.count), index.allSatisfy(\.isNumber), let number = Int(index) else { return false }
-        switch name {
-        case "draft", "revise": return number < NativeDocumentWorker.maximumSections
-        case "work": return true
-        default: return false
-        }
+        let digits = name == "work" ? 1...9 : 1...6
+        guard digits.contains(index.count), index.allSatisfy(\.isNumber), Int(index) != nil else { return false }
+        return ["draft", "revise", "condense", "notes", "work"].contains(name)
     }
 
     static func validCall(_ call: NativeTaskGenerationToolCall) -> Bool {
@@ -348,7 +348,7 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
 
     func validate(reference: NativeTaskReference, enforceInputLimit: Bool = true) throws {
         let workerType = reference.createRequest.workerType
-        let budget = NativeTaskGenerationBudget.forWorker(workerType)
+        let budget = NativeTaskGenerationBudget.forWorker(workerType, binding: reference.createRequest.payload.nativeBinding)
         guard let profile = reference.profile, let binding = reference.createRequest.payload.nativeBinding,
               reference.remoteTaskID == taskID, reference.deliveryState == .accepted,
               !reference.cancelRequested, reference.snapshot?.state.isTerminal != true,
@@ -362,7 +362,7 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
               deadlineSeconds.isFinite, deadlineSeconds > 0, deadlineSeconds <= 180,
               Self.validShape(messages, tools: tools, toolChoice: toolChoice, budget: budget),
               Self.digest(messages, tools: tools, toolChoice: toolChoice) == messagesDigest else { throw NativeTaskHTTPError.invalidResponse }
-        let limit = budget.allowsTools ? budget.maximumBytes : profile.limits.maximumInputBytes
+        let limit = budget.allowsTools || !NativeResourcePolicy(binding).legacy ? budget.maximumBytes : profile.limits.maximumInputBytes
         if enforceInputLimit, try Self.wireBytes(messages, tools: tools) > limit {
             throw NativeTaskGenerationFailure(code: "input_limit")
         }

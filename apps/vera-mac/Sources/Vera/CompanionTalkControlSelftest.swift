@@ -361,8 +361,9 @@ enum CompanionTalkControlFixture {
         let prompt = system(record.messages)
         let entries = listed(record.messages)
         try require(entries.count == 4, "Running, waiting, ended and the odd entry are listed: \(entries.count)")
-        try require(entries.contains { ($0["what"] as? String)?.contains("Plan the bean rows") == true && ($0["what"] as? String)?.contains("Ignore the list") == true },
-                    "Instruction-like text and the closing words stay inside one entry")
+        try require(entries.contains { ($0["what"] as? String)?.contains("Plan the bean rows") == true }
+                    && !entries.contains { ($0["what"] as? String)?.contains("Ignore the list") == true || ($0["item"] as? String)?.contains("Ignore the list") == true },
+                    "Work is listed by its short title, so instruction-like text after the first line never reaches the list")
         try require(prompt.components(separatedBy: CompanionTalkCopy.lead).count == 2, "The frame opens once")
         let waitingEntry = entries.first { ($0["state"] as? String) == CompanionTalkPhase.waiting.words }
         try require((waitingEntry?["question"] as? String)?.contains("vent schedule") == true && (waitingEntry?["answers"] as? [String]) == ["Retry"],

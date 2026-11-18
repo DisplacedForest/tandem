@@ -11,6 +11,7 @@ actor NativeTaskEngineCounter {
     private var counts: [String: Int] = [:]
     func bump(_ key: String) { counts[key, default: 0] += 1 }
     func count(_ key: String) -> Int { counts[key] ?? 0 }
+    func count(prefix: String) -> Int { counts.filter { $0.key.hasPrefix(prefix) }.reduce(0) { $0 + $1.value } }
 }
 
 struct NativeTaskEngineHarness {
@@ -44,6 +45,7 @@ struct NativeTaskEngineHarness {
                           identity customIdentity: (@Sendable (NativeTaskRecord) -> NativeWorkerIdentity)? = nil,
                           profileReasoning: Bool? = nil,
                           profileOutputLimit: Int? = nil,
+                          profileContextTokens: Int? = nil,
                           complete: @escaping @Sendable (NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion) throws -> NativeTaskEngineHarness {
         let arbiter = NativeInferenceArbiter(cooldown: 0)
         let search = customSearch ?? NativeResearchSearch { query, _ in
@@ -68,7 +70,7 @@ struct NativeTaskEngineHarness {
         let profile = NativeTaskProfileBinding(id: UUID().uuidString, profileID: "fixture-profile",
             provider: try NativeTaskEngineIdentity(URL(string: "https://provider.test/v1")!),
             savedModel: "fixture-model", executionModel: "fixture-model", limits: try NativeTaskGenerationLimits(), reasoning: profileReasoning,
-            outputLimit: profileOutputLimit)
+            outputLimit: profileOutputLimit, contextTokens: profileContextTokens)
         let broker = NativeTaskGenerationBroker(repository: repository, client: engine.client, configuredBase: base,
             isProfileAvailable: { _ in true }, complete: { _, job in
                 await counter.bump("generate:\(job.phase)")
@@ -1180,8 +1182,13 @@ extension SelfTest {
                     && NativeTaskGenerationJob.validPhase("work-999999999") && !NativeTaskGenerationJob.validPhase("work-1234567890")
                     && !NativeTaskGenerationJob.validPhase("work") && !NativeTaskGenerationJob.validPhase("work-x1"),
                     "Work phases carry any step number")
-        try require(!NativeTaskGenerationJob.validPhase("draft-100") && !NativeTaskGenerationJob.validPhase("revise-\(NativeDocumentWorker.maximumSections)")
-                    && NativeTaskGenerationJob.validPhase("draft-0"), "Document phases keep their own numbering")
+        try require(NativeTaskGenerationJob.validPhase("draft-0") && NativeTaskGenerationJob.validPhase("draft-100")
+                    && NativeTaskGenerationJob.validPhase("revise-6") && NativeTaskGenerationJob.validPhase("condense-1002")
+                    && NativeTaskGenerationJob.validPhase("notes-3") && !NativeTaskGenerationJob.validPhase("draft-1234567")
+                    && !NativeTaskGenerationJob.validPhase("outline-1") && !NativeTaskGenerationJob.validPhase("condense"),
+                    "Document and research phases carry any section, part or batch number the plan needs")
+        try require(NativeTaskTransportTiming.Phase(jobPhase: "condense-4") == .condense && NativeTaskTransportTiming.Phase(jobPhase: "notes-0") == .notes,
+                    "Condensing and note phases have their own timing")
         try require(NativeTaskTransportTiming.Phase(jobPhase: "work-3") == .work, "Work phases have their own timing")
 
         let call = NativeTaskGenerationToolCall(id: "call-1", name: "lookup_moon", arguments: "{\"moon\":\"Luma\"}")

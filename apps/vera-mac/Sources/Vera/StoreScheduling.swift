@@ -321,6 +321,7 @@ extension ChatStore {
             return .failed("Scheduled runs aren't available right now.")
         }
         guard let nativeConfig = currentNativeConfig else { return .failed("No model is set up. Add one in Settings.") }
+        await prepareModelContext()
         let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
         if nativeTaskConfiguration != nil && profile == nil { return .failed("The model profile couldn't be prepared.") }
         if !schedule.isDocument && !nativeSearchAvailable() { return .failed("Search isn't set up. Add a search URL in Settings.") }

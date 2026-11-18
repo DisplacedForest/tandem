@@ -129,7 +129,7 @@ actor NativeTaskGenerationExchange {
     func completeTurn(task: NativeTaskRecord, binding: NativeTaskAdmissionBinding, phase: String, attempt: String,
                       ordinal: Int, messages: [NativeTaskGenerationMessage],
                       tools: [NativeTaskGenerationTool]? = nil, toolChoice: String? = nil) async throws -> NativeTaskGenerationCompletion {
-        let budget = NativeTaskGenerationBudget.forWorker(task.workerType)
+        let budget = NativeTaskGenerationBudget.forWorker(task.workerType, binding: binding)
         guard NativeTaskGenerationJob.validShape(messages, tools: tools, toolChoice: toolChoice, budget: budget) else {
             throw NativeTaskGenerationFailure(code: "provider_response")
         }

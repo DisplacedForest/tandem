@@ -145,6 +145,10 @@ final class ChatStore: ObservableObject {
     private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
 
+    func prepareModelContext() async {
+        await NativeModelContext.shared.prepare(nativeConfig, transport: nativeTransport)
+    }
+
     func askedWorkProfile() -> (profile: NativeTaskProfileBinding?, usable: Bool) {
         let profile = nativeTaskEnrollment ?? nativeConfig.flatMap { config in try? nativeTaskConfiguration?.enroll(config: config) }
         return (profile, nativeTaskConfiguration == nil || profile != nil)
@@ -2466,6 +2470,7 @@ final class ChatStore: ObservableObject {
                 userMessageID: turn.userMessageID, assistantMessageID: turn.assistantMessageID)
             let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
             if nativeTaskConfiguration == nil || profile != nil {
+                if nativeTaskConfiguration != nil { Task { await NativeModelContext.shared.prepare(nativeConfig, transport: nativeTransport) } }
                 let workerTypes = turnToolAuthority(for: turn).0.allowedWorkerTypes
                 turnRegistry = NativeToolRegistry(definitions: sharedDefinitions + [
                     NativeTaskTools.definition(service: service, origin: origin, profile: profile,
