@@ -117,10 +117,15 @@ enum NativeTaskProjection {
             case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large. Start a new document with a shorter brief." : "The research input is too large. Start a smaller research request."
             case "request_conflict": card.milestone = "The saved request could not be resumed safely. \(again)."
             case "profile_changed" where document: card.milestone = NativeTaskWorkerFailures.modelChangedMessage
+            case "plan_too_large":
+                let sizes = snapshot.checkpoint.oversize ?? []
+                card.milestone = sizes.count == 2
+                    ? NativeResourcePolicy.planTooLarge(needed: sizes[0], room: sizes[1])
+                    : "This document would need more than Tandem can save in one document. Ask for it as two documents."
             case "result_too_large":
                 let sizes = snapshot.checkpoint.oversize ?? []
                 card.milestone = sizes.count == 2
-                    ? NativeResourcePolicy.tooLarge(sizes[0], limit: sizes[1], what: document ? "finished document" : "finished report")
+                    ? NativeResourcePolicy.tooLarge(sizes[0], limit: sizes[1], document: document)
                     : "The finished result is larger than Tandem can save. The finished parts are kept."
             default:
                 if dot {
@@ -220,7 +225,7 @@ enum NativeTaskProjection {
     static let condensingLine = "Condensing the material so it fits."
 
     static func unrevisedLine(_ count: Int) -> String {
-        count == 1 ? "The document is ready. One section wasn't given a revision pass." : "The document is ready. \(count) sections weren't given a revision pass."
+        count == 1 ? "One section wasn't revised." : "\(count) sections weren't revised."
     }
 
     static func documentMilestone(_ checkpoint: NativeTaskCheckpoint) -> String {

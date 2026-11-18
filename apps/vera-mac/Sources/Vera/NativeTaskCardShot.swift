@@ -162,7 +162,7 @@ struct NativeTaskCardShotSurface: View {
         default: break
         }
         let documentState = variant.components(separatedBy: "-card-document-")
-        if documentState.count == 2, ["cut-short", "empty", "unusable", "model-changed", "shorter", "credential", "outline-cut-short", "condensing", "unrevised", "too-large"].contains(documentState[1]) {
+        if documentState.count == 2, ["cut-short", "empty", "unusable", "model-changed", "shorter", "credential", "outline-cut-short", "condensing", "unrevised", "too-large", "plan-too-large"].contains(documentState[1]) {
             result.title = "Workshop plan"
             result.workerType = "document"
             switch documentState[1] {
@@ -183,7 +183,11 @@ struct NativeTaskCardShotSurface: View {
                 result.canCancel = false
             case "too-large":
                 result.status = .failed
-                result.milestone = NativeResourcePolicy.tooLarge(301_250, limit: 262_000, what: "finished document")
+                result.milestone = NativeResourcePolicy.tooLarge(301_250, limit: 262_000, document: true)
+                result.canCancel = false
+            case "plan-too-large":
+                result.status = .failed
+                result.milestone = NativeResourcePolicy.planTooLarge(needed: 288_720, room: 243_808)
                 result.canCancel = false
             case "outline-cut-short":
                 result.status = .needsInput

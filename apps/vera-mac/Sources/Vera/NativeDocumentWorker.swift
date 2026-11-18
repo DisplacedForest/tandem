@@ -232,7 +232,7 @@ enum NativeDocumentWorker {
             instruction += " Write the entire requested list as exactly \(count) nonempty Markdown bullet lines. Each line starts with '- '. No title, headings, preamble, nested lists, code fences, or closing text. The application adds the title. Preserve this format during revision."
         }
         if checkpoint.phase == "outline" {
-            let count = sectionCap(payload).map { "at most \($0) sections" } ?? "as many sections as the document needs"
+            let count = sectionCap(payload).map { "at most \($0) sections" } ?? "as many sections as the document needs, at most \(Policy.sectionsThatFit)"
             instruction += " Plan \(count) as {\"sections\":[{\"heading\":\"short heading\",\"instructions\":\"section scope\"}]}."
             if let limit = checkpoint.outlineLimit {
                 instruction += " Keep every heading and instruction brief: the whole plan must stay under \(limit) characters combined."
@@ -482,6 +482,10 @@ enum NativeDocumentWorker {
             guard let sections = parseOutline(response, cap: cap) else {
                 return try pause(&checkpoint, "The model did not return a valid document outline.")
             }
+            if !policy.legacy, sections.count > Policy.sectionsThatFit {
+                checkpoint.oversize = [sections.count * Policy.sectionShare, Policy.sectionsThatFit * Policy.sectionShare]
+                return try fail(&checkpoint, code: "plan_too_large", message: Policy.planTooLarge(needed: sections.count * Policy.sectionShare, room: Policy.sectionsThatFit * Policy.sectionShare))
+            }
             var planned = checkpoint
             planned.outline = sections
             checkpoint.note = NativeTaskDelivery.note(in: response)
@@ -562,7 +566,7 @@ enum NativeDocumentWorker {
             let allowed = policy.legacy ? policy.reportCharacters : roomForReport(fields)
             guard markdown.unicodeScalars.count <= allowed, let result = try? NativeTaskStore.canonical(fields) else {
                 checkpoint.oversize = [markdown.unicodeScalars.count, allowed]
-                return try fail(&checkpoint, code: "result_too_large", message: Policy.tooLarge(markdown.unicodeScalars.count, limit: allowed, what: "finished document"))
+                return try fail(&checkpoint, code: "result_too_large", message: Policy.tooLarge(markdown.unicodeScalars.count, limit: allowed, document: true))
             }
             return NativeTaskStepResult(state: .completed, checkpoint: try checkpoint.encoded(), result: result, event: "completed",
                                         data: try NativeTaskStore.canonical(data(checkpoint)))

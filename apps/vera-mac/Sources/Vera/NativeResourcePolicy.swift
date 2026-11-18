@@ -26,6 +26,7 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
     static let keptNoteLines = 16
     static let progressSources = 6
     static let wireEncodingMultiple = 2
+    static let sectionFrameCharacters = 8
     static let jobBytes = 1_048_576
     static let jobFrameBytes = 16_384
     static let noteQuestionCharacters = 40
@@ -87,6 +88,7 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
         "wireEncodingMultiple": "A prompt's text can take up to twice its size once encoded for sending, from escaped quotes and line breaks.",
         "jobBytes": "One model request travels inside the app as a job of at most this many bytes, so prompts stay under it even for models with very large context windows.",
         "jobFrameBytes": "Room in that job for everything around the prompt: ids, digests and the request settings.",
+        "sectionFrameCharacters": "The heading marks and blank lines each section adds to a finished document.",
         "progressSources": "A progress update names only the first few new sources, so it stays inside one update's size.",
         "noteQuestionCharacters": "A troubleshooting note quotes only the start of the search it is about.",
         "shortestPlanCharacters": "Asking again for a shorter plan never asks for less than this.",
@@ -181,8 +183,20 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
         }
     }
 
-    static func tooLarge(_ characters: Int, limit: Int, what: String) -> String {
-        "The \(what) is \(NativeTaskInputSize.grouped(characters)) characters, and Tandem can save one of up to about \(NativeTaskInputSize.grouped(limit)). The finished parts are kept."
+    static var sectionShare: Int { fullSectionCharacters + headingCharacters + sectionFrameCharacters }
+
+    static var sectionsThatFit: Int { max(1, (savedResultBytes - jobFrameBytes) / sectionShare) }
+
+    static func planTooLarge(needed: Int, room: Int) -> String {
+        "This document would need about \(NativeTaskInputSize.grouped(needed)) characters, and Tandem can save up to about \(NativeTaskInputSize.grouped(room)) in one document. Ask for it as two documents."
+    }
+
+    static func tooLarge(_ characters: Int, limit: Int, document: Bool) -> String {
+        let size = NativeTaskInputSize.grouped(characters)
+        let room = NativeTaskInputSize.grouped(limit)
+        return document
+            ? "The finished document is \(size) characters, and Tandem can save up to about \(room) in one document. Ask for it as two documents."
+            : "The finished report is \(size) characters, and Tandem can save up to about \(room) in one report. Ask for a narrower report."
     }
 }
 

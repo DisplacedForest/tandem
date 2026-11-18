@@ -42,6 +42,34 @@ extension SelfTest {
         try await documentRelaunchDuringCondense()
         try await documentRevisionRecorded()
         try await researchBatchedNotes()
+        try await documentPlanTooLarge()
+    }
+
+    private static func documentPlanTooLarge() async throws {
+        let require = NativeTaskFixture.require
+        let repository = try LocalChatRepository(inMemory: true)
+        let counter = NativeTaskEngineCounter()
+        let recorder = NativeTaskJobRecorder()
+        let many = NativeResourcePolicy.sectionsThatFit + 4
+        let sections = (1...many).map { ["heading": "Part \($0)", "instructions": "Cover part \($0)"] }
+        let plan = String(decoding: try JSONSerialization.data(withJSONObject: ["sections": sections]), as: UTF8.self)
+        let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: counter) { job in
+            await recorder.record(job)
+            return job.phase == "outline" ? .text(plan) : ResourcePolicyFixture.text("Written.")
+        }
+        try await harness.start()
+        let reference = try await harness.submitDocument(title: "Everything", brief: "Write about everything.", inputs: [])
+        try require(try await harness.wait(seconds: 20) { try harness.state(reference) == .failed }, "A plan larger than one document can hold stops at the plan")
+        let outlinePrompt = await recorder.all().first { $0.phase == "outline" }?.messages.first?.content ?? ""
+        try require(outlinePrompt.contains("at most \(NativeResourcePolicy.sectionsThatFit)"), "The plan is asked to fit what one document can hold")
+        try require(await counter.count(prefix: "generate:draft") == 0, "No section is written for a plan that can't be saved")
+        let snapshot = try repository.taskProjection(id: reference.id)!.snapshot!
+        let card = try NativeTaskProjection.display(reference: try repository.taskReference(id: reference.id)!, snapshot: snapshot).card
+        let expected = NativeResourcePolicy.planTooLarge(needed: many * NativeResourcePolicy.sectionShare,
+                                                         room: NativeResourcePolicy.sectionsThatFit * NativeResourcePolicy.sectionShare)
+        try require(card.status == .failed && card.milestone == expected && expected.hasSuffix("Ask for it as two documents."),
+                    "The card says how much the plan needs, what one document holds and what to do: \(card.milestone)")
+        await harness.stop()
     }
 
     private static func policyRules() throws {
@@ -53,7 +81,7 @@ extension SelfTest {
             "instructionCharacters", "titleCharacters", "condenseShrinkPercent", "materialShareDivisor", "condenseInputMultiple",
             "legacyMaximumSections", "legacyMaximumSources", "searchResultsPerQuestion", "pageCharacters", "reviewCharacters", "urlBytes",
             "noteLineCharacters", "keptNoteLines", "progressSources", "noteQuestionCharacters", "shortestPlanCharacters",
-            "maximumPlanAttempts", "maximumRequestedBullets", "wireEncodingMultiple", "jobBytes", "jobFrameBytes",
+            "maximumPlanAttempts", "maximumRequestedBullets", "wireEncodingMultiple", "jobBytes", "jobFrameBytes", "sectionFrameCharacters",
             "legacyPromptBytes", "legacyOutputTokens", "legacyReportCharacters", "legacyResearchReportCharacters", "legacySourceCharacters",
             "companionReportScalars", "companionNoteScalars", "companionStepScalars", "summaryCharacters",
             "companionCheckpointReserveBytes", "companionUnknownMessageBytes", "companionSeparatorBytes", "companionMarkerBytes",
@@ -84,11 +112,16 @@ extension SelfTest {
         let list = Data(#"{"data":[{"id":"big/model","context_length":200000},{"id":"routed/model","top_provider":{"context_length":131072}},{"id":"plain"},{"id":"odd","context_length":true}]}"#.utf8)
         try require(NativeChatClient.modelContexts(from: list) == ["big/model": 200_000, "routed/model": 131_072],
                     "The model list's context sizes are read, and anything that isn't a positive whole number is ignored")
-        let line = Policy.tooLarge(300_001, limit: 262_000, what: "finished document")
-        try require(line == "The finished document is 300,001 characters, and Tandem can save one of up to about 262,000. The finished parts are kept.",
-                    "A result too large to save says both numbers")
-        try require(NativeTaskProjection.unrevisedLine(1) == "The document is ready. One section wasn't given a revision pass."
-                    && NativeTaskProjection.unrevisedLine(3) == "The document is ready. 3 sections weren't given a revision pass."
+        try require(Policy.tooLarge(300_001, limit: 262_000, document: true)
+                    == "The finished document is 300,001 characters, and Tandem can save up to about 262,000 in one document. Ask for it as two documents."
+                    && Policy.tooLarge(300_001, limit: 262_000, document: false)
+                    == "The finished report is 300,001 characters, and Tandem can save up to about 262,000 in one report. Ask for a narrower report.",
+                    "A result too large to save says both numbers and what to do next")
+        try require(Policy.planTooLarge(needed: 288_720, room: 243_808)
+                    == "This document would need about 288,720 characters, and Tandem can save up to about 243,808 in one document. Ask for it as two documents.",
+                    "A plan too large for one document says both numbers before anything is written")
+        try require(NativeTaskProjection.unrevisedLine(1) == "One section wasn't revised."
+                    && NativeTaskProjection.unrevisedLine(3) == "3 sections weren't revised."
                     && NativeTaskProjection.condensingLine == "Condensing the material so it fits."
                     && NativeDocumentWorker.condenseStuckMessage == "The material for this document couldn't be condensed enough to fit the model. The parts already condensed are kept. Try this step again?",
                     "The new card lines read exactly as written")

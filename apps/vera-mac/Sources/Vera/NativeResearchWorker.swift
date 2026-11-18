@@ -419,7 +419,7 @@ enum NativeResearchWorker {
                 let allowed = NativeDocumentWorker.roomForReport(fields)
                 checkpoint.failureReason = "result_too_large"
                 checkpoint.oversize = [report.unicodeScalars.count, allowed]
-                let message = NativeResourcePolicy.tooLarge(report.unicodeScalars.count, limit: allowed, what: "finished report")
+                let message = NativeResourcePolicy.tooLarge(report.unicodeScalars.count, limit: allowed, document: false)
                 checkpoint.note([message])
                 return NativeTaskStepResult(state: .failed, checkpoint: try checkpoint.encoded(), event: "failed",
                                             data: try NativeTaskStore.canonical(["message": message]))
