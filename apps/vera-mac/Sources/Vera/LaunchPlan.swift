@@ -11,7 +11,8 @@ enum LaunchPlan {
     static let documentArtifactMode = "--document-artifact-selftest"
     static let shotMode = "--shot"
     static let selftestMode = "--selftest"
-    static let namedModes = ["--openrouter-smoke", "--provider-smoke-selftest", "--mcp-selftest", "--domain-state-selftest", "--domain-extraction-selftest", "--shared-runtime-memory-selftest", "--memory-gate-selftest", "--tool-eval-selftest", "--tool-eval-live", "--companion-live", "--memory-gate-live", "--memory-evidence-selftest", "--companion-introduction-selftest", "--rule-records-selftest", "--preferences-selftest", "--preferences-live", selftestMode, "--dump-context"]
+    static let toolEvalLiveMode = "--tool-eval-live"
+    static let namedModes = ["--openrouter-smoke", "--provider-smoke-selftest", "--mcp-selftest", "--domain-state-selftest", "--domain-extraction-selftest", "--shared-runtime-memory-selftest", "--memory-gate-selftest", "--tool-eval-selftest", toolEvalLiveMode, "--companion-live", "--memory-gate-live", "--memory-evidence-selftest", "--companion-introduction-selftest", "--rule-records-selftest", "--preferences-selftest", "--preferences-live", selftestMode, "--dump-context"]
 
     static let realDataModes: Set<String> = ["--memory-gate-live", "--companion-live", "--preferences-live", "--openrouter-smoke", "--dump-context", "--pi-checkpoint", credentialMode]
 

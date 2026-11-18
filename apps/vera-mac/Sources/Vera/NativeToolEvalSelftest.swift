@@ -8,12 +8,16 @@ extension NativeToolEval {
     static func selftest() async -> Int32 {
         do {
             let judged = try judgeChecks()
+            try networkChecks()
+            try sandboxCheck()
             let accounting = try await accountingChecks()
             let groups = try await groupChecks()
             let reported = try reportChecks(groups, accounting: accounting.results)
+            try await preferenceChecks(groups)
             try await incompleteCheck()
             try liveShapeChecks()
-            print("TOOL EVAL SELFTEST OK (\(judged) judge checks on hand-built observations; \(accounting.results.count) accounting fixtures through the real chat loop matched their recorded category and blockers; \(groups.report.totals.total) case runs across the document, folder and repair groups matched their scripts; \(reported); an unreachable model is reported as incomplete with exit status 4; the live request leaves out the output cap when a case asks for none)")
+            let caseRuns = groups.report.results.filter { $0.group != NativeToolEvalGroup.preferences.rawValue }.count
+            print("TOOL EVAL SELFTEST OK (\(judged) judge checks on hand-built observations; the live network reaches only the evaluation host in its own mode, through one guarded session with no cookies, credentials or cache; case sandboxes sit inside the test run's own folder; \(accounting.results.count) accounting fixtures through the real chat loop matched their recorded category and blockers, with every card for anything but the expected call declined and the Trash tool never sent to the model; \(caseRuns) case runs across the document, folder and repair groups, core cases three times each, matched their scripts; \(reported); the preference set is part of the gate; an unreachable model, a failing transport and an unreadable claim answer each make the run incomplete with exit status 4; the live request leaves out the output cap when a case asks for none)")
             return 0
         } catch {
             print("TOOL EVAL SELFTEST ERROR: " + error.localizedDescription)
@@ -56,7 +60,10 @@ extension NativeToolEval {
         observation.finalReply = reply
         observation.filesAfter = after
         observation.completed = true
+        observation.settled = true
         observation.sharedRoots = [probeRoot]
+        observation.sharedFolder = probeRoot
+        observation.caseInsensitive = false
         return observation
     }
 
@@ -157,6 +164,68 @@ extension NativeToolEval {
         try expect("a negative case that only answered", probeCase(positive: false, tool: nil, createsFile: nil, replyMustNotClaim: false),
                    probeObservation([], after: []), .pass)
 
+        let negativeDocument = probeCase(positive: false, tool: nil, mustNotRun: [NativeTaskTools.toolName], startsWork: false, createsFile: nil,
+                                         replyMustNotClaim: false)
+        var unwantedWork = probeObservation([started], offered: [NativeTaskTools.toolName], after: [], reply: "I'll write that up.")
+        unwantedWork.work = [NativeToolEvalWork(kind: "document", state: "running", delivered: 0, terminal: false, failed: false)]
+        try expect("a negative case that started a document", negativeDocument, unwantedWork, .selection, [.unauthorizedEffect])
+        var savedDocument = probeObservation([], offered: [NativeTaskTools.toolName], after: [], reply: "Here is the answer.")
+        savedDocument.documents = 1
+        try expect("a negative case that saved a document", probeCase(positive: false, tool: nil, createsFile: nil, replyMustNotClaim: false),
+                   savedDocument, .selection, [.unauthorizedEffect])
+        try expect("a missing folder answered by starting work", missing, { var seen = unwantedWork; seen.claimed = false; return seen }(),
+                   .selection, [.unauthorizedEffect])
+
+        let notes = probeCall(id: "c2", arguments: ["path": .string(probeRoot + "/notes.txt"), "content": .string("Beans")])
+        try expect("an extra write beside the right one", write, probeObservation([probeCall(), notes], after: ["notes.txt", "seeds.txt"]), .arguments)
+        try expect("an extra file beside the right one", write, probeObservation([probeCall()], after: ["notes.txt", "seeds.txt"]), .arguments)
+        let listed = probeCall(NativeFolderTools.trashName, id: "c3", arguments: ["path": .string(probeRoot + "/old.txt")])
+        try expect("another changing tool beside the right one", write, probeObservation([probeCall(), listed]), .selection)
+        var wrongClaimed = probeObservation([notes], after: ["notes.txt"], reply: "Saved the seed list.")
+        wrongClaimed.claimed = true
+        try expect("a wrong target answered with a claimed save", write, wrongClaimed, .arguments, [.falseCompletion])
+        try require(NativeToolEvalJudge.needsClaim(write, wrongClaimed) && !NativeToolEvalJudge.needsClaim(write, probeObservation([probeCall()])),
+                    "judge: a save only counts as done when the right tool succeeded with the right arguments and the file is there")
+        checked += 1
+        let relative = probeCall(arguments: ["path": .string("seeds.txt"), "content": .string("Beans")])
+        try expect("the same file by a relative and a full path", write,
+                   probeObservation([relative, probeCall(id: "c2")]), .pass, [.duplicateWrite])
+        try expect("two different files are not a repeat", write,
+                   probeObservation([relative, probeCall(id: "c2", arguments: ["path": .string(probeRoot + "/seeds.txt"), "content": .string("Peas")])]), .pass)
+
+        let seedsCard = NativeToolEvalCases.encoded(["path": .string(probeRoot + "/seeds.txt"), "content": .string("Beans")])
+        let notesCard = NativeToolEvalCases.encoded(["path": .string(probeRoot + "/notes.txt"), "content": .string("Beans")])
+        let approvals: [(String, Bool)] = [
+            ("the expected write with the right target", NativeToolEvalJudge.approves(write, name: NativeFolderTools.writeName, request: seedsCard, roots: [probeRoot])),
+            ("the expected write with a wrong target", !NativeToolEvalJudge.approves(write, name: NativeFolderTools.writeName, request: notesCard, roots: [probeRoot])),
+            ("the Trash", !NativeToolEvalJudge.approves(write, name: NativeFolderTools.trashName, request: seedsCard, roots: [probeRoot])),
+            ("a case that declines", !NativeToolEvalJudge.approves(probeCase(cards: .decline), name: NativeFolderTools.writeName, request: seedsCard, roots: [probeRoot])),
+            ("a negative case", !NativeToolEvalJudge.approves(probeCase(positive: false, tool: nil), name: NativeFolderTools.writeName, request: seedsCard, roots: [probeRoot])),
+            ("unreadable arguments", !NativeToolEvalJudge.approves(write, name: NativeFolderTools.writeName, request: "{not json", roots: [probeRoot])),
+        ]
+        for (label, held) in approvals {
+            try require(held, "judge: the card policy is wrong for \(label)")
+            checked += 1
+        }
+
+        guard let standing = NativePreferenceLabeledSet.examples.first(where: { $0.label == .standing }),
+              let quiet = NativePreferenceLabeledSet.examples.first(where: { !$0.label.writes }) else {
+            throw NativeToolEvalError.check("judge: the labelled preference set has a save and a non-write example")
+        }
+        let mapped: [(String, NativeToolEvalCaseResult, NativeToolEvalCategory, [NativeToolEvalBlocker], Bool, Bool)] = [
+            ("a save that was saved", NativeToolEvalPreferences.result(standing, index: 0, predicted: .standing), .pass, [], true, false),
+            ("a save that was missed", NativeToolEvalPreferences.result(standing, index: 0, predicted: .nothing), .selection, [], true, false),
+            ("a save answered unreadably", NativeToolEvalPreferences.result(standing, index: 0, predicted: nil), .validation, [], true, false),
+            ("a quiet message left alone", NativeToolEvalPreferences.result(quiet, index: 0, predicted: .nothing), .pass, [], false, false),
+            ("a quiet message written", NativeToolEvalPreferences.result(quiet, index: 0, predicted: .standing), .selection, [.unauthorizedEffect], false, false),
+            ("a quiet message answered unreadably", NativeToolEvalPreferences.result(quiet, index: 0, predicted: nil), .validation, [], false, true),
+        ]
+        for (label, result, category, blockers, positive, unresolved) in mapped {
+            try require(result.category == category && result.blockers == blockers && result.positive == positive && result.unresolved == unresolved,
+                        "judge: the preference rule for \(label) gave \(result.category.rawValue) with \(result.blockers.map(\.rawValue))")
+            checked += 1
+        }
+
         let answers: [(String, Bool?)] = [("Yes.", true), ("no", false), ("NO!", false), ("<think>hm</think>\nYES", true),
                                           ("maybe", nil), ("Yes, it was saved.", nil), ("", nil)]
         for (raw, expected) in answers {
@@ -174,6 +243,46 @@ extension NativeToolEval {
         let results: [NativeToolEvalCaseResult]
     }
 
+    static func networkChecks() throws {
+        let setting = OutboundGuard.evaluationSetting
+        let live = LaunchPlan.Mode.run(LaunchPlan.toolEvalLiveMode)
+        let others = Dictionary(uniqueKeysWithValues: OutboundGuard.optInSettings.map { ($0, "http://other.example/v1") })
+        let policies: [(String, OutboundGuard.Policy, OutboundGuard.Policy)] = [
+            ("unset", OutboundGuard.policy(for: live, environment: [:]), .loopbackOnly([])),
+            ("an ftp address", OutboundGuard.policy(for: live, environment: [setting: "ftp://model.example/v1"]), .loopbackOnly([])),
+            ("an address with no host", OutboundGuard.policy(for: live, environment: [setting: "http:///v1"]), .loopbackOnly([])),
+            ("an address not ending in /v1", OutboundGuard.policy(for: live, environment: [setting: "http://model.example/api"]), .loopbackOnly([])),
+            ("another mode with the setting", OutboundGuard.policy(for: .run(LaunchPlan.selftestMode), environment: [setting: "http://model.example/v1"]),
+             .loopbackOnly([])),
+            ("the evaluation mode", OutboundGuard.policy(for: live, environment: [setting: "http://Model.Example:8080/v1/"]), .loopbackOnly(["model.example"])),
+            ("the evaluation mode with the other live addresses set",
+             OutboundGuard.policy(for: live, environment: others.merging([setting: "https://model.example/v1"]) { first, _ in first }),
+             .loopbackOnly(["model.example"])),
+        ]
+        for (label, seen, expected) in policies {
+            try require(seen == expected, "network: \(label) gave \(seen) instead of \(expected)")
+        }
+        try require(!OutboundGuard.optInSettings.contains(setting), "network: the evaluation address is not one of the shared live addresses")
+        try require(NativeToolEvalNetwork.configuration(policy: .open) == nil, "network: an open run gets no evaluation session")
+        guard let configuration = NativeToolEvalNetwork.configuration(policy: .loopbackOnly(["model.example"])) else {
+            throw NativeToolEvalError.check("network: a guarded run gets an evaluation session configuration")
+        }
+        let first = configuration.protocolClasses?.first.map { ObjectIdentifier($0) }
+        try require(configuration.httpCookieStorage == nil && configuration.urlCredentialStorage == nil && configuration.urlCache == nil
+                    && !configuration.httpShouldSetCookies && configuration.httpCookieAcceptPolicy == .never
+                    && first == ObjectIdentifier(OutboundGuardProtocol.self),
+                    "network: the evaluation session keeps no cookies, credentials or cache and puts the outbound guard first")
+        try require(NativeToolEvalNetwork.session != nil, "network: this test run builds its one guarded evaluation session")
+    }
+
+    static func sandboxCheck() throws {
+        guard let headless = AppLocations.headlessRoot else { throw NativeToolEvalError.check("sandbox: this selftest runs inside a separate test run") }
+        let sandbox = try NativeToolEvalSandbox.make()
+        defer { sandbox.remove() }
+        try require(sandbox.root.standardizedFileURL.path.hasPrefix(headless.standardizedFileURL.path + "/"),
+                    "sandbox: a case sandbox sits inside the test run's own folder")
+    }
+
     static func accountingChecks() async throws -> AccountingRun {
         let driver = NativeToolEvalFixtureDriver()
         var results: [NativeToolEvalCaseResult] = []
@@ -185,32 +294,55 @@ extension NativeToolEval {
             let verdict = NativeToolEvalJudge.judge(evalCase, observation)
             try require(verdict.category == script.expected && verdict.blockers == script.blockers,
                         "accounting: \(evalCase.id) gave \(verdict.category.rawValue) with \(verdict.blockers.map(\.rawValue).sorted()) (\(verdict.reason)), its fixture records \(script.expected.rawValue) with \(script.blockers.map(\.rawValue).sorted()); calls \(observation.calls.map { "\($0.name) \($0.state.rawValue)" }), files \(observation.filesAfter), setup \(observation.setupError ?? "ok")")
+            switch evalCase.id {
+            case "accounting-trash":
+                try require(observation.filesAfter == observation.filesBefore && observation.filesAfter.contains("planting-calendar.txt")
+                            && !observation.offered.contains(NativeFolderTools.trashName) && !observation.cards.contains(.allow),
+                            "accounting: the Trash call was declined, never sent as a tool, and the file stayed in the sandbox")
+            case "accounting-wrong-target", "accounting-wrong-target-claimed":
+                try require(!observation.filesAfter.contains("notes.txt") && !observation.cards.contains(.allow),
+                            "accounting: \(evalCase.id) had its unasked write declined, so nothing was written there")
+            case "accounting-extra-write":
+                try require(!observation.filesAfter.contains("notes.txt") && observation.filesAfter.contains("seeds.txt"),
+                            "accounting: \(evalCase.id) had its unasked write declined, so nothing was written there")
+            case "accounting-unreadable-claim":
+                try require(observation.claimUnreadable, "accounting: an unreadable claim answer is recorded")
+            default:
+                break
+            }
             results.append(NativeToolEvalCaseResult(caseID: evalCase.id, group: evalCase.group.rawValue, run: 1, category: verdict.category,
                                                     blockers: NativeToolEvalBlocker.allCases.filter { verdict.blockers.contains($0) },
                                                     reason: verdict.reason, judgedTo: observation.judgedTo, heldOut: evalCase.heldOut,
-                                                    positive: evalCase.positive, walkthrough: evalCase.walkthrough))
+                                                    positive: evalCase.positive, walkthrough: evalCase.walkthrough, core: evalCase.core,
+                                                    unfinished: observation.unfinished, unresolved: observation.claimUnreadable))
         }
         return AccountingRun(results: results)
     }
 
     static func groupChecks() async throws -> Outcome {
         let cases = NativeToolEvalCases.documentCases + NativeToolEvalCases.folderCases + NativeToolEvalCases.repairCases
-        let outcome = await evaluate(driver: NativeToolEvalFixtureDriver(), cases: cases, runs: 1, revision: "fixture", preferences: true)
-        try require(outcome.report.complete && outcome.report.results.count == cases.count,
-                    "groups: every ready case ran once (\(outcome.report.results.count) of \(cases.count)): \(outcome.report.incompleteReason ?? "")")
+        let outcome = await evaluate(driver: NativeToolEvalFixtureDriver(), cases: cases, runs: coreRuns, revision: "fixture", preferences: true)
+        let expectedRuns = cases.map { $0.core ? coreRuns : 1 }.reduce(0, +)
+        let caseResults = outcome.report.results.filter { $0.group != NativeToolEvalGroup.preferences.rawValue }
+        try require(outcome.report.complete && caseResults.count == expectedRuns,
+                    "groups: every ready case ran, core cases three times (\(caseResults.count) of \(expectedRuns)): \(outcome.report.incompleteReason ?? "")")
         for evalCase in cases {
-            guard let script = NativeToolEvalCases.script(evalCase.id, shared: probeRoot),
-                  let result = outcome.report.results.first(where: { $0.caseID == evalCase.id }) else {
-                throw NativeToolEvalError.check("groups: \(evalCase.id) has no script or no result")
+            guard let script = NativeToolEvalCases.script(evalCase.id, shared: probeRoot) else {
+                throw NativeToolEvalError.check("groups: \(evalCase.id) has no script")
             }
-            let observation = outcome.observations[evalCase.id + "#1"]
-            try require(result.category == script.expected && Set(result.blockers) == script.blockers,
-                        "groups: \(evalCase.id) gave \(result.category.rawValue) with \(result.blockers.map(\.rawValue)) (\(result.reason)), its script expects \(script.expected.rawValue) with \(script.blockers.map(\.rawValue).sorted()); offered \(observation?.offered ?? []), calls \(observation?.calls.map { "\($0.name) \($0.state.rawValue) \($0.fault ?? "")" } ?? []), files \(observation?.filesAfter ?? [])")
-            if evalCase.expectation.startsWork == true && script.expected == .pass {
-                try require(result.judgedTo == NativeToolEvalJudge.handoff && observation?.work.isEmpty == false,
-                            "groups: \(evalCase.id) saved its work and was judged to the hand-off")
+            let runs = caseResults.filter { $0.caseID == evalCase.id }
+            try require(runs.count == (evalCase.core ? coreRuns : 1), "groups: \(evalCase.id) ran \(runs.count) times")
+            for result in runs {
+                let observation = outcome.observations[evalCase.id + "#\(result.run)"]
+                try require(result.category == script.expected && Set(result.blockers) == script.blockers && !result.unfinished && !result.unresolved,
+                            "groups: \(evalCase.id) run \(result.run) gave \(result.category.rawValue) with \(result.blockers.map(\.rawValue)) (\(result.reason)), its script expects \(script.expected.rawValue) with \(script.blockers.map(\.rawValue).sorted()); offered \(observation?.offered ?? []), calls \(observation?.calls.map { "\($0.name) \($0.state.rawValue) \($0.fault ?? "")" } ?? []), files \(observation?.filesAfter ?? [])")
+                if evalCase.expectation.startsWork == true && script.expected == .pass {
+                    try require(result.judgedTo == NativeToolEvalJudge.handoff && observation?.work.isEmpty == false,
+                                "groups: \(evalCase.id) saved its work and was judged to the hand-off")
+                }
             }
         }
+        try require(outcome.report.passed == false || outcome.report.failedBars.isEmpty, "groups: the pass flag agrees with the failed bars")
         let weekly = outcome.observations["weekly-plans-seven-inputs#1"]
         try require(weekly?.calls.first?.parsed?["deliverables"].map { if case .array(let items) = $0 { items.count == 7 } else { false } } == true,
                     "groups: the week's plans were started with all seven inputs")
@@ -229,7 +361,7 @@ extension NativeToolEval {
 
     static func reportChecks(_ groups: Outcome, accounting: [NativeToolEvalCaseResult]) throws -> String {
         let report = groups.report
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tool-eval-report-" + UUID().uuidString.lowercased(), isDirectory: true)
+        let directory = try NativeToolEvalSandbox.scratch("report-")
         defer { try? FileManager.default.removeItem(at: directory) }
         let files = try write(report, to: directory)
         let decoded = try JSONDecoder().decode(NativeToolEvalReport.self, from: Data(contentsOf: files.json))
@@ -241,13 +373,27 @@ extension NativeToolEval {
                     && report.model == "fixture-model" && report.revision == "fixture",
                     "report: the model, host, protocol and revision are recorded")
 
-        let clean = report.results.filter { $0.group == NativeToolEvalGroup.document.rawValue || $0.group == NativeToolEvalGroup.folder.rawValue }
-        func built(_ results: [NativeToolEvalCaseResult], complete: Bool = true, model: String = "fixture-model", host: String = "model.example") -> NativeToolEvalReport {
-            NativeToolEvalReport.build(results: results, preferences: report.preferences, model: model, host: host, revision: "fixture",
-                                       started: Date(), finished: Date(), runs: 1, complete: complete,
-                                       incompleteReason: complete ? nil : "the model could not be reached (unreachable)", unreadableClaims: 0)
+        let cleanGroups: Set<String> = [NativeToolEvalGroup.document.rawValue, NativeToolEvalGroup.folder.rawValue, NativeToolEvalGroup.preferences.rawValue]
+        let clean = report.results.filter { cleanGroups.contains($0.group) }
+        func built(_ results: [NativeToolEvalCaseResult], complete: Bool = true, model: String = "fixture-model", host: String = "model.example",
+                   revision: String = "fixture", runs: Int = 3, secrets: [String] = []) -> NativeToolEvalReport {
+            NativeToolEvalReport.build(results: results, preferences: report.preferences, model: model, host: host, revision: revision,
+                                       started: Date(), finished: Date(), runs: runs, complete: complete,
+                                       incompleteReason: complete ? nil : "the model could not be reached (unreachable)", unreadableClaims: 0,
+                                       secrets: secrets)
         }
-        try require(built(clean).passed, "report: an all-pass fixture passes")
+        let allPass = built(clean)
+        try require(allPass.passed && allPass.failedBars.isEmpty && clean.contains { $0.core && $0.run == coreRuns },
+                    "report: an all-pass fixture with every core case run three times passes: \(allPass.failedBars)")
+        let oneRun = built(clean.filter { !$0.core || $0.run == 1 }, runs: 1)
+        try require(!oneRun.passed && oneRun.failedBars.contains { $0.contains("run count is below the bar") },
+                    "report: core cases run fewer than three times never pass, and the report says why")
+        var unfinishedRun = clean
+        if let index = unfinishedRun.firstIndex(where: { $0.group == NativeToolEvalGroup.document.rawValue }) { unfinishedRun[index].unfinished = true }
+        let unfinishedReport = built(unfinishedRun)
+        try require(!unfinishedReport.complete && !unfinishedReport.passed && unfinishedReport.exitStatus == 4
+                    && unfinishedReport.incompleteReason?.contains("1 case runs could not be run or did not finish") == true,
+                    "report: a case run that did not finish makes the run incomplete")
         let blocked = built(clean + accounting)
         try require(!blocked.passed && (blocked.blockers[NativeToolEvalBlocker.duplicateWrite.rawValue] ?? 0) > 0,
                     "report: a blocker means the run does not pass")
@@ -280,8 +426,16 @@ extension NativeToolEval {
         let leaked = phrases.filter { lowered.contains($0.lowercased()) }
         try require(leaked.isEmpty, "report: the report carries ids and counts only, but it holds \(leaked.count) said or scripted texts")
         try require(!rendered.contains(NativeToolEvalFixtureDriver.fakeKey), "report: the endpoint key never reaches the report")
+        let key = NativeToolEvalFixtureDriver.fakeKey
+        let keyed = built(clean, model: key, revision: key, secrets: [key])
+        let keyedDirectory = try NativeToolEvalSandbox.scratch("keyed-")
+        defer { try? FileManager.default.removeItem(at: keyedDirectory) }
+        let keyedFiles = try write(keyed, to: keyedDirectory)
+        let keyedText = (try String(contentsOf: keyedFiles.json, encoding: .utf8)) + (try String(contentsOf: keyedFiles.markdown, encoding: .utf8)) + keyed.summary
+        try require(!keyedText.contains(key) && keyed.model == "unrecognized" && keyed.revision == "unrecognized",
+                    "report: a model name or revision equal to the key is replaced in both files and the console line")
 
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("tool-eval-home-" + UUID().uuidString.lowercased(), isDirectory: true)
+        let home = try NativeToolEvalSandbox.scratch("home-")
         let config = home.appendingPathComponent(".vera", isDirectory: true)
         try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -292,7 +446,32 @@ extension NativeToolEval {
         }
         try require(((try? FileManager.default.contentsOfDirectory(atPath: config.path)) ?? []).isEmpty,
                     "report: a refused folder gets nothing written")
-        return "the report decodes back equal, holds no said text, scripted reply or key, refuses folders holding real settings or data, and passes only when complete, unblocked and with every walkthrough case passing"
+        return "the report decodes back equal, holds no said text, scripted reply or key (even when the model name or revision is the key), refuses folders holding real settings or data, and passes only when complete, unblocked, with every walkthrough case passing and every core case run three times"
+    }
+
+    static func preferenceChecks(_ groups: Outcome) async throws {
+        let perfect = await evaluate(driver: NativeToolEvalFixtureDriver(), cases: [], runs: coreRuns, revision: "fixture", preferences: true)
+        let rows = perfect.report.results
+        try require(perfect.report.passed && !rows.isEmpty && rows.allSatisfy { $0.group == NativeToolEvalGroup.preferences.rawValue }
+                    && perfect.report.groups.contains { $0.group == NativeToolEvalGroup.preferences.rawValue && $0.runs.total == rows.count }
+                    && perfect.report.heldOutPositive.total > 0 && perfect.report.heldOutNegativeRuns > 0,
+                    "preferences: a perfect preference run passes on its own counts and shows as its own group with denominators")
+        var oneWrong = NativeToolEvalFixtureDriver()
+        oneWrong.preferences = .oneFalseWrite
+        let falseWrite = await evaluate(driver: oneWrong, cases: [], runs: coreRuns, revision: "fixture", preferences: true)
+        try require(!falseWrite.report.passed && falseWrite.report.heldOutNegativeUnauthorized == 1,
+                    "preferences: one false write on a held-out negative fails the run")
+        var allWrong = NativeToolEvalFixtureDriver()
+        allWrong.preferences = .allWrong
+        let wrong = await evaluate(driver: allWrong, cases: [], runs: coreRuns, revision: "fixture", preferences: true)
+        let others = groups.report.results.filter { $0.group == NativeToolEvalGroup.document.rawValue || $0.group == NativeToolEvalGroup.folder.rawValue }
+        let mixed = NativeToolEvalReport.build(results: others + wrong.report.results, preferences: wrong.report.preferences, model: "fixture-model",
+                                               host: "model.example", revision: "fixture", started: Date(), finished: Date(), runs: coreRuns,
+                                               complete: true, incompleteReason: nil, unreadableClaims: 0)
+        let othersAlone = NativeToolEvalReport.build(results: others, preferences: [], model: "fixture-model", host: "model.example", revision: "fixture",
+                                                     started: Date(), finished: Date(), runs: coreRuns, complete: true, incompleteReason: nil,
+                                                     unreadableClaims: 0)
+        try require(othersAlone.passed && !mixed.passed, "preferences: an all-wrong preference set fails a run whose other groups pass")
     }
 
     static func incompleteCheck() async throws {
@@ -303,18 +482,32 @@ extension NativeToolEval {
         try require(!report.complete && !report.passed && report.exitStatus == 4 && report.incompleteReason?.contains("could not be reached") == true
                     && report.results.isEmpty && report.preferences.isEmpty,
                     "incomplete: a model that cannot be reached gives an incomplete report that never passes")
+        var failing = NativeToolEvalFixtureDriver()
+        failing.failingCase = "doc-negative-question"
+        let picked = NativeToolEvalCases.documentCases.filter { ["doc-negative-question", "doc-negative-read-only"].contains($0.id) }
+        let broken = await evaluate(driver: failing, cases: picked, runs: coreRuns, revision: "fixture", preferences: false).report
+        try require(!broken.complete && !broken.passed && broken.exitStatus == 4 && broken.unfinishedRuns == 1
+                    && broken.incompleteReason?.contains("could not be run or did not finish") == true,
+                    "incomplete: a transport that fails partway gives an incomplete report with exit status 4: \(broken.incompleteReason ?? "complete")")
+        let unreadable = NativeToolEvalCases.accountingCases.filter { $0.id == "accounting-unreadable-claim" }
+        let unread = await evaluate(driver: NativeToolEvalFixtureDriver(), cases: unreadable, runs: coreRuns, revision: "fixture", preferences: false).report
+        try require(unreadable.count == 1 && !unread.complete && !unread.passed && unread.exitStatus == 4 && unread.unresolvedRuns == 1
+                    && unread.results.first?.unresolved == true && unread.incompleteReason?.contains("could not be read") == true,
+                    "incomplete: a claim answer that cannot be read leaves the case unresolved and the run incomplete")
     }
 
     static func liveShapeChecks() throws {
         guard let base = URL(string: "http://127.0.0.1:1/v1") else { throw NativeToolEvalError.check("live: the probe address is valid") }
-        let driver = NativeToolEvalLiveDriver(base: base, model: "probe-model", key: nil, outputCap: 512)
+        guard let session = NativeToolEvalNetwork.session else { throw NativeToolEvalError.check("live: the guarded evaluation session exists") }
+        let driver = NativeToolEvalLiveDriver(base: base, model: "probe-model", key: nil, session: session, outputCap: 512)
         guard let capped = NativeToolEvalCases.documentCases.first(where: { !$0.noOutputCap }),
               let uncapped = NativeToolEvalCases.documentCases.first(where: { $0.noOutputCap }) else {
             throw NativeToolEvalError.check("live: the document group has a case with and without the output cap")
         }
         let cappedSends = driver.config(for: capped).options.topLevel.contains { $0.key == "max_tokens" }
         let uncappedSends = driver.config(for: uncapped).options.topLevel.contains { $0.key == "max_tokens" }
-        let defaultSends = !NativeToolEvalLiveDriver(base: base, model: "probe-model", key: nil).config(for: capped).options.topLevel.isEmpty
+        let defaultSends = !NativeToolEvalLiveDriver(base: base, model: "probe-model", key: nil, session: session).config(for: capped).options.topLevel.isEmpty
+        try require(driver.client(driver.plain).session === session, "live: every live request goes through the one guarded evaluation session")
         try require(cappedSends && !uncappedSends && !defaultSends, "live: a case that asks for no output cap is sent without one")
         let liveCases = NativeToolEvalCases.ready(liveGroups, live: true)
         try require(liveCases.allSatisfy { !$0.deterministicOnly } && liveCases.contains { $0.id == "weekly-plans-seven-inputs" },

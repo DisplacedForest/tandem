@@ -31,7 +31,8 @@ enum NativeToolEvalClaimQuestion {
 
 struct NativeToolEvalFixtureClaims: NativeToolEvalClaimReader {
     func claimed(reply: String, caseID: String) async -> Bool? {
-        NativeToolEvalCases.script(caseID, shared: nil)?.claimed ?? false
+        guard let script = NativeToolEvalCases.script(caseID, shared: nil) else { return false }
+        return script.claimed
     }
 }
 
@@ -65,7 +66,42 @@ protocol NativeToolEvalDriver: Sendable {
     func config(for evalCase: NativeToolEvalCase) -> NativeChatConfig
     func transport(for evalCase: NativeToolEvalCase, run: Int, sharedFolder: String?) -> any NativeChatTransport
     func probe() async -> String?
-    func classify(_ body: String) async -> String?
+    func preference(_ example: NativePreferenceExample) async -> NativePreferenceLabel?
+}
+
+enum NativeToolEvalNetwork {
+    static func configuration(policy: OutboundGuard.Policy) -> URLSessionConfiguration? {
+        guard policy != .open else { return nil }
+        let base = URLSessionConfiguration.ephemeral
+        base.httpCookieStorage = nil
+        base.urlCredentialStorage = nil
+        base.urlCache = nil
+        base.httpShouldSetCookies = false
+        base.httpCookieAcceptPolicy = .never
+        let guarded = OutboundGuard.guarded(base, policy: policy)
+        guard let first = guarded.protocolClasses?.first, ObjectIdentifier(first) == ObjectIdentifier(OutboundGuardProtocol.self) else { return nil }
+        return guarded
+    }
+
+    static let session: URLSession? = configuration(policy: OutboundGuard.policy).map {
+        OutboundGuard.session(configuration: $0, policy: OutboundGuard.policy)
+    }
+}
+
+final class NativeToolEvalFailingTransport: NativeChatTransport, @unchecked Sendable {
+    func discoverModels() async throws -> [String] { [] }
+
+    func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish(throwing: NativeChatClient.ClientError.http(503, ""))
+        }
+    }
+}
+
+enum NativeToolEvalPreferenceFixture: Sendable {
+    case perfect
+    case allWrong
+    case oneFalseWrite
 }
 
 enum NativeToolEvalErrors {
@@ -92,6 +128,8 @@ struct NativeToolEvalFixtureDriver: NativeToolEvalDriver {
     var model = "fixture-model"
     var endpointHost = "model.example"
     var failsProbe = false
+    var failingCase: String? = nil
+    var preferences = NativeToolEvalPreferenceFixture.perfect
     let live = false
     let waitsForDelivery = false
     let turnDeadline: Duration = .seconds(NativeToolEvalLimits.fixtureTurnSeconds)
@@ -106,6 +144,7 @@ struct NativeToolEvalFixtureDriver: NativeToolEvalDriver {
     }
 
     func transport(for evalCase: NativeToolEvalCase, run: Int, sharedFolder: String?) -> any NativeChatTransport {
+        if evalCase.id == failingCase { return NativeToolEvalFailingTransport() }
         let rounds = NativeToolEvalCases.script(evalCase.id, shared: sharedFolder)?.rounds
             ?? [NativeToolEvalCases.say("This case has no scripted reply in the fixture.")]
         return ScriptedNativeToolTransport(rounds: rounds)
@@ -113,13 +152,24 @@ struct NativeToolEvalFixtureDriver: NativeToolEvalDriver {
 
     func probe() async -> String? { failsProbe ? "unreachable" : nil }
 
-    func classify(_ body: String) async -> String? { "{\"preference\": null}" }
+    func preference(_ example: NativePreferenceExample) async -> NativePreferenceLabel? {
+        switch preferences {
+        case .perfect:
+            return example.label
+        case .allWrong:
+            return example.label.writes ? NativePreferenceLabel.nothing : NativePreferenceLabel.standing
+        case .oneFalseWrite:
+            let first = NativePreferenceLabeledSet.examples.first { $0.heldOut && !$0.label.writes }
+            return example.heldOut && example.text == first?.text ? NativePreferenceLabel.standing : example.label
+        }
+    }
 }
 
 struct NativeToolEvalLiveDriver: NativeToolEvalDriver {
     let base: URL
     let model: String
     let key: String?
+    let session: URLSession
     var outputCap: Int? = nil
     let label = "live"
     let live = true
@@ -131,8 +181,14 @@ struct NativeToolEvalLiveDriver: NativeToolEvalDriver {
 
     var plain: NativeChatConfig { NativeChatConfig(baseURL: base, apiKey: key, model: model, chatTemplateKwargs: nil) }
 
+    func client(_ config: NativeChatConfig) -> NativeChatClient {
+        var client = NativeChatClient.foreground(config: config)
+        client.session = session
+        return client
+    }
+
     var claimReader: any NativeToolEvalClaimReader {
-        NativeToolEvalLiveClaims(transport: NativeChatClient.foreground(config: plain), model: model)
+        NativeToolEvalLiveClaims(transport: client(plain), model: model)
     }
 
     func config(for evalCase: NativeToolEvalCase) -> NativeChatConfig {
@@ -144,13 +200,13 @@ struct NativeToolEvalLiveDriver: NativeToolEvalDriver {
     }
 
     func transport(for evalCase: NativeToolEvalCase, run: Int, sharedFolder: String?) -> any NativeChatTransport {
-        NativeChatClient.foreground(config: config(for: evalCase))
+        client(config(for: evalCase))
     }
 
     func probe() async -> String? {
-        let client = NativeChatClient.foreground(config: plain)
+        let probing = client(plain)
         do {
-            for try await _ in client.stream(messages: [NativeChatMessage(role: "user", content: "Reply with the single word ready.")],
+            for try await _ in probing.stream(messages: [NativeChatMessage(role: "user", content: "Reply with the single word ready.")],
                                              model: model, tools: []) {}
             return nil
         } catch {
@@ -158,12 +214,15 @@ struct NativeToolEvalLiveDriver: NativeToolEvalDriver {
         }
     }
 
-    func classify(_ body: String) async -> String? {
-        await NativePreferenceClassifier.request(transport: NativeChatClient.foreground(config: plain), model: model, body: body)
+    func preference(_ example: NativePreferenceExample) async -> NativePreferenceLabel? {
+        let raw = await NativePreferenceClassifier.request(transport: client(plain), model: model, body: example.body())
+        return NativePreferenceExample.predicted(NativePreferenceClassifier.classify(raw, savedCount: example.saved.count))
     }
 }
 
 final class NativeToolEvalCapture: NativeChatTransport, @unchecked Sendable {
+    static let withheld: Set<String> = [NativeFolderTools.trashName]
+
     private let lock = NSLock()
     private let inner: any NativeChatTransport
     private var names: [String] = []
@@ -179,14 +238,16 @@ final class NativeToolEvalCapture: NativeChatTransport, @unchecked Sendable {
     func discoverModels() async throws -> [String] { try await inner.discoverModels() }
 
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
-        note(messages, tools)
-        return relay(inner.stream(messages: messages, model: model, tools: tools))
+        let sent = tools.filter { !Self.withheld.contains($0.name) }
+        note(messages, sent)
+        return relay(inner.stream(messages: messages, model: model, tools: sent))
     }
 
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema],
                 validateRequest: @escaping @Sendable () async throws -> Void) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
-        note(messages, tools)
-        return relay(inner.stream(messages: messages, model: model, tools: tools, validateRequest: validateRequest))
+        let sent = tools.filter { !Self.withheld.contains($0.name) }
+        note(messages, sent)
+        return relay(inner.stream(messages: messages, model: model, tools: sent, validateRequest: validateRequest))
     }
 
     private func note(_ messages: [NativeChatMessage], _ tools: [NativeToolSchema]) {
@@ -226,9 +287,16 @@ struct NativeToolEvalSandbox {
     var attachments: URL { root.appendingPathComponent("attachments", isDirectory: true) }
     var shared: URL { root.appendingPathComponent("shared", isDirectory: true) }
 
+    static func scratch(_ prefix: String) throws -> URL {
+        guard let headless = AppLocations.headlessRoot else {
+            throw NativeToolEvalError.check("the evaluation only runs inside a separate test run")
+        }
+        return headless.appendingPathComponent("tool-eval", isDirectory: true)
+            .appendingPathComponent(prefix + UUID().uuidString.lowercased(), isDirectory: true)
+    }
+
     static func make() throws -> NativeToolEvalSandbox {
-        let sandbox = NativeToolEvalSandbox(root: FileManager.default.temporaryDirectory
-            .appendingPathComponent("tool-eval-" + UUID().uuidString.lowercased(), isDirectory: true))
+        let sandbox = NativeToolEvalSandbox(root: try scratch("case-"))
         for folder in [sandbox.artifacts, sandbox.projects, sandbox.attachments] {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
@@ -294,7 +362,7 @@ enum NativeToolEvalRunner {
                           capture: NativeToolEvalCapture, sandbox: NativeToolEvalSandbox) -> ChatStore {
         let config = driver.config(for: evalCase)
         var rules = NativeRules.defaults
-        rules.set(.ask, for: .fileEdits)
+        for action in NativeActionClass.configurable + [.fileEdits, .trash] { rules.set(.ask, for: action) }
         let store = ChatStore(veraAPI: driver.live ? nil : fixtureWorkBase.map { VeraAPIClient(base: $0) },
                               nativeConfig: config, nativeTransport: capture, repository: repository,
                               nativeTransportFactory: { _ in capture },
@@ -358,7 +426,9 @@ enum NativeToolEvalRunner {
                 let grant = try FolderGrant.make(url: sandbox.shared)
                 grants = [grant]
                 sharedPath = grant.path
+                observation.sharedFolder = grant.path
                 observation.sharedRoots = Array(Set(sandbox.roots + [grant.path]))
+                observation.caseInsensitive = AppLocations.isCaseInsensitiveVolume(sandbox.shared)
                 if !present { try FileManager.default.removeItem(at: sandbox.shared) }
             } catch {
                 observation.setupError = "the shared folder could not be prepared"
@@ -399,10 +469,12 @@ enum NativeToolEvalRunner {
         }
 
         var answered: [String: NativeToolEvalCards] = [:]
+        let roots = observation.sharedRoots
         let settled = await wait(driver.turnDeadline) {
             for (messageID, request) in store.turnConfirmations where answered[request.id] == nil {
-                answered[request.id] = evalCase.cards
-                store.resolveTurnConfirmation(messageID, decision: evalCase.cards == .allow ? .allowOnce : .decline,
+                let approve = NativeToolEvalJudge.approves(evalCase, name: request.name, request: request.request, roots: roots)
+                answered[request.id] = approve ? .allow : .decline
+                store.resolveTurnConfirmation(messageID, decision: approve ? .allowOnce : .decline,
                                               requestID: request.id, token: store.turnConfirmationTokens[messageID])
             }
             guard !store.isSchedulingTurns, store.turnExecutions[turn.id] == nil,
@@ -410,6 +482,7 @@ enum NativeToolEvalRunner {
             return saved.state == .complete || saved.state == .interrupted || saved.state == .stopped
         }
         if !settled { store.stopAnswer(replyID) }
+        observation.settled = settled
         observation.completed = settled
         observation.cards = answered.keys.sorted().compactMap { answered[$0] }
 
@@ -510,7 +583,7 @@ enum NativeToolEval {
     static let requiredPositiveRate = NativeToolEvalReport.positiveBar
     static let allowedUnauthorizedEffects = NativeToolEvalReport.unauthorizedBar
     static let coreRuns = NativeToolEvalReport.coreRunsBar
-    static let baseSetting = "VERA_TOOL_EVAL_BASE"
+    static let baseSetting = OutboundGuard.evaluationSetting
     static let modelSetting = "VERA_TOOL_EVAL_MODEL"
     static let keySetting = "VERA_TOOL_EVAL_KEY"
     static let liveGroups: Set<NativeToolEvalGroup> = [.document, .folder, .preferences]
@@ -527,28 +600,29 @@ enum NativeToolEval {
     static func evaluate(driver: any NativeToolEvalDriver, cases: [NativeToolEvalCase], runs: Int, revision: String,
                          preferences: Bool, announces: Bool = false) async -> Outcome {
         let started = Date()
+        let secrets = [driver.key].compactMap { $0 }.filter { !$0.isEmpty }
         if let unreachable = await driver.probe() {
             let report = NativeToolEvalReport.build(results: [], preferences: [], model: driver.model, host: driver.endpointHost,
                                                     revision: revision, started: started, finished: Date(), runs: runs, complete: false,
-                                                    incompleteReason: "the model could not be reached (" + unreachable + ")", unreadableClaims: 0)
+                                                    incompleteReason: "the model could not be reached (" + unreachable + ")", unreadableClaims: 0,
+                                                    secrets: secrets)
             return Outcome(report: report, observations: [:])
         }
         var results: [NativeToolEvalCaseResult] = []
         var observations: [String: NativeToolEvalObservation] = [:]
         var unreadable = 0
-        var unrun: [String] = []
         for evalCase in cases {
             let count = evalCase.core ? max(runs, 1) : 1
             for run in 1...count {
                 let observation = await NativeToolEvalRunner.run(case: evalCase, runIndex: run, driver: driver)
                 let verdict = NativeToolEvalJudge.judge(evalCase, observation)
-                if observation.setupError != nil && !unrun.contains(evalCase.id) { unrun.append(evalCase.id) }
                 if observation.claimUnreadable { unreadable += 1 }
                 observations[evalCase.id + "#\(run)"] = observation
                 results.append(NativeToolEvalCaseResult(
                     caseID: evalCase.id, group: evalCase.group.rawValue, run: run, category: verdict.category,
                     blockers: NativeToolEvalBlocker.allCases.filter { verdict.blockers.contains($0) }, reason: verdict.reason,
-                    judgedTo: observation.judgedTo, heldOut: evalCase.heldOut, positive: evalCase.positive, walkthrough: evalCase.walkthrough))
+                    judgedTo: observation.judgedTo, heldOut: evalCase.heldOut, positive: evalCase.positive, walkthrough: evalCase.walkthrough,
+                    core: evalCase.core, unfinished: observation.unfinished, unresolved: observation.claimUnreadable))
                 if announces { print("tool-eval: \(evalCase.id) run \(run): \(verdict.category.rawValue)") }
             }
         }
@@ -556,14 +630,19 @@ enum NativeToolEval {
         if preferences {
             for heldOut in [false, true] {
                 let examples = NativePreferenceLabeledSet.examples.filter { $0.heldOut == heldOut }
-                let score = await NativePreferenceEval.score(examples) { body in await driver.classify(body) }
-                splits.append(NativeToolEvalPreferenceSplit(split: heldOut ? "held-out" : "development", score: score))
+                var score = NativePreferenceScore()
+                for (index, example) in examples.enumerated() {
+                    let predicted = await driver.preference(example)
+                    score.add(example, predicted)
+                    results.append(NativeToolEvalPreferences.result(example, index: index, predicted: predicted))
+                }
+                splits.append(NativeToolEvalPreferenceSplit(split: NativeToolEvalPreferences.split(heldOut), score: score))
             }
         }
         let report = NativeToolEvalReport.build(
             results: results, preferences: splits, model: driver.model, host: driver.endpointHost, revision: revision,
-            started: started, finished: Date(), runs: runs, complete: unrun.isEmpty,
-            incompleteReason: unrun.isEmpty ? nil : "\(unrun.count) cases could not be run", unreadableClaims: unreadable)
+            started: started, finished: Date(), runs: runs, complete: true, incompleteReason: nil, unreadableClaims: unreadable,
+            secrets: secrets)
         return Outcome(report: report, observations: observations)
     }
 
@@ -582,9 +661,12 @@ enum NativeToolEval {
         let environment = ProcessInfo.processInfo.environment
         let rawBase = environment[baseSetting]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let model = environment[modelSetting]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard let base = URL(string: rawBase), let scheme = base.scheme?.lowercased(), ["http", "https"].contains(scheme),
-              base.host?.isEmpty == false, !model.isEmpty else {
-            print("tool-eval: set \(baseSetting) to the model's OpenAI-compatible base URL and \(modelSetting) to the model name, then run again.")
+        guard let host = OutboundGuard.evaluationHost(environment), let base = URL(string: rawBase), !model.isEmpty else {
+            print("tool-eval: set \(baseSetting) to the model's http or https base URL ending in /v1 and \(modelSetting) to the model name, then run again.")
+            return 2
+        }
+        guard OutboundGuard.policy == .loopbackOnly([host]), let session = NativeToolEvalNetwork.session else {
+            print("tool-eval: this run can only reach the address in \(baseSetting), and it could not be set up that way.")
             return 2
         }
         guard let out = value("--out", in: arguments), !out.isEmpty else {
@@ -606,9 +688,11 @@ enum NativeToolEval {
         }
         let groups = named.isEmpty ? liveGroups : chosen
         let cap = value("--max-tokens", in: arguments).flatMap { Int($0) }
-        let driver = NativeToolEvalLiveDriver(base: base, model: model, key: rawKey.isEmpty ? nil : rawKey, outputCap: cap)
+        let key = rawKey.isEmpty ? nil : rawKey
+        let driver = NativeToolEvalLiveDriver(base: base, model: model, key: key, session: session, outputCap: cap)
         let cases = NativeToolEvalCases.ready(groups, live: true)
-        print("tool-eval: \(cases.count) cases, core cases \(runs) times, against \(driver.endpointHost)")
+        let shownHost = NativeToolEvalReport.field(driver.endpointHost, secrets: [key].compactMap { $0 })
+        print("tool-eval: \(cases.count) cases, core cases \(runs) times, against \(shownHost)")
         let outcome = await evaluate(driver: driver, cases: cases, runs: runs, revision: revision,
                                      preferences: groups.contains(.preferences), announces: true)
         print(outcome.report.summary)
