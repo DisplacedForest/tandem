@@ -30,9 +30,13 @@ struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
     var condenseSize: Int?
     var condenseDivisor = 1
     var condenseStuck = false
+    var condenseCalls = 0
+    var notesComplete = false
 
     private enum CodingKeys: String, CodingKey {
         case phase, subquestions, sources, errors, retry, attempt, note, reviewed, notes, oversize, question
+        case condenseCalls = "condense_calls"
+        case notesComplete = "notes_complete"
         case condenseTarget = "condense_target"
         case condenseQueue = "condense_queue"
         case condenseDone = "condense_done"
@@ -72,6 +76,8 @@ struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
         condenseSize = try container.decodeIfPresent(Int.self, forKey: .condenseSize)
         condenseDivisor = max(1, try container.decodeIfPresent(Int.self, forKey: .condenseDivisor) ?? 1)
         condenseStuck = try container.decodeIfPresent(Bool.self, forKey: .condenseStuck) ?? false
+        condenseCalls = try container.decodeIfPresent(Int.self, forKey: .condenseCalls) ?? 0
+        notesComplete = try container.decodeIfPresent(Bool.self, forKey: .notesComplete) ?? false
     }
 
     func encoded() throws -> Data {
@@ -485,7 +491,7 @@ enum NativeResearchWorker {
             let allowance = policy.replyCharacters
             let notesTarget = checkpoint.condenseTarget == "notes"
             let condensed = try await exchange.complete(task: task, binding: binding,
-                phase: "condense-\(checkpoint.condenseLevel * 1000 + checkpoint.condenseDone.count)", attempt: attempt, ordinal: 0, messages: [
+                phase: "condense-\(checkpoint.condenseCalls)", attempt: attempt, ordinal: 0, messages: [
                 NativeTaskGenerationMessage(role: "system", content: condensePrompt(identity: identity, notes: notesTarget, allowance: allowance)),
                 NativeTaskGenerationMessage(role: "user", content: checkpoint.condenseQueue[0]),
             ]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -496,6 +502,7 @@ enum NativeResearchWorker {
             }
             checkpoint.condenseDone.append(condensed)
             checkpoint.condenseQueue.removeFirst()
+            checkpoint.condenseCalls += 1
             return try progress(checkpoint)
         case "gather":
             guard checkpoint.nextQuery < checkpoint.subquestions.count else {
@@ -532,8 +539,8 @@ enum NativeResearchWorker {
             let system = NativeTaskGenerationMessage(role: "system", content: synthesisPrompt(identity: identity))
             var user = synthesisUser(payload, checkpoint: checkpoint, notes: nil, policy: policy)
             if !policy.legacy, checkpoint.notes.isEmpty == false || !policy.fits([system, NativeTaskGenerationMessage(role: "user", content: user)]) {
-                let batches = noteBatches(payload, checkpoint: checkpoint, policy: policy, identity: identity)
-                if checkpoint.notes.count < batches.count {
+                let batches = checkpoint.notesComplete ? [] : noteBatches(payload, checkpoint: checkpoint, policy: policy, identity: identity)
+                if !checkpoint.notesComplete, checkpoint.notes.count < batches.count {
                     let index = checkpoint.notes.count
                     let notes = try await exchange.complete(task: task, binding: binding, phase: "notes-\(index)", attempt: attempt, ordinal: 0, messages: [
                         NativeTaskGenerationMessage(role: "system", content: notesPrompt(identity: identity)),
@@ -544,8 +551,10 @@ enum NativeResearchWorker {
                         return try pause(&checkpoint, unmatchedNotesMessage)
                     }
                     checkpoint.notes.append(notes)
+                    checkpoint.notesComplete = checkpoint.notes.count == batches.count
                     return try progress(checkpoint)
                 }
+                checkpoint.notesComplete = true
                 guard synthesisFits(payload, checkpoint: checkpoint, notes: checkpoint.notes, policy: policy, identity: identity) else {
                     startCondense(&checkpoint, target: "notes", items: checkpoint.notes, policy: policy, identity: identity)
                     return try progress(checkpoint)

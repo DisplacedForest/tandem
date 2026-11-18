@@ -58,8 +58,18 @@ extension SelfTest {
                     "A character's size as sent counts its escaping")
         let quotes = String(repeating: "\"", count: 1_000)
         let pieces = Policy.parts([quotes], budget: 400)
+        try require(pieces.count > 1, "A long run of quotes is split into several parts")
         try require(pieces.allSatisfy { Policy.wireCost($0) <= 400 } && pieces.joined().count == quotes.count,
                     "Text full of quotes is split by its size as sent and nothing is lost")
+        let mixed = String(repeating: " aaaa\u{1F600}\"/\u{2028}\n", count: 300)
+        for budget in [64, 65, 77, 128, 199] {
+            let cut = Policy.parts([mixed, "aa", "bb"], budget: budget, prefix: { $0 == 0 ? "[1] A source (https://s.test/x)\n" : "" })
+            try require(cut.allSatisfy { Policy.wireCost($0) <= budget }, "Every part, joined or prefixed, stays within \(budget) bytes as sent")
+        }
+        try require(Policy.parts(["aa", "bb"], budget: 64) == ["aa\n\nbb"] && Policy.parts(["x"], budget: 1) == ["x"],
+                    "Small parts are joined with a blank line, and a part is never smaller than the minimum")
+        let hugeLabel = Policy.parts([String(repeating: "c", count: 300)], budget: 64, prefix: { _ in String(repeating: "L", count: 500) })
+        try require(hugeLabel.allSatisfy { Policy.wireCost($0) <= 64 && $0.contains("c") }, "A label larger than a part is shortened so content still fits")
         let piled = "a" + String(repeating: "\u{0301}", count: 500)
         let scalars = Policy.parts([piled], budget: 100)
         try require(scalars.allSatisfy { Policy.wireCost($0) <= 100 } && scalars.joined().unicodeScalars.count == piled.unicodeScalars.count,
@@ -191,7 +201,7 @@ extension SelfTest {
             "instructionCharacters", "titleCharacters", "condenseShrinkPercent", "materialShareDivisor", "condenseInputMultiple",
             "legacyMaximumSections", "legacyMaximumSources", "searchResultsPerQuestion", "pageCharacters", "reviewCharacters", "urlBytes",
             "noteLineCharacters", "keptNoteLines", "progressSources", "noteQuestionCharacters", "shortestPlanCharacters",
-            "maximumPlanAttempts", "maximumRequestedBullets", "wireEncodingMultiple", "jobBytes", "jobFrameBytes", "sectionFrameCharacters", "roundingStep", "batchJoinBytes",
+            "maximumPlanAttempts", "maximumRequestedBullets", "wireEncodingMultiple", "jobBytes", "jobFrameBytes", "sectionFrameCharacters", "roundingStep", "batchJoinBytes", "minimumPartBytes", "contextLookupSeconds",
             "legacyPromptBytes", "legacyOutputTokens", "legacyReportCharacters", "legacyResearchReportCharacters", "legacySourceCharacters",
             "companionReportScalars", "companionNoteScalars", "companionStepScalars", "summaryCharacters",
             "companionCheckpointReserveBytes", "companionUnknownMessageBytes", "companionSeparatorBytes", "companionMarkerBytes",

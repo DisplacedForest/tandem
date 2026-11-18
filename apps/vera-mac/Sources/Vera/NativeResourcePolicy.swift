@@ -29,6 +29,8 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
     static let sectionFrameCharacters = 8
     static let roundingStep = 10_000
     static let batchJoinBytes = 8
+    static let minimumPartBytes = 64
+    static let contextLookupSeconds = 4
     static let jobBytes = 1_048_576
     static let jobFrameBytes = 16_384
     static let noteQuestionCharacters = 40
@@ -93,6 +95,8 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
         "sectionFrameCharacters": "The heading marks and blank lines each section adds to a finished document.",
         "roundingStep": "Sizes told to the person are rounded to a figure read at a glance, and the document limit is rounded down so a saved document never exceeds what the card says.",
         "batchJoinBytes": "Room for the blank line that joins one source fragment to the next in a batch of notes.",
+        "minimumPartBytes": "A part is never smaller than this, so one character and its source label always fit.",
+        "contextLookupSeconds": "Starting work waits at most this long for the model list before using the setting or the default, well inside the time a start may take.",
         "progressSources": "A progress update names only the first few new sources, so it stays inside one update's size.",
         "noteQuestionCharacters": "A troubleshooting note quotes only the start of the search it is about.",
         "shortestPlanCharacters": "Asking again for a shorter plan never asks for less than this.",
@@ -207,44 +211,50 @@ struct NativeResourcePolicy: Equatable, Hashable, Sendable {
     }
 
     static func parts(_ items: [String], budget: Int, prefix: (Int) -> String = { _ in "" }) -> [String] {
-        let room = max(1, budget)
+        let room = max(budget, minimumPartBytes)
         var pieces: [String] = []
         for (index, item) in items.enumerated() {
-            let lead = prefix(index)
-            let space = max(1, room - wireCost(lead))
-            var current = String.UnicodeScalarView()
-            var used = 0
-            var lastBreak: Int?
-            for scalar in item.unicodeScalars {
+            var lead = String.UnicodeScalarView()
+            var leadCost = 0
+            for scalar in prefix(index).unicodeScalars {
                 let cost = wireCost(scalar)
-                if used + cost > space, !current.isEmpty {
-                    var cut = current.count
-                    if let lastBreak, lastBreak > 0 { cut = lastBreak }
-                    let head = String.UnicodeScalarView(current.prefix(cut))
-                    let tail = String.UnicodeScalarView(current.dropFirst(cut))
-                    pieces.append(lead + String(head))
-                    current = tail
-                    used = wireCost(String(tail))
-                    lastBreak = nil
-                }
-                current.append(scalar)
-                used += cost
-                if scalar == "\n" || scalar == " " { lastBreak = current.count }
+                if leadCost + cost > room / 2 { break }
+                lead.append(scalar)
+                leadCost += cost
             }
-            if !current.isEmpty { pieces.append(lead + String(current)) }
+            let space = room - leadCost
+            let scalars = Array(item.unicodeScalars)
+            var start = 0
+            while start < scalars.count {
+                var end = start
+                var used = 0
+                var lastBreak: Int?
+                while end < scalars.count, used + wireCost(scalars[end]) <= space {
+                    used += wireCost(scalars[end])
+                    if scalars[end] == " " || scalars[end] == "\n" { lastBreak = end + 1 }
+                    end += 1
+                }
+                if end == start { end = start + 1 }
+                if end < scalars.count, let lastBreak, lastBreak > start { end = lastBreak }
+                var piece = lead
+                piece.append(contentsOf: scalars[start..<end])
+                pieces.append(String(piece))
+                start = end
+            }
         }
+        let separator = wireCost("\n\n")
         var grouped: [String] = []
         var current = ""
         var used = 0
         for piece in pieces {
-            let cost = wireCost(piece) + (current.isEmpty ? 0 : 4)
-            if !current.isEmpty, used + cost > room {
-                grouped.append(current)
-                current = piece
-                used = wireCost(piece)
+            let cost = wireCost(piece)
+            if !current.isEmpty, used + separator + cost <= room {
+                current += "\n\n" + piece
+                used += separator + cost
             } else {
-                current = current.isEmpty ? piece : current + "\n\n" + piece
-                used += cost
+                if !current.isEmpty { grouped.append(current) }
+                current = piece
+                used = cost
             }
         }
         if !current.isEmpty { grouped.append(current) }
@@ -304,7 +314,13 @@ final class NativeModelContext {
     }
 
     func settle(base: URL) async {
-        await lookups[Self.key(base, "")]?.value
+        guard let lookup = lookups[Self.key(base, "")] else { return }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await lookup.value }
+            group.addTask { try? await Task.sleep(for: .seconds(NativeResourcePolicy.contextLookupSeconds)) }
+            await group.next()
+            group.cancelAll()
+        }
     }
 
     func prepare(_ config: NativeChatConfig?, transport: (any NativeChatTransport)?) async {
