@@ -119,6 +119,10 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         do { try await NativeMemoryGate.selftest() }
         catch { print("memory-gate: FAIL \(error.localizedDescription)"); exit(1) }
     }
+} else if arguments.contains("--tool-eval-selftest") {
+    NativeApplicationEntry.runAsync { exit(await NativeToolEval.selftest()) }
+} else if arguments.contains("--tool-eval-live") {
+    NativeApplicationEntry.runAsync { exit(await NativeToolEval.live(arguments: Array(arguments.dropFirst()))) }
 } else if arguments.contains("--companion-live") {
     NativeApplicationEntry.runAsync { exit(await NativeCompanionLive.run(arguments: arguments)) }
 } else if arguments.contains("--memory-gate-live") {

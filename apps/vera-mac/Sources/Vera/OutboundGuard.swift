@@ -19,6 +19,7 @@ enum OutboundGuard {
     static let errorDomain = "OutboundGuard"
     static let refusalCode = 1
     static let optInSettings = ["VERA_MEMORY_LIVE_BASE", "VERA_IMAGE_LIVE_BASE", "VERA_PAGE_FETCH_LIVE_URL"]
+    static let evaluationSetting = "VERA_TOOL_EVAL_BASE"
     static let localSchemes: Set<String> = ["file", "data", "about", "blob"]
 
     nonisolated(unsafe) private(set) static var policy: Policy = .open
@@ -29,7 +30,18 @@ enum OutboundGuard {
 
     static func policy(for mode: LaunchPlan.Mode, environment: [String: String]) -> Policy {
         guard LaunchPlan.isHeadless(mode, environment: environment) else { return .open }
+        if mode == .run(LaunchPlan.toolEvalLiveMode) { return .loopbackOnly(evaluationHost(environment).map { Set([$0]) } ?? []) }
         return .loopbackOnly(optInHosts(environment))
+    }
+
+    static func evaluationHost(_ environment: [String: String]) -> String? {
+        guard let raw = environment[evaluationSetting]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty,
+              let url = URL(string: raw), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return nil }
+        var path = url.path
+        while path.hasSuffix("/") { path.removeLast() }
+        guard path.hasSuffix("/v1") else { return nil }
+        return normalized(host)
     }
 
     static func optInHosts(_ environment: [String: String]) -> Set<String> {

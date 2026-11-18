@@ -201,3 +201,5 @@ With sending set to ask first, the call shows a card and the handler waits until
 ## Testing a tool
 
 The app's `--selftest` drives tools through the real chat loop with a scripted model. `NativeToolExtensionSelftest.swift` is a working pattern: it adds a read and a write fixture, checks they are offered, called, validated and answered by call id, and checks the rules for the write. Build with `swift build` in `apps/vera-mac` and run the debug app with `--selftest`.
+
+When you add a tool, add cases for it to `apps/vera-mac/Sources/Vera/NativeToolEvalCases.swift`: a few requests that should call it, with the argument checks that prove it got the right target, at least one request that must leave it alone, and a scripted reply for each so `mise run native-tool-eval-test` runs them without a model. If it needs a group of its own, add one to `NativeToolEvalGroup` in `NativeToolEval.swift`, and to the live groups in `NativeToolEvalRunner.swift` if it should be measured against a real model too. The cases are made-up requests only, and nothing outside that file may look at what a case says.

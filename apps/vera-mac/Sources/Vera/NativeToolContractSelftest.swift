@@ -14,6 +14,8 @@ extension SelfTest {
         return definition
     }
 
+    static let knownUndeclaredWrites: [String] = [NativeCompanionProfileTools.name]
+
     static func runNativeToolContract() async throws {
         let require = NativeTaskFixture.require
 
@@ -206,6 +208,25 @@ extension SelfTest {
         try require(together.issues.isEmpty && together.definitions.count == shipped.count,
                     "All shipped tools taken together are kept by the registry with no issue")
         try require(shipped.count == 27, "Every shipped tool family that can be built here was checked: \(shipped.count) tools")
+        let knownUndeclared = SelfTest.knownUndeclaredWrites
+        let undeclared = shipped.filter { !$0.isDeclared }.map(\.name).sorted()
+        try require(undeclared == knownUndeclared.sorted(),
+                    "Every shipped tool is a read with no action or a write that names its action, except exactly the known list \(knownUndeclared.sorted()), but these lack a declaration: \(undeclared). This proves the declaration, not that a handler's effect matches it")
+        for definition in shipped {
+            if definition.confirmation == .required || definition.governed || definition.alwaysAsks || definition.confirmationFor != nil {
+                try require(definition.effect == .write, "\(definition.name) can ask first or is governed by rules, so it is declared a write")
+            }
+            if let deadline = definition.timeout {
+                try require(deadline >= .seconds(1) && deadline <= .seconds(300),
+                            "\(definition.name) declares a deadline between 1 and 300 seconds, not \(deadline)")
+            }
+            for example in definition.examples {
+                let raw = try NativeToolLoop.serializedResult(.object(example))
+                do { _ = try definition.validatedArguments(raw) } catch {
+                    throw NativeTaskFixture.Failure.assertion("\(definition.name) accepts its own declared example \(raw). Its handler is not run here, so this proves the inputs it advertises, not what it does with them")
+                }
+            }
+        }
 
         let stems: [[String]] = [["ta", "sk"], ["back", "ground"], ["work", "er"], ["ag", "ent"], ["eng", "ine"]]
         var listed: Set<String> = ["ve" + "ra"]
@@ -290,6 +311,6 @@ extension SelfTest {
         try require(composed?.violation(.string("\u{E9}")) == nil && decomposed?.violation(.string("e\u{301}")) == nil
                     && composed?.violation(.string("e\u{301}")) != nil && decomposed?.violation(.string("\u{E9}")) != nil,
                     "Each schema accepts exactly its own spelling of an accented value")
-        print("  native tool contract OK (registry rules, schema-declared validation messages, \(shipped.count) shipped tools and \(variants.count) variants pass the registry, every shipped description says when to use it in plain words within 4096 bytes, every field is explained and says whether it may be empty, and the prompt lists tools by name only within its cap)")
+        print("  native tool contract OK (registry rules, schema-declared validation messages, \(shipped.count) shipped tools and \(variants.count) variants pass the registry, every shipped description says when to use it in plain words within 4096 bytes, every field is explained and says whether it may be empty, and the prompt lists tools by name only within its cap; \(SelfTest.knownUndeclaredWrites.count == 1 ? "one known undeclared write" : "\(SelfTest.knownUndeclaredWrites.count) known undeclared writes"): \(SelfTest.knownUndeclaredWrites.joined(separator: ", ")))")
     }
 }

@@ -77,7 +77,7 @@ dir = "prototypes/assistant-ui"
 run = "swift build && .build/debug/VeraPrototype --selftest"
 
 [tasks.check]
-depends = ["lint", "name-ratchet", "name-ratchet-test", "words-ratchet", "words-ratchet-test", "data-folder-check", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "native-memory-gate-test", "shared-runtime-memory-test", "domain-state-test", "domain-extraction-test", "native-entry-test", "native-mcp-test", "native-document-test", "native-preferences-test", "native-rule-records-test"]
+depends = ["lint", "name-ratchet", "name-ratchet-test", "words-ratchet", "words-ratchet-test", "data-folder-check", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "native-memory-gate-test", "native-tool-eval-test", "shared-runtime-memory-test", "domain-state-test", "domain-extraction-test", "native-entry-test", "native-mcp-test", "native-document-test", "native-preferences-test", "native-rule-records-test"]
 
 [tasks.native-preferences-test]
 depends = ["mac-build"]
@@ -145,6 +145,14 @@ run = "sh apps/vera-mac/scripts/test-native-memory-gate.sh"
 [tasks.memory-gate-live]
 depends = ["mac-build"]
 run = "apps/vera-mac/.build/debug/Vera --memory-gate-live"
+
+[tasks.native-tool-eval-test]
+depends = ["mac-build"]
+run = "sh apps/vera-mac/scripts/test-native-tool-eval.sh"
+
+[tasks.tool-eval-live]
+depends = ["mac-build"]
+run = "apps/vera-mac/.build/debug/Vera --tool-eval-live"
 
 [tasks.shared-runtime-memory-test]
 depends = ["mac-build"]
