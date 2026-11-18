@@ -47,7 +47,7 @@ enum NativeTaskTools {
                     "objective": .object(["type": .string("string"), "minLength": .number(1),
                                           "description": .string("For research, the question to investigate; for a document, the brief saying what to write. Any length that fits the total below.")]),
                     "deliverables": .object(["type": .string("array"),
-                        "description": .string("For research, the things the report must cover; for a document, the facts, notes or requirements to include. Any number of items of any length, or none. The objective and all items together can be about \(NativeTaskInputSize.grouped(NativeResearchTaskRequest.documentInputCharacters)) characters for a document and \(NativeTaskInputSize.grouped(NativeResearchTaskRequest.researchInputCharacters)) for research."),
+                        "description": .string("For research, the things the report must cover; for a document, the facts, notes or requirements to include. Any number of items of any length, or none. The objective and all items together can be about \(NativeTaskInputSize.grouped(NativeResearchTaskRequest.inputBytes)) characters. Long material is condensed in steps so the work fits the model."),
                         "items": .object(["type": .string("string")])]),
                 ]),
             ]), confirmation: .none, timeout: .seconds(10), effect: .read, isAvailable: { true }, execute: { arguments in
@@ -106,7 +106,8 @@ enum NativeTaskTools {
                 var placed = origin
                 if general != nil, let position, position > 0 { placed.index = position }
                 try Task.checkCancellation()
-                let reference = try await service.submit(origin: placed, request: request, profile: profile)
+                let sized = await NativeModelContext.reported(profile)
+                let reference = try await service.submit(origin: placed, request: request, profile: sized)
                 await didSave(reference)
                 let message: String
                 switch reference.deliveryState {

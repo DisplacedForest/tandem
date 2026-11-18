@@ -162,6 +162,7 @@ extension SelfTest {
         try await documentCredentialLost()
         try await documentReasoningTurnedOn()
         try await documentReasoningTurnedOff()
+        try await resourcePolicy()
     }
 
     private static func documentCredentialLost() async throws {
@@ -387,7 +388,7 @@ extension SelfTest {
         let current = try JSONDecoder().decode(NativeTaskCheckpoint.self, from: try checkpoint.encoded())
         try require(NativeTaskProjection.documentMilestone(current) == NativeTaskWorkerFailures.shorterSectionNote,
                     "The card says it is asking for a shorter section while it does")
-        let longest = String(repeating: "a", count: NativeDocumentWorker.sectionCharacters)
+        let longest = String(repeating: "a", count: NativeResourcePolicy.fullSectionCharacters)
         try require(NativeDocumentWorker.parseSectionText(longest) == longest
                     && NativeDocumentWorker.parseSectionText(longest + "a") == nil, "The section maximum is unchanged")
     }
@@ -423,7 +424,7 @@ extension SelfTest {
                     && NativeDocumentWorker.firstSectionCharacters(local) == 2784, "A local document saves the limit the person set and reasoning")
         let free = try repository.prepareTaskReference(origin: try NativeTaskFixture.origin(repository), engine: NativeTaskLocalEngine.identity,
                                                        request: document, profile: unlimited).createRequest.payload.nativeBinding
-        try require(free?.outputTokens == nil && NativeDocumentWorker.firstSectionCharacters(free) == NativeDocumentWorker.sectionCharacters,
+        try require(free?.outputTokens == nil && NativeDocumentWorker.firstSectionCharacters(free) == NativeResourcePolicy.fullSectionCharacters,
                     "With no output limit set, a document asks for full-size sections")
         func limit(_ value: NativeJSONValue?) -> Int? {
             var options = NativeChatRequestOptions.none
@@ -432,9 +433,20 @@ extension SelfTest {
         }
         try require(limit(nil) == nil && limit(.number(4096)) == 4096 && limit(.number(0)) == nil && limit(.number(1.5)) == nil
                     && limit(.string("4096")) == nil && limit(.number(.infinity)) == nil, "Only a whole positive number the person saved counts as a limit")
-        for other in [try saved(NativeTaskLocalEngine.identity, research), try saved(remote, document), try saved(remote, research)] {
+        let localResearch = try saved(NativeTaskLocalEngine.identity, research)
+        try require(localResearch?.contextTokens == NativeResourcePolicy.defaultContextTokens && localResearch?.outputTokens == 2048
+                    && local?.contextTokens == NativeResourcePolicy.defaultContextTokens,
+                    "Local documents and research save the context size, the documented default when nothing reported one")
+        var reported = thinking
+        reported.contextTokens = 200_000
+        let large = try repository.prepareTaskReference(origin: try NativeTaskFixture.origin(repository), engine: NativeTaskLocalEngine.identity,
+                                                        request: document, profile: reported).createRequest.payload.nativeBinding
+        try require(large?.contextTokens == 200_000 && NativeResourcePolicy(large).promptBytes > NativeResourcePolicy(local).promptBytes,
+                    "A reported context size is saved and gives a larger prompt room")
+        for other in [try saved(remote, document), try saved(remote, research)] {
             let wire = try other.map { String(decoding: try nativeTaskEncoded($0), as: UTF8.self) } ?? ""
-            try require(other != nil && other?.outputTokens == nil && other?.reasoning == nil && !wire.contains("output_tokens") && !wire.contains("reasoning"),
+            try require(other != nil && other?.outputTokens == nil && other?.reasoning == nil && other?.contextTokens == nil
+                        && !wire.contains("output_tokens") && !wire.contains("reasoning") && !wire.contains("context_tokens"),
                         "Requests that can reach the server carry no new fields")
         }
     }
@@ -609,7 +621,7 @@ extension SelfTest {
         let drafts = await recorder.all().filter { $0.phase == "draft-0" }
         let saved = reference.createRequest.payload.nativeBinding
         let full = NativeDocumentWorker.firstSectionCharacters(saved)
-        try require(saved?.outputTokens == nil && saved?.reasoning == false && full == NativeDocumentWorker.sectionCharacters,
+        try require(saved?.outputTokens == nil && saved?.reasoning == false && full == NativeResourcePolicy.fullSectionCharacters,
                     "A new document with no output limit set asks for full-size sections")
         try require(drafts.count == 2 && asksFor(drafts[0], full) && asksFor(drafts[1], full / 2) && drafts[0].attempt != drafts[1].attempt,
                     "The second request asks for a shorter section under a fresh attempt")
@@ -653,7 +665,7 @@ extension SelfTest {
         let full = NativeDocumentWorker.firstSectionCharacters(reference.createRequest.payload.nativeBinding)
         let tries = await recorder.all().filter { $0.phase == "draft-1" }
         try require(tries.count == 3 && asksFor(tries[0], full) && asksFor(tries[1], full / 2)
-                    && asksFor(tries[2], max(NativeDocumentWorker.shortestSectionCharacters, full / 4)),
+                    && asksFor(tries[2], max(NativeResourcePolicy.shortestSectionCharacters, full / 4)),
                     "Each try asks for less, never below the floor")
         await release.bump("retry")
         await harness.tracker.retry(reference.id)
@@ -693,8 +705,8 @@ extension SelfTest {
         try require(checkpoint.failureReason == nil && checkpoint.pauseCause == "response_cut_short", "The cause is saved and nothing blames the brief")
         let tries = await recorder.all().filter { $0.phase == "outline" }
         let systems: [String] = tries.map { $0.messages.first?.content ?? "" }
-        let full: String = "under \(NativeDocumentWorker.sectionCharacters) characters"
-        let half: String = "under \(NativeDocumentWorker.sectionCharacters / 2) characters"
+        let full: String = "under \(NativeResourcePolicy.fullSectionCharacters) characters"
+        let half: String = "under \(NativeResourcePolicy.fullSectionCharacters / 2) characters"
         try require(systems.count == 3, "The plan was asked for three times")
         let firstMessage: String? = tries[0].messages.first?.content
         let firstOpen: Bool = firstMessage.map { !$0.contains("under") } ?? false

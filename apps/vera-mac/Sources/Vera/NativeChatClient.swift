@@ -465,6 +465,38 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         return snapshot.content.isEmpty ? nil : snapshot.content
     }
 
+    func modelContexts() async throws -> [String: Int] {
+        var request = URLRequest(url: config.modelsURL)
+        request.timeoutInterval = 10
+        applyAuthorization(to: &request)
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard (200..<300).contains(try statusCode(response)) else { return [:] }
+            return Self.modelContexts(from: data)
+        } catch {
+            throw sanitized(error)
+        }
+    }
+
+    static func modelContexts(from data: Data) -> [String: Int] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = object["data"] as? [[String: Any]] else { return [:] }
+        var contexts: [String: Int] = [:]
+        for row in rows {
+            guard let id = (row["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else { continue }
+            let top = row["top_provider"] as? [String: Any]
+            let candidates = [row["context_length"], top?["context_length"], row["max_model_len"]]
+            if let tokens = candidates.lazy.compactMap({ Self.positiveInteger($0) }).first { contexts[id] = tokens }
+        }
+        return contexts
+    }
+
+    private static func positiveInteger(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              let whole = Int(exactly: number.doubleValue), whole > 0 else { return nil }
+        return whole
+    }
+
     static func modelIDs(from data: Data) throws -> [String] {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rows = object["data"] as? [[String: Any]] else { throw ClientError.invalidResponse }

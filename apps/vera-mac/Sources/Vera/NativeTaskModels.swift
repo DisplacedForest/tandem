@@ -76,10 +76,22 @@ enum NativeTaskInputSize {
 struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
     static let workerTypes: Set<String> = ["research", "document", "companion"]
     static let chatWorkerTypes: Set<String> = ["research", "document"]
-    static let documentInputBytes = NativeDocumentWorker.promptBytes - 8000
-    static let researchInputBytes = 24000
-    static let documentInputCharacters = 14000
-    static let researchInputCharacters = 20000
+    static var inputBytes: Int { NativeResourcePolicy.requestBytes }
+
+    static func shortTitle(_ text: String) -> String? {
+        let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        var words: [String] = []
+        var length = 0
+        for word in firstLine.split(separator: " ") {
+            if length + word.count + (words.isEmpty ? 0 : 1) > NativeResourcePolicy.titleCharacters { break }
+            words.append(String(word))
+            length += word.count + 1
+        }
+        var derived = words.joined(separator: " ")
+        while let last = derived.last, ".,;:!?".contains(last) { derived.removeLast() }
+        if derived.isEmpty { derived = String(firstLine.prefix(NativeResourcePolicy.titleCharacters)).trimmingCharacters(in: .whitespaces) }
+        return derived.isEmpty ? nil : derived
+    }
 
     let objective: String
     let deliverables: [String]
@@ -105,16 +117,15 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
         let texts = [objective.trimmingCharacters(in: .whitespacesAndNewlines)]
             + deliverables.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         let document = workerType == "document"
-        guard let room = NativeTaskInputSize.over(texts, characters: document ? documentInputCharacters : researchInputCharacters,
-                                                  bytes: document ? documentInputBytes : researchInputBytes) else { return nil }
+        guard let room = NativeTaskInputSize.over(texts, characters: inputBytes, bytes: inputBytes) else { return nil }
         guard let allowed = room.allowed else {
             return document
-                ? "The brief and the things to include, written this way, take more room than a document can carry for now. Nothing was started. Use plainer text, or split this into more than one document."
-                : "The question and the things to cover, written this way, take more room than research can carry for now. Nothing was started. Use plainer text, or split this into more than one request."
+                ? "The brief and the things to include, written this way, take more room than one request can hold. Nothing was started. Use plainer text, or split this into more than one document."
+                : "The question and the things to cover, written this way, take more room than one request can hold. Nothing was started. Use plainer text, or split this into more than one request."
         }
         return document
-            ? "The brief and the things to include are \(room.sent) characters together, and a document can take about \(allowed) for now. Nothing was started. Shorten them, or split this into more than one document."
-            : "The question and the things to cover are \(room.sent) characters together, and research can take about \(allowed) for now. Nothing was started. Shorten them, or split this into more than one request."
+            ? "The brief and the things to include are \(room.sent) characters together, and one request can hold about \(allowed). Nothing was started. Split this into more than one document."
+            : "The question and the things to cover are \(room.sent) characters together, and one request can hold about \(allowed). Nothing was started. Split this into more than one request."
     }
 
     private init(validating objective: String, deliverables: [String], workerType: String, title: String?,
@@ -156,7 +167,7 @@ struct NativeResearchTaskRequest: Codable, Equatable, Hashable, Sendable {
         self.scheduleID = scheduleID
     }
 
-    var displayTitle: String { title ?? objective }
+    var displayTitle: String { title ?? Self.shortTitle(objective) ?? objective }
 
     private enum CodingKeys: String, CodingKey {
         case objective, deliverables, title, dot
@@ -211,19 +222,18 @@ struct NativeCompanionCarried: Codable, Equatable, Hashable, Sendable {
 struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
     static let modes: Set<String> = ["manual", "scheduled", "proactive"]
     static let payloadKeys: Set<String> = ["assignment", "mode", "goal", "connected_tool_ids", "native_binding", "schedule_id", "said", "carried"]
-    static let assignmentBytes = 60000
+    static var assignmentBytes: Int { NativeResourcePolicy.requestBytes }
     static let emptyAssignment = "The assignment is empty. Nothing was started."
 
     static func assignmentRefusal(_ assignment: String) -> String? {
         let cleanAssignment = assignment.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let room = NativeTaskInputSize.over([cleanAssignment], characters: assignmentCharacters, bytes: assignmentBytes) else { return nil }
+        guard let room = NativeTaskInputSize.over([cleanAssignment], characters: assignmentBytes, bytes: assignmentBytes) else { return nil }
         guard let allowed = room.allowed else {
-            return "The assignment, written this way, takes more room than this can carry for now. Nothing was started. Use plainer text, or split it into more than one request."
+            return "The assignment, written this way, takes more room than one request can hold. Nothing was started. Use plainer text, or split it into more than one request."
         }
-        return "The assignment is \(room.sent) characters, and this can take about \(allowed) for now. Nothing was started. Shorten it, or split it into more than one request."
+        return "The assignment is \(room.sent) characters, and one request can hold about \(allowed). Nothing was started. Split it into more than one request."
     }
 
-    static let assignmentCharacters = 50000
     static let saidLimit = 5000
 
     let assignment: String
@@ -437,12 +447,14 @@ struct NativeTaskAdmissionBinding: Codable, Equatable, Hashable, Sendable {
     let enrollmentDigest: String
     var outputTokens: Int? = nil
     var reasoning: Bool? = nil
+    var contextTokens: Int? = nil
 
     private enum CodingKeys: String, CodingKey {
         case id, reasoning
         case admissionBase = "admission_base"
         case enrollmentDigest = "enrollment_digest"
         case outputTokens = "output_tokens"
+        case contextTokens = "context_tokens"
     }
 }
 
@@ -485,10 +497,11 @@ struct NativeTaskProfileBinding: Codable, Equatable, Hashable, Sendable {
     let requiresCredential: Bool
     var reasoning: Bool? = nil
     var outputLimit: Int? = nil
+    var contextTokens: Int? = nil
 
     init(id: String, profileID: String, provider: NativeTaskEngineIdentity, savedModel: String,
          executionModel: String, limits: NativeTaskGenerationLimits, requiresCredential: Bool = false, reasoning: Bool? = nil,
-         outputLimit: Int? = nil) {
+         outputLimit: Int? = nil, contextTokens: Int? = nil) {
         self.id = id
         self.profileID = profileID
         self.provider = provider
@@ -498,6 +511,7 @@ struct NativeTaskProfileBinding: Codable, Equatable, Hashable, Sendable {
         self.requiresCredential = requiresCredential
         self.reasoning = reasoning
         self.outputLimit = outputLimit
+        self.contextTokens = contextTokens
     }
 }
 
@@ -577,9 +591,11 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
     var pending: NativeCompanionPending? = nil
     var note: NativeTaskNote? = nil
     var shrinkStep: String? = nil
+    var unrevised: [Int] = []
+    var oversize: [Int]? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case phase, sources, outline, drafts, revisions, effects, pending, note
+        case phase, sources, outline, drafts, revisions, effects, pending, note, unrevised, oversize
         case shrinkStep = "shrink_step"
         case nativeUnavailable = "native_unavailable"
         case failureReason = "failure_reason"
@@ -594,6 +610,8 @@ struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {
         outline = try container.decodeIfPresent([NativeDocumentSection].self, forKey: .outline) ?? []
         drafts = try container.decodeIfPresent([String].self, forKey: .drafts) ?? []
         revisions = try container.decodeIfPresent([String].self, forKey: .revisions) ?? []
+        unrevised = try container.decodeIfPresent([Int].self, forKey: .unrevised) ?? []
+        oversize = try container.decodeIfPresent([Int].self, forKey: .oversize)
         nativeUnavailable = try container.decodeIfPresent(String.self, forKey: .nativeUnavailable)
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
         effects = (try? container.decodeIfPresent([NativeCompanionEffectNote].self, forKey: .effects)) ?? []
@@ -627,7 +645,7 @@ struct NativeTaskStop: Codable, Equatable, Hashable, Sendable {
     static let declined = "declined"
     static let unconfirmed = "unconfirmed"
     static let reasons: Set<String> = [left, declined, unconfirmed]
-    static let stepScalars = 20000
+    static let stepScalars = NativeResourcePolicy.companionStepScalars
 
     let reason: String
     let step: String

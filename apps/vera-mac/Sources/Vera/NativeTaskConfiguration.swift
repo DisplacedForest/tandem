@@ -35,7 +35,9 @@ final class NativeTaskConfiguration {
             limits: try limits ?? NativeTaskGenerationLimits(),
             requiresCredential: config.apiKey?.isEmpty == false,
             reasoning: Self.reasoningOn(options(profileID: profile.id, model: executionModel)),
-            outputLimit: Self.outputLimit(options(profileID: profile.id, model: executionModel)))
+            outputLimit: Self.outputLimit(options(profileID: profile.id, model: executionModel)),
+            contextTokens: NativeModelContext.shared.tokens(base: config.baseURL, model: executionModel)
+                ?? options(profileID: profile.id, model: executionModel).contextCeiling)
     }
 
     nonisolated static func outputLimit(_ options: NativeChatRequestOptions) -> Int? {
