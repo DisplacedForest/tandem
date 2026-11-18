@@ -189,7 +189,7 @@ extension SelfTest {
         }
         shipped.append(profileTool)
         shipped += store.companionTalkTools(CompanionTalkControl(entries: []), turn: turn, typed: NativeTypedWords.none, capture: nil,
-                                            answerer: { _, _ in false }, timeout: .seconds(1))
+                                            authorizer: NativeRequestAuthorizer(transport: { _ in "{\"decision\": \"not_authorized\"}" }), timeout: .seconds(1))
 
         let variants: [NativeToolDefinition] = [
             NativeTaskTools.definition(service: service, origin: origin, profile: nil,

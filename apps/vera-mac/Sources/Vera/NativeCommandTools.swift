@@ -149,7 +149,6 @@ enum NativeCommandTools {
         return decided(command, action: probe.action, plain: plain, fallback: fallback, live: live, liveTargets: liveTargets).decision == .handOff
     }
 
-    static let verbs = ["run", "execute"]
     static let declinedAgainMessage = "The user already declined this command in this answer. It was not run. Do not retry it unless the user asks again."
 
     static func approvedThisTurn(_ reason: NativeRuleReason) -> Bool {
@@ -169,7 +168,7 @@ enum NativeCommandTools {
                             record: @escaping @Sendable (NativeCommandRun) -> Void,
                             live: @escaping @Sendable (String, NativeActionClass) -> NativeRuleDecision? = { _, _ in nil },
                             liveTargets: (@Sendable (String, NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?)? = nil,
-                            instruction: (@Sendable (String, NativeActionClass, [[NativeRuleTarget]], String) -> NativeInstructionPending?)? = nil,
+                            instruction: (@Sendable (String, NativeActionClass, [[NativeRuleTarget]], NativeProposedCall) -> NativeInstructionPending?)? = nil,
                             declined: @escaping @Sendable (String) -> Bool = { _ in false },
                             environment: @escaping @Sendable () -> [String: String] = { NativeCommandRunner.environment() },
                             alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
@@ -299,14 +298,21 @@ enum NativeCommandTools {
             let assessed = planned(command, arguments.folderString("directory"))
             return NativeChatDecision(action: assessed.action, decision: assessed.decision)
         }
+        definition.place = { arguments, key in
+            guard key == "directory" else { return nil }
+            let shared = grants()
+            return arguments.folderString("directory") ?? (shared.count == 1 ? shared[0].path : nil)
+        }
         if let instruction {
             let original = definition
             definition.instructionFor = { arguments in
                 guard case .string(let command)? = arguments["command"] else { return nil }
                 let assessed = planned(command, arguments.folderString("directory"))
                 guard assessed.decision == .act(.instruction) else { return nil }
+                let shared = grants()
+                let directory = arguments.folderString("directory") ?? (shared.count == 1 ? shared[0].path : nil)
                 return instruction(command, assessed.action, ruleSubjects(command: command),
-                                   NativeInstructionCheck.about(original, arguments: arguments, targets: []))
+                                   NativeProposedCall(original, arguments: arguments, directory: directory))
             }
         }
         definition.governed = true

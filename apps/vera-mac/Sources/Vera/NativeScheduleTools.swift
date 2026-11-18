@@ -11,15 +11,13 @@ enum NativeScheduleTools {
     static func turnEnabledIDs(snapshot: Set<String>, consented: Set<String>, authority: NativeTurnToolAuthority,
                                hasEngine: Bool, hasRepository: Bool, hasStore: Bool) -> Set<String> {
         let current = snapshot.intersection(consented)
-        var allowed = NativeTaskTools.enabledIDs(authority.filter(current), hasEngine: hasEngine, hasRepository: hasRepository,
-                                                 general: authority.allowsGeneral)
-        if !authority.allowsBackground && !authority.allowsGeneral { allowed.remove(NativeTaskTools.toolID) }
-        return enabledIDs(allowed, consented: current, authority: authority, hasStore: hasStore)
+        let allowed = NativeTaskTools.enabledIDs(current, hasEngine: hasEngine, hasRepository: hasRepository, general: authority.allowsGeneral)
+        return enabledIDs(allowed, consented: current, hasStore: hasStore)
     }
 
-    static func enabledIDs(_ existing: Set<String>, consented: Set<String>, authority: NativeTurnToolAuthority, hasStore: Bool) -> Set<String> {
+    static func enabledIDs(_ existing: Set<String>, consented: Set<String>, hasStore: Bool) -> Set<String> {
         let base = existing.subtracting([toolID])
-        guard consented.contains(NativeWebTools.researchToolID), authority.allowsSchedule, hasStore else { return base }
+        guard consented.contains(NativeWebTools.researchToolID), hasStore else { return base }
         return base.union([toolID])
     }
 

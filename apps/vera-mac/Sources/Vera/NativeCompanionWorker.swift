@@ -35,6 +35,7 @@ struct NativeCompanionWorkerEnvironment: Sendable {
     var recordsChanged: @Sendable () -> Void = {}
     var saveRules: @Sendable ([NativeRuleRecord]) -> Bool = { _ in false }
     var instructionUses: NativeInstructionUseStore? = nil
+    var checkObserved: NativeRequestAuthorizer.Observer? = nil
 }
 
 struct NativeCompanionEffectNote: Codable, Equatable, Hashable, Sendable {
@@ -366,26 +367,23 @@ enum NativeCompanionWorker {
     typealias RuleDecision = (action: NativeActionClass, decision: NativeRuleDecision, authorizedBy: [String], footprint: [String], why: NativeRuleWhy?)
 
     static func instructionClaim(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue],
-                                 action: NativeActionClass, listed: Bool = true) -> NativeInstructionClaim? {
+                                 action: NativeActionClass) -> NativeInstructionClaim? {
         guard !definition.demandsConfirmation else { return nil }
         if definition.id == NativeCommandTools.toolID {
             guard action == .commands, case .string(let command)? = arguments["command"], NativeCommandPrefix.isSimple(command),
                   NativeCommandClassifier.unplain(command, directory: arguments.folderString("directory")) == nil else { return nil }
-            return NativeInstructionClaim(verbs: NativeCommandTools.verbs)
+            return NativeInstructionClaim()
         }
         if definition.id == NativeFolderTools.toolID {
-            guard listed else { return NativeFolderTools.verbs[action].map { NativeInstructionClaim(verbs: $0) } }
-            return NativeFolderTools.instructionClaim(action, targets: ruleQuery(definition, arguments, action: action).targets,
-                                                      roots: definition.folderRoots?() ?? [])
+            return NativeFolderTools.instructed.contains(action) ? NativeInstructionClaim() : nil
         }
-        guard !definition.verbs.isEmpty else { return nil }
-        return NativeInstructionClaim(verbs: definition.verbs, names: definition.instructionNames?(arguments) ?? [], nothing: definition.namesNothing)
+        return definition.authorizable ? NativeInstructionClaim() : nil
     }
 
     static func instructionSignature(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass) -> String? {
-        guard let claim = instructionClaim(definition, arguments, action: action, listed: false) else { return nil }
+        guard instructionClaim(definition, arguments, action: action) != nil else { return nil }
         return NativeInstruction.signature(action: action, toolID: definition.id, targets: ruleQuery(definition, arguments, action: action).targets,
-                                           names: claim.names)
+                                           names: [])
     }
 
     static func instructedSignature(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], resolver base: NativeRuleResolver,
@@ -1003,29 +1001,17 @@ private struct NativeCompanionRun {
         }
     }
 
-    func confirmsInstruction(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass, key: String,
-                             _ checkpoint: NativeCompanionCheckpoint) async throws -> Bool {
-        let phase = "work-\(checkpoint.rounds)"
-        let attempt = checkpoint.attempt + NativeInstructionCheck.attemptSuffix + key
-        let names = NativeCompanionWorker.instructionClaim(definition, arguments, action: action, listed: false)?.names ?? []
-        let targets = NativeCompanionWorker.ruleQuery(definition, arguments, action: action).targets
-        let messages = NativeInstructionCheck.taskMessages(said: dot.typedRequest,
-                                                           about: NativeInstructionCheck.about(definition, arguments: arguments, targets: targets, names: names))
-        let model = model
-        do {
-            let completion = try await NativeCompanionWorker.withDeadline(NativeInstructionCheck.seconds, stopped: stopProbe) {
-                try await model(phase, attempt, 0, messages, nil, "none")
-            }
-            guard completion.toolCalls.isEmpty else { return false }
-            return NativeInstructionCheck.parse(completion.content)
-        } catch is CancellationError {
-            if Task.isCancelled || haltProbe() { throw CancellationError() }
-            return false
-        } catch is NativeCompanionStopped {
-            throw CancellationError()
-        } catch {
-            return false
-        }
+    func authorization(_ definition: NativeToolDefinition, _ arguments: [String: NativeJSONValue], action: NativeActionClass, key: String,
+                       _ checkpoint: NativeCompanionCheckpoint) async throws -> NativeAuthorizationDecision? {
+        guard dot.mode == "manual", !origin.unattended,
+              let request = NativeTrustedRequest.handedOff(dot, origin: typedOrigin),
+              let signature = NativeCompanionWorker.instructionSignature(definition, arguments, action: action) else { return nil }
+        let proposed = NativeProposedAction(NativeProposedCall(definition, arguments: arguments), action: action, signature: signature)
+        let deadline = NativeRequestAuthorizer.standardDeadline
+        let transport = NativeRequestAuthorizer.handedOff(model: model, phase: "work-\(checkpoint.rounds)",
+                                                          attempt: checkpoint.attempt + NativeRequestAuthorizer.attemptSuffix + key,
+                                                          seconds: NativeRequestAuthorizer.seconds(deadline), stopped: stopProbe)
+        return try await NativeRequestAuthorizer(transport: transport, deadline: deadline, observe: environment.checkObserved).decide(request, proposed)
     }
 
     func stopped(_ reason: String, call: NativeTaskGenerationToolCall, record: NativeEffectRecord?, title: String,
@@ -1198,30 +1184,36 @@ private struct NativeCompanionRun {
                 return nil
             }
         }
-        let authority = authority()
-        let (action, decided, authorizedBy, footprint, why) = recordDecision(definition, arguments, authority, honoringLimitedUse: true,
+        let standing = self.authority()
+        let (action, decided, authorizedBy, footprint, why) = recordDecision(definition, arguments, standing, honoringLimitedUse: true,
                                                                              uses: try instructionUses(excluding: key, refused: checkpoint.refused ?? []))
         var decision = decided
         var spend: NativeInstructionSpend?
+        var latest = standing
         if decision == .act(.instruction) {
-            let confirmed = try await confirmsInstruction(definition, arguments, action: action, key: key, checkpoint)
-            if confirmed, environment.instructionUses != nil {
-                if let origin = typedOrigin,
-                   let signature = NativeCompanionWorker.instructedSignature(definition, arguments, resolver: authority.resolver, honoringLimitedUse: true) {
+            decision = .ask
+            let judged = try await authorization(definition, arguments, action: action, key: key, checkpoint)
+            latest = self.authority()
+            let unchanged = latest.resolver.revision == standing.resolver.revision && latest.grantsRevision == standing.grantsRevision
+            if let judged, judged.authorizes {
+                if unchanged, let uses = environment.instructionUses, let origin = typedOrigin, judged.messageID == origin.userMessageID,
+                   judged.binds(definition, arguments: arguments),
+                   let signature = NativeCompanionWorker.instructedSignature(definition, arguments, resolver: latest.resolver, honoringLimitedUse: true),
+                   signature == judged.signature, !uses.refused(origin.userMessageID, signature: signature) {
                     spend = NativeInstructionSpend(messageID: origin.userMessageID, conversationID: origin.conversationID, signature: signature, holder: key)
-                } else {
-                    decision = .ask
+                    decision = .act(.instruction)
                 }
-            }
-            if !confirmed {
-                if let signature = NativeCompanionWorker.instructionSignature(definition, arguments, action: action),
-                   !(checkpoint.refused ?? []).contains(signature) {
-                    checkpoint.refused = (checkpoint.refused ?? []) + [signature]
+            } else if let judged, judged.remembersRefusal {
+                if let uses = environment.instructionUses, let origin = typedOrigin {
+                    _ = uses.refuse(origin.userMessageID, conversationID: origin.conversationID, signature: judged.signature)
                 }
-                decision = .ask
+                if !(checkpoint.refused ?? []).contains(judged.signature) {
+                    checkpoint.refused = (checkpoint.refused ?? []) + [judged.signature]
+                }
             }
         }
         if decision == .handOff { return try handOff(&checkpoint, call: call, title: title, action: action, why: why) }
+        let authority = latest
         let proposal = NativeEffectProposal(
             id: UUID().uuidString.lowercased(), taskID: task.id, generation: task.generation, toolID: definition.id, function: definition.name,
             argumentsJSON: NativeEffectProposal.canonicalArguments(.object(arguments)), target: NativeCompanionWorker.target(arguments),

@@ -71,7 +71,7 @@ extension SelfTest {
         try require(ComposerMentions.resolve("`open span\n@Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "An unterminated single backtick only masks its line")
         try require(ComposerMentions.resolve("`open span\r\n@Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "A CRLF line break ends an unterminated single backtick")
         try require(ComposerMentions.resolve("``open span\r\n@Search the web", catalog: catalog) == [NativeWebTools.searchToolID], "A CRLF line break ends an unterminated double backtick")
-        try require(!NativeTurnToolAuthority("`example\r\nDo not use tools.").allowsTools, "A prohibition after a CRLF line break still counts")
+        try require(NativeTurnToolAuthority.literalMask("`example\r\nDo not use tools.").hasSuffix("\r\nDo not use tools."), "A CRLF line break ends a masked code span")
         try require(ComposerMentions.resolve("ok\n@Research tea", catalog: catalog) == [NativeWebTools.researchToolID, NativeTaskTools.toolID], "A mention on its own line counts")
 
         let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: ConversationTitleStubTransport(.reply("x")),
@@ -79,14 +79,9 @@ extension SelfTest {
         try require(store.turnToolIDs(for: "what is new in Swift").isEmpty, "Without consent or mentions a turn has no tools")
         try require(store.turnToolIDs(for: "@Search the web what is new in Swift") == [NativeWebTools.searchToolID], "A mention adds its tool to the turn even when it is off in settings")
         try require(store.turnToolIDs(for: "@Research Swift") == [NativeWebTools.researchToolID, NativeTaskTools.toolID], "A research mention authorizes research for the turn")
-        try require(store.turnToolIDs(for: "no tools please @Search the web Swift").isEmpty, "A no-tools instruction still wins over a mention")
-
-        let plain = NativeTurnToolAuthority("tell me about tea")
-        try require(plain.allowsResearch, "Offering research does not depend on the wording of the message")
-        let mentioned = NativeTurnToolAuthority("@Research tea", mentions: [NativeWebTools.researchToolID])
-        try require(mentioned.allowsResearch, "A research mention authorizes research")
-        try require(mentioned.filter([NativeWebTools.researchToolID, NativeTaskTools.toolID]) == [NativeWebTools.researchToolID, NativeTaskTools.toolID], "Research tools pass the filter when mentioned")
-        let refused = NativeTurnToolAuthority("do not use tools @Research tea", mentions: [NativeWebTools.researchToolID])
-        try require(refused.filter([NativeWebTools.researchToolID]).isEmpty, "An explicit no-tools instruction still wins")
+        try require(store.turnToolIDs(for: "no tools please @Search the web Swift") == [NativeWebTools.searchToolID],
+                    "Offering a mentioned tool does not depend on the wording; a refusal is held back when a call is proposed")
+        let mentioned = NativeTurnToolAuthority(mentions: [NativeWebTools.researchToolID])
+        try require(mentioned.allowedWorkerTypes == NativeTurnToolAuthority().allowedWorkerTypes, "A research mention offers the same kinds of work")
     }
 }

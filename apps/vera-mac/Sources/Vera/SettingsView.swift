@@ -447,7 +447,6 @@ enum SettingsToolsCopy {
         case .badEnabled: return "Its \"enabled\" must be true or false. Fix it and save."
         case .badJSONFields: return "Its \"json_fields\" must map each text field to its own request field, and only works with \"POST\". Fix it and save."
         case .badSendsTo: return "Its \"sends_to\" must list text fields once each, and only works with \"POST\". Fix it and save."
-        case .badVerbs: return "Its \"verbs\" must list one to eight different lowercase words, and only a tool that changes something can have them. Fix it and save."
         case .duplicateName(let name): return "Another file already uses the name \"\(name)\". Rename one of them and save."
         case .reservedName(let name): return "The name \"\(name)\" belongs to a tool built into Tandem. Rename it and save."
         case .other: return "Check the file and save it again."

@@ -1,50 +1,20 @@
 import Foundation
 
 struct NativeTurnToolAuthority: Equatable, Sendable {
-    let allowsTools: Bool
-    let allowsResearch: Bool
-    let allowsDocument: Bool
-    let allowsSchedule: Bool
+    let mentions: Set<String>
     let companion: Bool
 
-    var allowsBackground: Bool { allowsResearch || allowsDocument }
-    var allowsGeneral: Bool { companion && allowsTools }
+    var allowsGeneral: Bool { companion }
 
     var allowedWorkerTypes: Set<String> {
-        var types: Set<String> = []
-        if allowsResearch { types.insert("research") }
-        if allowsDocument { types.insert("document") }
+        var types: Set<String> = ["research", "document"]
         if allowsGeneral { types.insert(NativeTaskTools.generalWorkerType) }
         return types
     }
 
-    init(_ request: String, mentions: Set<String> = [], companion: Bool = false) {
-        let text = Self.instructions(request)
-        let noTools = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:use|call|run|invoke)\s+(?:(?:any|external)\s+)?(?:tools?|functions?)\b|\b(?:no|without)\s+(?:(?:using|calling|invoking)\s+)?(?:(?:any|external)\s+)?(?:tools?|functions?)\b"#)
-        let noResearch = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:(?:start|run|do|perform|conduct)\s+)?(?:(?:new|background|deep)\s+)*(?:research|investigat\w*)\b|\bno\s+(?:new\s+)?(?:(?:background|deep)\s+)?(?:research|investigation)\b"#)
-        let documentNoun = #"(?:document|report|essay|memo|guide|article|write-?up)"#
-        let noDocument = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:write|draft|produce|create|prepare)\s+(?:me\s+|us\s+)?(?:(?:a|an|the|any)\s+)?(?:(?:new|separate|background|long|longer|full|detailed|written)\s+)*"# + documentNoun + #"s?\b"#)
-        let noSchedule = Self.matches(text, #"\b(?:do\s+not|must\s+not|don't|dont|never)\s+(?:set\s+up\s+|create\s+|make\s+)?(?:a\s+|any\s+)?(?:schedules?|recurring)\b|\bno\s+(?:new\s+)?schedules?\b"#)
-        allowsTools = !noTools
+    init(mentions: Set<String> = [], companion: Bool = false) {
+        self.mentions = mentions
         self.companion = companion
-        allowsSchedule = !noTools && !noSchedule
-        allowsResearch = !noTools && !noResearch
-        allowsDocument = !noTools && !noDocument
-    }
-
-    func filter(_ ids: Set<String>) -> Set<String> {
-        guard allowsTools else { return [] }
-        var kept = ids
-        if !allowsBackground {
-            if !allowsGeneral { kept.remove(NativeTaskTools.toolID) }
-            if !allowsSchedule { kept.remove(NativeWebTools.researchToolID) }
-        }
-        if !allowsSchedule { kept.remove(NativeScheduleTools.toolID) }
-        return kept
-    }
-
-    private static func matches(_ text: String, _ pattern: String) -> Bool {
-        text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     static let literalPatterns = [#"(?s)~~~.*?(?:~~~|$)"#, #"(?m)^\s*>.*$"#, #""(?:\\.|[^"\\])*(?:"|$)"#,
@@ -91,9 +61,5 @@ struct NativeTurnToolAuthority: Equatable, Sendable {
             }
         }
         return text
-    }
-
-    private static func instructions(_ raw: String) -> String {
-        literalMask(raw)
     }
 }
