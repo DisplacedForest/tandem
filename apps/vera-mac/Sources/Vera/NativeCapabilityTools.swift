@@ -63,7 +63,6 @@ enum NativeToolDeclarationProblem: Equatable, Hashable, Sendable {
     case badEnabled
     case badJSONFields
     case badSendsTo
-    case badVerbs
     case duplicateName(String)
     case reservedName(String)
     case other
@@ -231,8 +230,7 @@ enum NativeCapabilityTools {
         var definition = plainDefinition(declaration, base: base, client: client)
         if let fields = declaration.sendsTo, !declaration.reads, declaration.method == .post {
             definition.fixedDestination = fields.isEmpty
-            definition.verbs = declaration.verbs
-            definition.namesNothing = fields.isEmpty
+            definition.authorizable = !fields.isEmpty
             if !fields.isEmpty {
                 definition.ruleSubjects = { arguments in
                     let targets = declaration.recipients(arguments)
@@ -651,27 +649,7 @@ enum NativeCapabilityTools {
             }
             sendsTo = fields
         }
-        var verbs: [String] = []
-        if let raw = object["verbs"] {
-            guard let words = raw as? [String], !words.isEmpty, words.count <= 8 else {
-                throw NativeToolDeclarationError(reason: "'verbs' must be a list of one to eight action words, such as [\"send\", \"post\"]", problem: .badVerbs)
-            }
-            guard !(method == .get && confirmation != .required) else {
-                throw NativeToolDeclarationError(reason: "'verbs' only applies to a tool that changes something, not one that only reads", problem: .badVerbs)
-            }
-            for word in words {
-                guard (1...24).contains(word.count),
-                      word.allSatisfy({ ("a"..."z").contains($0) || $0 == " " }),
-                      word.first != " ", word.last != " ", !word.contains("  ") else {
-                    throw NativeToolDeclarationError(
-                        reason: "'verbs' lists '\(word)', but each must be 1 to 24 lowercase letters, with single spaces between words", problem: .badVerbs)
-                }
-            }
-            guard Set(words).count == words.count else {
-                throw NativeToolDeclarationError(reason: "'verbs' lists the same word twice", problem: .badVerbs)
-            }
-            verbs = words
-        }
+        let verbs = (object["verbs"] as? [String]) ?? []
         var declaration = NativeToolDeclaration(
             name: name, title: title, description: description, properties: properties,
             required: required, endpoint: endpoint, method: method, confirmation: confirmation,

@@ -234,27 +234,20 @@ enum CompanionTalkTools {
         return flat.count <= limit ? flat : String(flat.prefix(limit))
     }
 
-    static func about(stop entry: CompanionTalkEntry, among entries: [CompanionTalkEntry], earlier: String?) -> String {
+    static func about(stop entry: CompanionTalkEntry, among entries: [CompanionTalkEntry]) -> String {
         "Stop this one thing: " + quoted(NativeInstructionCheck.clean(entry.description)) + "."
-            + others(entry, entries) + " Answer true only if the message clearly means this one thing and asks to stop it."
-            + context(earlier)
+            + others(entry, entries) + " Answer authorized only if the message clearly means this one thing and asks to stop it."
     }
 
-    static func about(answer title: String, for entry: CompanionTalkEntry, among entries: [CompanionTalkEntry], earlier: String?) -> String {
+    static func about(answer title: String, for entry: CompanionTalkEntry, among entries: [CompanionTalkEntry]) -> String {
         "Answer the question " + quoted(NativeInstructionCheck.clean(entry.question ?? "")) + " about "
             + quoted(NativeInstructionCheck.clean(entry.description)) + " with " + quoted(NativeInstructionCheck.clean(title)) + "."
-            + others(entry, entries) + " Answer true only if the message clearly means this question and gives this answer."
-            + context(earlier)
+            + others(entry, entries) + " Answer authorized only if the message clearly means this question and gives this answer."
     }
 
     static func others(_ entry: CompanionTalkEntry, _ entries: [CompanionTalkEntry]) -> String {
         let rest = entries.filter { $0.handle != entry.handle }.map { quoted(NativeInstructionCheck.clean($0.description)) }
         return rest.isEmpty ? "" : " The other things listed are: " + rest.joined(separator: "; ") + "."
-    }
-
-    static func context(_ earlier: String?) -> String {
-        guard let earlier, !earlier.isEmpty else { return "" }
-        return " The reply just before the message, for context only: " + quoted(NativeInstructionCheck.clean(earlier)) + "."
     }
 }
 

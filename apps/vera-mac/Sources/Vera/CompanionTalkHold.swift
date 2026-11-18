@@ -7,8 +7,7 @@ struct CompanionHoldGate: Sendable {
     let known: Set<UUID>
     let said: String
     let earlier: String?
-    let answerer: NativeInstructionAnswerer
-    let timeout: Duration
+    let authorizer: NativeRequestAuthorizer
     let toolTimeout: Duration
     let ledger: CompanionTalkLedger
 }
@@ -22,10 +21,9 @@ enum CompanionHoldTools {
     static let changeIndex = 900
     static let promptChecks = 20
 
-    static func about(_ ask: String, _ entry: CompanionTalkEntry, among entries: [CompanionTalkEntry], earlier: String?, only: String) -> String {
+    static func about(_ ask: String, _ entry: CompanionTalkEntry, among entries: [CompanionTalkEntry], only: String) -> String {
         ask + CompanionTalkTools.quoted(NativeInstructionCheck.clean(entry.description)) + "."
-            + CompanionTalkTools.others(entry, entries) + " Answer true only if the message clearly means this one thing and " + only
-            + CompanionTalkTools.context(earlier)
+            + CompanionTalkTools.others(entry, entries) + " Answer authorized only if the message clearly means this one thing and " + only
     }
 
     static func setAside(_ entry: CompanionTalkEntry?) -> String? {
@@ -135,9 +133,7 @@ extension ChatStore {
         guard live.0 else { return no(CompanionTalkCopy.notCurrent) }
         if let sentence = eligible(live.1) { return no(sentence) }
         let question = about(entry)
-        let said = gate.said
-        let answerer = gate.answerer
-        let cleared = await NativeInstructionCheck.bounded(gate.timeout) { await answerer(said, question) }
+        let cleared = try await gate.authorizer.confirms(said: gate.said, action: question, earlier: gate.earlier)
         try Task.checkCancellation()
         guard cleared else { return no(CompanionTalkCopy.unclear) }
         let after = await MainActor.run { (self.turnOwned(turn), self.companionTalkLive(entry.referenceID)) }
@@ -169,7 +165,7 @@ extension ChatStore {
                 if let earlierResult = gate.ledger.recall(key) { return earlierResult }
                 guard let self else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
                 let cleared = try await self.companionHoldCleared(gate, handle: handle, eligible: CompanionHoldTools.setAside) { entry in
-                    CompanionHoldTools.about("Put this one thing aside for now: ", entry, among: entries, earlier: gate.earlier,
+                    CompanionHoldTools.about("Put this one thing aside for now: ", entry, among: entries,
                                              only: "asks to pause it, hold it or put it aside, with no time named.")
                 }
                 guard let entry = cleared.entry else { return cleared.refusal ?? CompanionTalkTools.refusal(CompanionHoldCopy.couldNotSetAside) }
@@ -186,7 +182,7 @@ extension ChatStore {
                 if let earlierResult = gate.ledger.recall(key) { return earlierResult }
                 guard let self else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
                 let cleared = try await self.companionHoldCleared(gate, handle: handle, eligible: CompanionHoldTools.pickUpRefusal) { entry in
-                    CompanionHoldTools.about("Carry on with this one thing that was put aside: ", entry, among: entries, earlier: gate.earlier,
+                    CompanionHoldTools.about("Carry on with this one thing that was put aside: ", entry, among: entries,
                                              only: "asks to pick it back up, resume it or carry on with it.")
                 }
                 guard let entry = cleared.entry else { return cleared.refusal ?? CompanionTalkTools.refusal(CompanionHoldCopy.couldNotPickUp) }
@@ -214,7 +210,7 @@ extension ChatStore {
                 let cleared = try await self.companionHoldCleared(gate, handle: handle, eligible: CompanionHoldTools.change) { entry in
                     CompanionHoldTools.about("Change what this one thing should do, so that the job becomes "
                                              + CompanionTalkTools.quoted(NativeInstructionCheck.clean(work)) + ". The thing: ",
-                                             entry, among: entries, earlier: gate.earlier, only: "asks for this change to it.")
+                                             entry, among: entries, only: "asks for this change to it.")
                 }
                 guard let entry = cleared.entry else { return cleared.refusal ?? CompanionTalkTools.refusal(CompanionHoldCopy.couldNotChange) }
                 return kept(key, await self.companionTalkChange(entry.referenceID, work: work, gate: gate))

@@ -7,6 +7,8 @@ extension Notification.Name {
 }
 
 extension ChatStore {
+    nonisolated static let rulesLog = Logger(subsystem: "Vera", category: "rules")
+
     var nativeRuleRecordStore: NativeRuleRecordStore? {
         (repository as? LocalChatRepository).map { NativeRuleRecordStore(database: $0.database) }
     }
@@ -27,7 +29,7 @@ extension ChatStore {
             _ = try store.advanceVersion()
             _ = try store.expireDue()
         } catch {
-            Logger(subsystem: "Vera", category: "rules").error("rules_launch_failed \(error.localizedDescription, privacy: .public)")
+            rulesLog.error("rules_launch_failed \(error.localizedDescription, privacy: .public)")
             source.fail()
             return
         }
@@ -40,7 +42,7 @@ extension ChatStore {
                 let snapshot = try store.snapshot()
                 if source.publish(snapshot.records, version: snapshot.version) { return }
             } catch {
-                Logger(subsystem: "Vera", category: "rules").error("rules_reload_failed \(error.localizedDescription, privacy: .public)")
+                rulesLog.error("rules_reload_failed \(error.localizedDescription, privacy: .public)")
                 source.fail()
                 return
             }

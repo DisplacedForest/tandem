@@ -113,10 +113,8 @@ extension SelfTest {
         let typedTransport = NativeSessionFixtureTransport()
         let typedStore = try store(typed, transport: typedTransport)
         try await ask(typedStore, "Add milk to my reminders")
-        try await NativeSessionFixture.eventually("The typed turn asks for access") { typed.requests == 1 }
-        try await ask(typedStore, "Add milk to my reminders")
-        try require(typed.requests == 1 && reminderNames.isSubset(of: offered(typedTransport)) && !prompt(typedTransport).contains("access to Reminders"),
-                    "Once the person allows it, the next message has the tools and no note")
+        try require(typed.requests == 0 && reminderNames.isSubset(of: offered(typedTransport)) && !prompt(typedTransport).contains("access to Reminders"),
+                    "Sending a message never asks macOS by itself: the tools are offered without a note, and access is asked for when a call is about to use them")
 
         let quiet = NativeToolAccessFixtureService(.notDetermined)
         let quietTransport = NativeSessionFixtureTransport()
@@ -148,6 +146,6 @@ extension SelfTest {
             companionStore.selected?.messages.last?.role == .assistant && companionStore.selected?.messages.last?.state == .complete
         }
         try require(companion.requests == 0, "A turn the companion starts on its own never asks macOS for access")
-        print("  tool system access OK (plain notes, refused, granted, switched off, asked at launch once, asked on a typed turn, never outside the app, a second tool, never for a companion-started turn)")
+        print("  tool system access OK (plain notes, refused, granted, switched off, asked at launch once, not asked just for sending, never outside the app, a second tool, never for a companion-started turn)")
     }
 }

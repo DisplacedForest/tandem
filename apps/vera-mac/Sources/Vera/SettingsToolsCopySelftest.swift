@@ -82,7 +82,7 @@ extension SelfTest {
         let problems: [NativeToolDeclarationProblem] = [
             .unreadable, .notJSON, .missing("description"), .badName, .badParameters, .badField("count"),
             .unsupportedType(field: "beds", type: "object"), .unsupportedKeyword("format"), .badValue(field: "count", keyword: "enum"),
-            .badRequired, .repeatedRequired, .badEndpoint, .badMethod, .badConfirmation, .badTimeout, .badEnabled, .badJSONFields, .badSendsTo, .badVerbs,
+            .badRequired, .repeatedRequired, .badEndpoint, .badMethod, .badConfirmation, .badTimeout, .badEnabled, .badJSONFields, .badSendsTo,
             .duplicateName("water"), .reservedName("schedule_task"), .other,
         ]
         let internals = ["parameters.", "'", "property '", "json schema", "pointer", "#/", "nativetool", "problem", "reason", "\u{2014}"]

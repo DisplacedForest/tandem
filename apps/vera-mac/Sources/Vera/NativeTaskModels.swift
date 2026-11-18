@@ -236,7 +236,7 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
 
     var origin: NativeRunOrigin { NativeRunOrigin(mode: mode, scheduleID: scheduleID) }
 
-    var typedRequest: String { said ?? (mode == "manual" ? assignment : "") }
+    var typedRequest: String { said ?? "" }
 
     init(assignment: String, mode: String, connectedToolIDs: [String]? = nil, scheduleID: String? = nil, said: String? = nil,
          carried: NativeCompanionCarried? = nil, admitting: Bool = true) throws {
