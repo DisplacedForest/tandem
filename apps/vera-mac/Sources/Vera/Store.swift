@@ -2525,7 +2525,8 @@ final class ChatStore: ObservableObject {
                                                  listTransport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: checkTransport, model: checkModel),
                                                  deadline: checkTimeout, observe: observe)
         let trusted = turn.companionEvent == nil ? NativeTrustedRequest.typed(typed, messageID: turn.userMessageID, conversationID: id) : nil
-        let restrictions = trusted.map { NativeRestrictionCheck(authorizer: authorizer, messageID: $0.messageID, text: $0.text, cache: requestRestrictionCache) }
+        let restrictions = trusted.map { NativeRestrictionCheck(authorizer: authorizer, messageID: $0.messageID, text: $0.text, cache: requestRestrictionCache,
+                                                                earlierAttempt: turn.dispatched == true) }
         let capture = composerSentTurns.removeValue(forKey: turn.id)
         let talk = companionTalkControl(for: turn, supportsTools: ModelCapabilityCatalog.resolve(model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile.supportsTools)
         if let talk { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + companionTalkTools(talk, turn: turn, typed: typed, capture: capture, authorizer: authorizer, timeout: checkTimeout)) }

@@ -266,6 +266,7 @@ struct NativeRefusalList: Equatable, Sendable {
     var refusesNothing: Bool { source == .model && items.isEmpty }
 
     static let ruledOutSentence = "The person asked not to do this in this message. Answer without it."
+    static let targetMovedSentence = "The shared folders changed while this was being checked, so it was not run."
 }
 
 struct NativeRefusalAnswer: Equatable, Sendable {
@@ -288,6 +289,7 @@ final class NativeRequestRestrictionCache: @unchecked Sendable {
     private let lock = NSLock()
     private var lists: [String: NativeRefusalList] = [:]
     private var decisions: [String: NativeRefusalDecision] = [:]
+    private var histories: [String: [String]] = [:]
 
     static func key(_ messageID: UUID, _ text: String) -> String {
         messageID.uuidString + "|" + NativeTrustedRequest.digest(text)
@@ -308,6 +310,24 @@ final class NativeRequestRestrictionCache: @unchecked Sendable {
         }
     }
 
+    func history(_ key: String) -> [String]? {
+        lock.withLock { histories[key] }
+    }
+
+    func begin(_ key: String) {
+        lock.withLock {
+            if histories[key] == nil, histories.count >= Self.capacity { histories.removeAll() }
+            if histories[key] == nil { histories[key] = [] }
+        }
+    }
+
+    func ran(_ description: String, _ key: String) {
+        lock.withLock {
+            if histories[key] == nil, histories.count >= Self.capacity { histories.removeAll() }
+            histories[key, default: []].append(description)
+        }
+    }
+
     func decision(_ key: String) -> NativeRefusalDecision? {
         lock.withLock { decisions[key] }
     }
@@ -325,6 +345,19 @@ struct NativeRestrictionCheck: Sendable {
     let messageID: UUID
     let text: String
     let cache: NativeRequestRestrictionCache
+    var earlierAttempt = false
+
+    func history() -> [String]? {
+        let key = NativeRequestRestrictionCache.key(messageID, text)
+        if let kept = cache.history(key) { return kept }
+        guard !earlierAttempt else { return nil }
+        cache.begin(key)
+        return []
+    }
+
+    func ran(_ description: String) {
+        cache.ran(description, NativeRequestRestrictionCache.key(messageID, text))
+    }
 
     func refusals() async throws -> NativeRefusalList {
         let key = NativeRequestRestrictionCache.key(messageID, text)

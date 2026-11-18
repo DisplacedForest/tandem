@@ -781,7 +781,8 @@ struct NativeToolLoop: Sendable {
                     var turnSources: [String: Int] = [:]
                     var refusals: NativeRefusalList?
                     var refusalsDown = false
-                    var ranCalls: [String] = []
+                    var ranCalls = restrictionCheck?.history() ?? []
+                    let historyLost = restrictionCheck.map { $0.history() == nil } ?? false
                     var repairs = NativeToolRepairs()
                     var unconfirmedWrites: Set<Data> = []
                     var repairsSpent = false
@@ -928,6 +929,7 @@ struct NativeToolLoop: Sendable {
                                         throw NativeToolError.failed("The lookup limit was reached. This call was not run.")
                                     }
                                     var refusalCard = false
+                                    var evaluated: String?
                                     if let restrictionCheck {
                                         if refusalsDown {
                                             refusalCard = true
@@ -937,13 +939,17 @@ struct NativeToolLoop: Sendable {
                                                 refusals = try await restrictionCheck.refusals()
                                                 try await checkAuthorization()
                                             }
-                                            if let said = refusals, !said.refusesNothing {
+                                            if let said = refusals, !said.refusesNothing, historyLost {
+                                                refusalCard = true
+                                            } else if let said = refusals, !said.refusesNothing {
                                                 try await checkAuthorization()
-                                                let outcome = try await restrictionCheck.outcome(NativeProposedCall(definition, arguments: arguments), refusals: said, ran: ranCalls)
+                                                let proposedCall = NativeProposedCall(definition, arguments: arguments)
+                                                let outcome = try await restrictionCheck.outcome(proposedCall, refusals: said, ran: ranCalls)
                                                 try await checkAuthorization()
                                                 switch outcome {
                                                 case .allowed:
-                                                    break
+                                                    evaluated = proposedCall.description
+                                                    if NativeActionDescription.describe(definition, arguments: arguments) != proposedCall.description { refusalCard = true }
                                                 case .ruledOut:
                                                     throw NativeToolError.failed(NativeRefusalList.ruledOutSentence)
                                                 case .unclear:
@@ -1035,7 +1041,10 @@ struct NativeToolLoop: Sendable {
                                         }
                                     }
                                     if isSearch { webSearchCount += 1 }
-                                    if restrictionCheck != nil { ranCalls.append(NativeActionDescription.describe(definition, arguments: arguments)) }
+                                    if let evaluated, NativeActionDescription.describe(definition, arguments: arguments) != evaluated {
+                                        if let recording, let ticket { await recording.settle(ticket, .absent("refused")) }
+                                        throw NativeToolError.failed(NativeRefusalList.targetMovedSentence)
+                                    }
                                     guard let activity = activities.first(where: { $0.id == call.id }) else {
                                         throw NativeToolError.failed("The tool call could not be matched to its request")
                                     }
@@ -1081,6 +1090,11 @@ struct NativeToolLoop: Sendable {
                                             }
                                         }
                                     } catch {
+                                        if let restrictionCheck, boundary.reached {
+                                            let done = NativeActionDescription.describe(definition, arguments: arguments)
+                                            ranCalls.append(done)
+                                            restrictionCheck.ran(done)
+                                        }
                                         let outcome = NativeChatEffects.settlement(for: error, boundary: boundary,
                                                                                    marks: NativeChatEffects.marksBoundary(definition))
                                         if let recording, let ticket { await recording.settle(ticket, outcome) }
@@ -1089,6 +1103,11 @@ struct NativeToolLoop: Sendable {
                                             throw NativeToolRepair.uncertain(error.localizedDescription)
                                         }
                                         throw error
+                                    }
+                                    if let restrictionCheck, boundary.reached || !Self.resultFailed(value, toolName: call.name) {
+                                        let done = NativeActionDescription.describe(definition, arguments: arguments)
+                                        ranCalls.append(done)
+                                        restrictionCheck.ran(done)
                                     }
                                     if let fault = NativeToolRepair.resultProblem(definition, value, write: writeKey != nil) {
                                         value = fault.value

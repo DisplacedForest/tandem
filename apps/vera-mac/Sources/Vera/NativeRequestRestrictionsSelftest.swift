@@ -114,6 +114,9 @@ extension SelfTest {
         try await restrictionOncePerMessage()
         try await restrictionOrder()
         try await restrictionResolvedTarget()
+        try await restrictionNeverRan()
+        try await restrictionTargetMoves()
+        try await restrictionRetry()
         try await restrictionPromptShape()
         try await restrictionCancellation()
         try await restrictionNotice()
@@ -153,10 +156,10 @@ extension SelfTest {
                                              cache: NativeRequestRestrictionCache = NativeRequestRestrictionCache(),
                                              deadline: Duration = .seconds(2), cards: NativeRestrictionCards = NativeRestrictionCards(approves: false),
                                              observe: NativeRequestAuthorizer.Observer? = nil,
-                                             history: [NativeChatMessage]? = nil) async throws -> (activities: [NativeToolActivity], transport: ScriptedNativeToolTransport) {
+                                             history: [NativeChatMessage]? = nil, earlierAttempt: Bool = false) async throws -> (activities: [NativeToolActivity], transport: ScriptedNativeToolTransport) {
         let transport = ScriptedNativeToolTransport(rounds: rounds)
         let authorizer = NativeRequestAuthorizer(transport: script.transport, deadline: deadline, observe: observe)
-        let check = NativeRestrictionCheck(authorizer: authorizer, messageID: message, text: text, cache: cache)
+        let check = NativeRestrictionCheck(authorizer: authorizer, messageID: message, text: text, cache: cache, earlierAttempt: earlierAttempt)
         let loop = NativeToolLoop(transport: transport, registry: NativeToolRegistry(definitions: definitions),
                                   confirm: { await cards.confirm($0) }, authorizer: authorizer, restrictions: check)
         var final: NativeToolTurnSnapshot?
@@ -469,6 +472,75 @@ extension SelfTest {
                     "A relative path is described by the folder it resolves to: \(before) | \(after)")
         try require(first == .allowed && second == .ruledOut && script.checkCalls == 2,
                     "When the shared folder changes, the same arguments are asked about again by where they now point")
+    }
+
+    private static func restrictionNeverRan() async throws {
+        let require = NativeTaskFixture.require
+        let hits = NativeChatRulesCounter()
+        let failing = NativeToolDefinition(id: "fixture-check", name: "check_first", title: "Check the build", description: "Fixture",
+                                           parameters: .object(["type": .string("object")]), confirmation: .none, timeout: .seconds(5), effect: .read,
+                                           isAvailable: { true }, execute: { _ in throw NativeToolError.failed("Refused by a rule.") })
+        let script = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes before checking the build"]))) { content in
+            .text(NativeRequestAuthorizer.refusalCheckReply(SelfTest.restrictionAction(content).contains("Read the notes")
+                && content.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun) ? .ruledOut : .notRuledOut))
+        }
+        let (activities, _) = try await restrictionDrive([failing, restrictionReader(hits)],
+            [restrictionRound([restrictionCall("check", "check_first")]), restrictionRound([restrictionCall("read", "read_notes")]), restrictionDone],
+            script: script)
+        let last = script.checkRequests.last?.last?.content ?? ""
+        try require(activities.first { $0.id == "check" }?.state == .failed && hits.count == 0
+                    && last.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun),
+                    "A call that failed without running is never listed as already run, so a later call waiting on it stays refused: \(last)")
+    }
+
+    private static func restrictionTargetMoves() async throws {
+        let require = NativeTaskFixture.require
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("restriction-moves-" + UUID().uuidString, isDirectory: true)
+        let open = root.appendingPathComponent("Open", isDirectory: true)
+        let kept = root.appendingPathComponent("Kept", isDirectory: true)
+        try FileManager.default.createDirectory(at: open, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: kept, withIntermediateDirectories: true)
+        try Data("open".utf8).write(to: open.appendingPathComponent("notes.md"))
+        try Data("KEPT-CONTENT".utf8).write(to: kept.appendingPathComponent("notes.md"))
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shared = NativeRestrictionGrants([FolderGrant(path: open.path)])
+        let tools = NativeFolderTools.definitions(grants: { shared.value }, ledger: NativeFileChangeLedger())
+        guard let read = tools.first(where: { $0.name == NativeFolderTools.readName }) else { throw NativeTaskFixture.Failure.assertion("read tool") }
+        let script = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read anything in Kept"]))) { content in
+            shared.set([FolderGrant(path: kept.path)])
+            return .text(NativeRequestAuthorizer.refusalCheckReply(SelfTest.restrictionAction(content).contains(kept.path) ? .ruledOut : .notRuledOut))
+        }
+        let cards = NativeRestrictionCards(approves: false)
+        let (activities, transport) = try await restrictionDrive([read],
+            [restrictionRound([restrictionCall("read", NativeFolderTools.readName, "{\"path\":\"notes.md\"}")]), restrictionDone],
+            script: script, cards: cards)
+        let told = (transport.histories.last ?? []).map(\.content).joined()
+        try require(activities.first?.state != .succeeded && cards.names == [NativeFolderTools.readName] && !told.contains("KEPT-CONTENT"),
+                    "When the shared folder changes while the question is out, the answer doesn't carry over: the call asks first and nothing is read")
+    }
+
+    private static func restrictionRetry() async throws {
+        let require = NativeTaskFixture.require
+        let hits = NativeChatRulesCounter()
+        let script = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes more than once"]))) { content in
+            .text(NativeRequestAuthorizer.refusalCheckReply(content.contains(NativeRequestAuthorizer.ranLabel + "\n" + NativeRequestAuthorizer.noneRun) ? .notRuledOut : .ruledOut))
+        }
+        let cache = NativeRequestRestrictionCache()
+        let message = UUID()
+        let rounds = [restrictionRound([restrictionCall("read", "read_notes")]), restrictionDone]
+        _ = try await restrictionDrive([restrictionReader(hits)], rounds, script: script, message: message, cache: cache)
+        let (again, _) = try await restrictionDrive([restrictionReader(hits)], rounds, script: script, message: message, cache: cache, earlierAttempt: true)
+        try require(hits.count == 1 && again.first?.state == .failed && (again.first?.result ?? "").contains(NativeRefusalList.ruledOutSentence),
+                    "Trying the same message again keeps what already ran, so a limit on how many times holds across attempts")
+        let cards = NativeRestrictionCards(approves: false)
+        let fresh = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["read notes more than once"])))
+        let (lost, _) = try await restrictionDrive([restrictionReader(hits)], rounds, script: fresh, cache: NativeRequestRestrictionCache(),
+                                                   cards: cards, earlierAttempt: true)
+        try require(hits.count == 1 && cards.names == ["read_notes"] && lost.first?.confirmationRequired == true && fresh.checkCalls == 0,
+                    "When an earlier attempt ran something and what it ran is no longer known, every call asks first")
+        let quiet = NativeRestrictionScript(.text(NativeRequestAuthorizer.noRestrictions))
+        _ = try await restrictionDrive([restrictionReader(hits)], rounds, script: quiet, cache: NativeRequestRestrictionCache(), earlierAttempt: true)
+        try require(hits.count == 2, "A message with nothing refused carries on as usual on a later attempt")
     }
 
     private static func restrictionPromptShape() async throws {
