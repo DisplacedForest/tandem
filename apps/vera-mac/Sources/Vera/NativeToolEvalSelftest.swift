@@ -6,9 +6,14 @@ extension NativeToolEval {
     }
 
     static func selftest() async -> Int32 {
+        if NativeToolEvalIsolation.selftestRefusal(ProcessInfo.processInfo.environment) {
+            print("TOOL EVAL SELFTEST ERROR: unset \(AppLocations.settingName) or point it at an empty folder. The evaluation keeps its own settings and data.")
+            return 2
+        }
         do {
             let judged = try judgeChecks()
             try networkChecks()
+            try isolationChecks()
             try sandboxCheck()
             let accounting = try await accountingChecks()
             let groups = try await groupChecks()
@@ -17,7 +22,7 @@ extension NativeToolEval {
             try await incompleteCheck()
             try liveShapeChecks()
             let caseRuns = groups.report.results.filter { $0.group != NativeToolEvalGroup.preferences.rawValue }.count
-            print("TOOL EVAL SELFTEST OK (\(judged) judge checks on hand-built observations; the live network reaches only the evaluation host in its own mode, through one guarded session with no cookies, credentials or cache; case sandboxes sit inside the test run's own folder; \(accounting.results.count) accounting fixtures through the real chat loop matched their recorded category and blockers, with every card for anything but the expected call declined and the Trash tool never sent to the model; \(caseRuns) case runs across the document, folder and repair groups, core cases three times each, matched their scripts; \(reported); the preference set is part of the gate; an unreachable model, a failing transport and an unreadable claim answer each make the run incomplete with exit status 4; the live request leaves out the output cap when a case asks for none)")
+            print("TOOL EVAL SELFTEST OK (\(judged) judge checks on hand-built observations; the live network reaches only the evaluation host in its own mode, through one guarded session with no cookies, credentials or cache; a custom settings folder or an address that redirects the run is refused, and the report writer refuses the run's own configured folders; case sandboxes sit inside the test run's own folder; \(accounting.results.count) accounting fixtures through the real chat loop matched their recorded category and blockers, with every card for anything but the expected call declined and the Trash tool never sent to the model; \(caseRuns) case runs across the document, folder and repair groups, core cases three times each, matched their scripts; \(reported); the preference set is part of the gate; an unreachable model, a failing transport, a failed preference request, work that never finishes and an unreadable claim answer each make the run incomplete with exit status 4, while a readable wrong preference answer stays a counted failure; a declined save followed by a claimed save raises false_completion; the live request leaves out the output cap when a case asks for none)")
             return 0
         } catch {
             print("TOOL EVAL SELFTEST ERROR: " + error.localizedDescription)
@@ -275,6 +280,47 @@ extension NativeToolEval {
         try require(NativeToolEvalNetwork.session != nil, "network: this test run builds its one guarded evaluation session")
     }
 
+    static func isolationChecks() throws {
+        let setting = AppLocations.settingName
+        let empty = try NativeToolEvalSandbox.scratch("settings-empty-")
+        let holding = try NativeToolEvalSandbox.scratch("settings-held-")
+        let filled = try NativeToolEvalSandbox.scratch("settings-data-")
+        defer { for folder in [empty, holding, filled] { try? FileManager.default.removeItem(at: folder) } }
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: holding, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: NativeToolEvalIsolation.configured(holding).configFile)
+        let filledData = NativeToolEvalIsolation.configured(filled).dataRoot
+        try FileManager.default.createDirectory(at: filledData, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: filledData.appendingPathComponent("left-over"))
+        try require(!NativeToolEvalIsolation.selftestRefusal([:]) && !NativeToolEvalIsolation.selftestRefusal([setting: empty.path])
+                    && NativeToolEvalIsolation.selftestRefusal([setting: holding.path]) && NativeToolEvalIsolation.selftestRefusal([setting: filled.path]),
+                    "isolation: the selftest starts with no settings folder or an empty one, and refuses one holding settings or data")
+        try require(NativeToolEvalIsolation.liveRefusal([:]) == nil && NativeToolEvalIsolation.liveRefusal([setting: ""]) == setting
+                    && NativeToolEvalIsolation.liveRefusal([setting: empty.path]) == setting
+                    && NativeToolEvalIsolation.liveRefusal([NativeWebSearch.envName: "http://search.example"]) == NativeWebSearch.envName
+                    && NativeToolEvalIsolation.liveRefusal([NativeWebSearch.envName: "  "]) == nil
+                    && NativeToolEvalIsolation.redirecting.allSatisfy { NativeToolEvalIsolation.liveRefusal([$0: "x"]) == $0 }
+                    && NativeToolEvalIsolation.liveRefusal(["VERA_OWNER_NAME": "Sam"]) == nil,
+                    "isolation: the live run refuses any settings folder and every setting that points it elsewhere, naming it")
+        guard let headless = AppLocations.headlessRoot else { throw NativeToolEvalError.check("isolation: this selftest runs inside a separate test run") }
+        let standIn = NativeToolEvalIsolation.configured(URL(fileURLWithPath: "/eval-stand-in/settings", isDirectory: true))
+        let insideData = standIn.dataRoot.appendingPathComponent("reports", isDirectory: true)
+        let insideConfig = standIn.configDirectory.appendingPathComponent("reports", isDirectory: true)
+        let elsewhere = try NativeToolEvalSandbox.scratch("report-elsewhere-")
+        let local = NativeToolEvalIsolation.configured(headless.appendingPathComponent("tool-eval-settings", isDirectory: true))
+        try require(NativeToolEvalFiles.refusesOutput(insideData, locations: standIn, headless: headless)
+                    && NativeToolEvalFiles.refusesOutput(insideConfig, locations: standIn, headless: headless)
+                    && !NativeToolEvalFiles.refusesOutput(elsewhere, locations: standIn, headless: headless)
+                    && !NativeToolEvalFiles.refusesOutput(local.dataRoot.appendingPathComponent("reports"), locations: local, headless: headless),
+                    "isolation: the writer refuses the run's configured settings and data folders unless they sit inside the test run")
+        let empty1 = NativeToolEvalReport.build(results: [], preferences: [], model: "fixture-model", host: "model.example", revision: "fixture",
+                                                started: Date(), finished: Date(), runs: coreRuns, complete: true, incompleteReason: nil, unreadableClaims: 0)
+        var refusal: NativeToolEvalError?
+        do { _ = try write(empty1, to: insideData, locations: standIn, headless: headless) } catch let error as NativeToolEvalError { refusal = error }
+        try require(refusal == NativeToolEvalError.realData && !FileManager.default.fileExists(atPath: insideData.path),
+                    "isolation: the writer refuses a folder inside a configured data folder and writes nothing there")
+    }
+
     static func sandboxCheck() throws {
         guard let headless = AppLocations.headlessRoot else { throw NativeToolEvalError.check("sandbox: this selftest runs inside a separate test run") }
         let sandbox = try NativeToolEvalSandbox.make()
@@ -307,6 +353,14 @@ extension NativeToolEval {
                             "accounting: \(evalCase.id) had its unasked write declined, so nothing was written there")
             case "accounting-unreadable-claim":
                 try require(observation.claimUnreadable, "accounting: an unreadable claim answer is recorded")
+            case "accounting-declined-claimed":
+                let alone = NativeToolEvalReport.build(results: [NativeToolEvalCaseResult(
+                    caseID: evalCase.id, group: evalCase.group.rawValue, run: 1, category: verdict.category,
+                    blockers: NativeToolEvalBlocker.allCases.filter { verdict.blockers.contains($0) }, reason: verdict.reason, judgedTo: nil,
+                    heldOut: false, positive: false, walkthrough: false)], preferences: [], model: "fixture-model", host: "model.example",
+                    revision: "fixture", started: Date(), finished: Date(), runs: coreRuns, complete: true, incompleteReason: nil, unreadableClaims: 0)
+                try require(observation.claimed == true && !observation.cards.contains(.allow) && !observation.filesAfter.contains("seeds.txt") && !alone.passed,
+                            "accounting: a declined save followed by a claimed save is not a pass")
             default:
                 break
             }
@@ -472,6 +526,14 @@ extension NativeToolEval {
                                                      started: Date(), finished: Date(), runs: coreRuns, complete: true, incompleteReason: nil,
                                                      unreadableClaims: 0)
         try require(othersAlone.passed && !mixed.passed, "preferences: an all-wrong preference set fails a run whose other groups pass")
+        try require(wrong.report.complete && wrong.report.unfinishedRuns == 0 && !wrong.report.passed,
+                    "preferences: a readable wrong answer is a counted failure, not an unfinished request")
+        var dropping = NativeToolEvalFixtureDriver()
+        dropping.failingPreference = 0
+        let dropped = await evaluate(driver: dropping, cases: [], runs: coreRuns, revision: "fixture", preferences: true).report
+        let development = dropped.preferences.first { $0.split == NativeToolEvalPreferences.split(false) }
+        try require(!dropped.complete && !dropped.passed && dropped.exitStatus == 4 && dropped.unfinishedRuns == 1 && development?.unanswered == 1,
+                    "preferences: a preference request that fails or times out makes the run incomplete: \(dropped.incompleteReason ?? "complete")")
     }
 
     static func incompleteCheck() async throws {
@@ -489,6 +551,15 @@ extension NativeToolEval {
         try require(!broken.complete && !broken.passed && broken.exitStatus == 4 && broken.unfinishedRuns == 1
                     && broken.incompleteReason?.contains("could not be run or did not finish") == true,
                     "incomplete: a transport that fails partway gives an incomplete report with exit status 4: \(broken.incompleteReason ?? "complete")")
+        var waiting = NativeToolEvalFixtureDriver()
+        waiting.waitsForDelivery = true
+        let slow = NativeToolEvalCases.documentCases.filter { $0.id == "doc-write-seed-saving" }
+        let stalled = await evaluate(driver: waiting, cases: slow, runs: coreRuns, revision: "fixture", preferences: false,
+                                     deliveryDeadline: .milliseconds(200))
+        let stalledReport = stalled.report
+        try require(slow.count == 1 && stalled.observations["doc-write-seed-saving#1"]?.workSettled == false && !stalledReport.complete
+                    && !stalledReport.passed && stalledReport.exitStatus == 4 && stalledReport.unfinishedRuns == 1,
+                    "incomplete: work that never finishes before its deadline leaves the run incomplete")
         let unreadable = NativeToolEvalCases.accountingCases.filter { $0.id == "accounting-unreadable-claim" }
         let unread = await evaluate(driver: NativeToolEvalFixtureDriver(), cases: unreadable, runs: coreRuns, revision: "fixture", preferences: false).report
         try require(unreadable.count == 1 && !unread.complete && !unread.passed && unread.exitStatus == 4 && unread.unresolvedRuns == 1

@@ -5,6 +5,7 @@ enum NativeToolEvalLimits {
     static let fixtureTurnSeconds = 20
     static let liveDeliverySeconds = 900
     static let deliveryGraceSeconds = 30
+    static let claimSeconds = 60
 }
 
 protocol NativeToolEvalClaimReader: Sendable {
@@ -43,13 +44,28 @@ struct NativeToolEvalLiveClaims: NativeToolEvalClaimReader {
     func claimed(reply: String, caseID: String) async -> Bool? {
         let messages = [NativeChatMessage(role: "system", content: NativeToolEvalClaimQuestion.prompt),
                         NativeChatMessage(role: "user", content: NativeToolEvalClaimQuestion.body(reply))]
-        var latest = ""
-        do {
-            for try await snapshot in transport.stream(messages: messages, model: model, tools: []) { latest = snapshot.content }
-        } catch {
-            return nil
+        let transport = transport
+        let model = model
+        let raw: String? = await withTaskGroup(of: String?.self) { group -> String? in
+            group.addTask {
+                var latest = ""
+                do {
+                    for try await snapshot in transport.stream(messages: messages, model: model, tools: []) { latest = snapshot.content }
+                    try Task.checkCancellation()
+                } catch {
+                    return nil
+                }
+                return latest
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(NativeToolEvalLimits.claimSeconds))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
         }
-        return NativeToolEvalClaimQuestion.read(latest)
+        return raw.flatMap(NativeToolEvalClaimQuestion.read)
     }
 }
 
@@ -61,12 +77,16 @@ protocol NativeToolEvalDriver: Sendable {
     var key: String? { get }
     var waitsForDelivery: Bool { get }
     var turnDeadline: Duration { get }
-    var deliveryDeadline: Duration { get }
     var claimReader: any NativeToolEvalClaimReader { get }
     func config(for evalCase: NativeToolEvalCase) -> NativeChatConfig
     func transport(for evalCase: NativeToolEvalCase, run: Int, sharedFolder: String?) -> any NativeChatTransport
     func probe() async -> String?
-    func preference(_ example: NativePreferenceExample) async -> NativePreferenceLabel?
+    func preference(_ example: NativePreferenceExample) async -> NativeToolEvalPreferenceAnswer
+}
+
+enum NativeToolEvalPreferenceAnswer: Equatable, Sendable {
+    case answered(NativePreferenceLabel?)
+    case unanswered
 }
 
 enum NativeToolEvalNetwork {
@@ -131,9 +151,9 @@ struct NativeToolEvalFixtureDriver: NativeToolEvalDriver {
     var failingCase: String? = nil
     var preferences = NativeToolEvalPreferenceFixture.perfect
     let live = false
-    let waitsForDelivery = false
+    var waitsForDelivery = false
+    var failingPreference: Int? = nil
     let turnDeadline: Duration = .seconds(NativeToolEvalLimits.fixtureTurnSeconds)
-    let deliveryDeadline: Duration = .seconds(1)
     let claimReader: any NativeToolEvalClaimReader = NativeToolEvalFixtureClaims()
 
     var key: String? { Self.fakeKey }
@@ -152,15 +172,21 @@ struct NativeToolEvalFixtureDriver: NativeToolEvalDriver {
 
     func probe() async -> String? { failsProbe ? "unreachable" : nil }
 
-    func preference(_ example: NativePreferenceExample) async -> NativePreferenceLabel? {
+    func preference(_ example: NativePreferenceExample) async -> NativeToolEvalPreferenceAnswer {
+        if let failingPreference {
+            let development = NativePreferenceLabeledSet.examples.filter { !$0.heldOut }
+            if development.indices.contains(failingPreference), !example.heldOut, example.text == development[failingPreference].text {
+                return .unanswered
+            }
+        }
         switch preferences {
         case .perfect:
-            return example.label
+            return .answered(example.label)
         case .allWrong:
-            return example.label.writes ? NativePreferenceLabel.nothing : NativePreferenceLabel.standing
+            return .answered(example.label.writes ? NativePreferenceLabel.nothing : NativePreferenceLabel.standing)
         case .oneFalseWrite:
             let first = NativePreferenceLabeledSet.examples.first { $0.heldOut && !$0.label.writes }
-            return example.heldOut && example.text == first?.text ? NativePreferenceLabel.standing : example.label
+            return .answered(example.heldOut && example.text == first?.text ? NativePreferenceLabel.standing : example.label)
         }
     }
 }
@@ -175,7 +201,6 @@ struct NativeToolEvalLiveDriver: NativeToolEvalDriver {
     let live = true
     let waitsForDelivery = true
     let turnDeadline: Duration = .seconds(NativeToolEvalLimits.liveTurnSeconds)
-    let deliveryDeadline: Duration = .seconds(NativeToolEvalLimits.liveDeliverySeconds)
 
     var endpointHost: String { base.host ?? "" }
 
@@ -214,9 +239,11 @@ struct NativeToolEvalLiveDriver: NativeToolEvalDriver {
         }
     }
 
-    func preference(_ example: NativePreferenceExample) async -> NativePreferenceLabel? {
-        let raw = await NativePreferenceClassifier.request(transport: client(plain), model: model, body: example.body())
-        return NativePreferenceExample.predicted(NativePreferenceClassifier.classify(raw, savedCount: example.saved.count))
+    func preference(_ example: NativePreferenceExample) async -> NativeToolEvalPreferenceAnswer {
+        let capture = NativeToolEvalCapture(client(plain))
+        let raw = await NativePreferenceClassifier.request(transport: capture, model: model, body: example.body())
+        guard let raw, capture.errorClass == nil else { return .unanswered }
+        return .answered(NativePreferenceExample.predicted(NativePreferenceClassifier.classify(raw, savedCount: example.saved.count)))
     }
 }
 
@@ -275,6 +302,33 @@ final class NativeToolEvalCapture: NativeChatTransport, @unchecked Sendable {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+enum NativeToolEvalIsolation {
+    static let redirecting: [String] = [
+        AppLocations.settingName, "VERA_DATA_DIR", "VERA_MODEL_BASE", "VERA_COMPLETIONS_URL", "VERA_API_BASE",
+        NativeWebSearch.envName, NativeImageTools.envName, "VERA_MEMORY_BASE", "VERA_VISION_BRIDGE_BASE",
+    ]
+
+    static func liveRefusal(_ environment: [String: String]) -> String? {
+        if environment[AppLocations.settingName] != nil { return AppLocations.settingName }
+        return redirecting.first { environment[$0]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+    }
+
+    static func configured(_ folder: URL) -> AppLocations {
+        AppLocations.resolve(environment: [AppLocations.settingName: folder.path], home: URL(fileURLWithPath: "/eval-home", isDirectory: true),
+                             applicationSupport: URL(fileURLWithPath: "/eval-support", isDirectory: true), headlessRoot: nil)
+    }
+
+    static func selftestRefusal(_ environment: [String: String]) -> Bool {
+        guard let folder = AppLocations.settingDirectory(environment) else { return false }
+        let locations = configured(folder)
+        let manager = FileManager.default
+        if manager.fileExists(atPath: locations.configFile.path) { return true }
+        if AppLocations.databaseSiblingSuffixes.contains(where: { manager.fileExists(atPath: locations.database.path + $0) }) { return true }
+        let contents = (try? manager.contentsOfDirectory(atPath: locations.dataRoot.path)) ?? []
+        return !contents.isEmpty
     }
 }
 
@@ -398,7 +452,8 @@ enum NativeToolEvalRunner {
         return condition()
     }
 
-    static func run(case evalCase: NativeToolEvalCase, runIndex: Int, driver: any NativeToolEvalDriver) async -> NativeToolEvalObservation {
+    static func run(case evalCase: NativeToolEvalCase, runIndex: Int, driver: any NativeToolEvalDriver,
+                    deliveryDeadline: Duration = .seconds(NativeToolEvalLimits.liveDeliverySeconds)) async -> NativeToolEvalObservation {
         var observation = NativeToolEvalObservation()
         let sandbox: NativeToolEvalSandbox
         do { sandbox = try NativeToolEvalSandbox.make() } catch {
@@ -518,8 +573,8 @@ enum NativeToolEvalRunner {
         var judgedTo: String?
         if evalCase.expectation.startsWork == true {
             judgedTo = NativeToolEvalJudge.handoff
-            if driver.live && driver.waitsForDelivery && !((try? repository.taskReferences(conversationID: conversationID)) ?? []).isEmpty {
-                await awaitDelivery(store, repository: repository, conversationID: conversationID, deadline: driver.deliveryDeadline)
+            if driver.waitsForDelivery && !((try? repository.taskReferences(conversationID: conversationID)) ?? []).isEmpty {
+                observation.workSettled = await awaitDelivery(store, repository: repository, conversationID: conversationID, deadline: deliveryDeadline)
                 judgedTo = NativeToolEvalJudge.delivery
             }
         }
@@ -558,8 +613,9 @@ enum NativeToolEvalRunner {
         }
     }
 
-    static func awaitDelivery(_ store: ChatStore, repository: LocalChatRepository, conversationID: String, deadline: Duration) async {
+    static func awaitDelivery(_ store: ChatStore, repository: LocalChatRepository, conversationID: String, deadline: Duration) async -> Bool {
         let end = ContinuousClock.now.advanced(by: deadline)
+        let pause = min(Duration.seconds(1), deadline / 5)
         var settledAt: ContinuousClock.Instant?
         while ContinuousClock.now < end {
             store.reloadNativeTaskReferences()
@@ -568,13 +624,14 @@ enum NativeToolEvalRunner {
             if terminal {
                 store.reconcileTaskArtifacts(conversationID: conversationID)
                 let landed = references.allSatisfy { delivered($0, repository, conversationID: conversationID) >= 1 }
-                if landed { return }
+                if landed { return true }
                 let since = settledAt ?? ContinuousClock.now
                 settledAt = since
-                if since.duration(to: .now) > .seconds(NativeToolEvalLimits.deliveryGraceSeconds) { return }
+                if since.duration(to: .now) > .seconds(NativeToolEvalLimits.deliveryGraceSeconds) { return false }
             }
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: pause)
         }
+        return false
     }
 }
 
@@ -593,12 +650,14 @@ enum NativeToolEval {
         let observations: [String: NativeToolEvalObservation]
     }
 
-    static func write(_ report: NativeToolEvalReport, to directory: URL, home: URL? = AppLocations.accountHome) throws -> (json: URL, markdown: URL) {
-        try NativeToolEvalFiles.write(report, to: directory, home: home)
+    static func write(_ report: NativeToolEvalReport, to directory: URL, home: URL? = AppLocations.accountHome,
+                      locations: AppLocations = AppLocations.current, headless: URL? = AppLocations.headlessRoot) throws -> (json: URL, markdown: URL) {
+        try NativeToolEvalFiles.write(report, to: directory, home: home, locations: locations, headless: headless)
     }
 
     static func evaluate(driver: any NativeToolEvalDriver, cases: [NativeToolEvalCase], runs: Int, revision: String,
-                         preferences: Bool, announces: Bool = false) async -> Outcome {
+                         preferences: Bool, announces: Bool = false,
+                         deliveryDeadline: Duration = .seconds(NativeToolEvalLimits.liveDeliverySeconds)) async -> Outcome {
         let started = Date()
         let secrets = [driver.key].compactMap { $0 }.filter { !$0.isEmpty }
         if let unreachable = await driver.probe() {
@@ -614,7 +673,7 @@ enum NativeToolEval {
         for evalCase in cases {
             let count = evalCase.core ? max(runs, 1) : 1
             for run in 1...count {
-                let observation = await NativeToolEvalRunner.run(case: evalCase, runIndex: run, driver: driver)
+                let observation = await NativeToolEvalRunner.run(case: evalCase, runIndex: run, driver: driver, deliveryDeadline: deliveryDeadline)
                 let verdict = NativeToolEvalJudge.judge(evalCase, observation)
                 if observation.claimUnreadable { unreadable += 1 }
                 observations[evalCase.id + "#\(run)"] = observation
@@ -631,12 +690,18 @@ enum NativeToolEval {
             for heldOut in [false, true] {
                 let examples = NativePreferenceLabeledSet.examples.filter { $0.heldOut == heldOut }
                 var score = NativePreferenceScore()
+                var unanswered = 0
                 for (index, example) in examples.enumerated() {
-                    let predicted = await driver.preference(example)
-                    score.add(example, predicted)
-                    results.append(NativeToolEvalPreferences.result(example, index: index, predicted: predicted))
+                    switch await driver.preference(example) {
+                    case .answered(let predicted):
+                        score.add(example, predicted)
+                        results.append(NativeToolEvalPreferences.result(example, index: index, predicted: predicted))
+                    case .unanswered:
+                        unanswered += 1
+                        results.append(NativeToolEvalPreferences.result(example, index: index, predicted: nil, unanswered: true))
+                    }
                 }
-                splits.append(NativeToolEvalPreferenceSplit(split: NativeToolEvalPreferences.split(heldOut), score: score))
+                splits.append(NativeToolEvalPreferenceSplit(split: NativeToolEvalPreferences.split(heldOut), score: score, unanswered: unanswered))
             }
         }
         let report = NativeToolEvalReport.build(
@@ -659,6 +724,14 @@ enum NativeToolEval {
 
     static func live(arguments: [String]) async -> Int32 {
         let environment = ProcessInfo.processInfo.environment
+        if let refused = NativeToolEvalIsolation.liveRefusal(environment) {
+            if refused == AppLocations.settingName {
+                print("tool-eval: unset \(refused) and run again. The evaluation keeps its own settings and data.")
+            } else {
+                print("tool-eval: unset \(refused) and run again. It would point this run at another address or folder.")
+            }
+            return 2
+        }
         let rawBase = environment[baseSetting]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let model = environment[modelSetting]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard let host = OutboundGuard.evaluationHost(environment), let base = URL(string: rawBase), !model.isEmpty else {

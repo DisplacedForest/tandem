@@ -141,6 +141,7 @@ struct NativeToolEvalObservation: Sendable {
     var setupError: String? = nil
     var completed = false
     var settled = false
+    var workSettled = true
     var claimed: Bool? = nil
     var claimUnreadable = false
     var judgedTo: String? = nil
@@ -148,7 +149,7 @@ struct NativeToolEvalObservation: Sendable {
     var sharedFolder: String? = nil
     var caseInsensitive = true
 
-    var unfinished: Bool { setupError != nil || transportError != nil || !settled }
+    var unfinished: Bool { setupError != nil || transportError != nil || !settled || !workSettled }
 
     var newFiles: [String] { Array(Set(filesAfter).subtracting(filesBefore)).sorted() }
     var touchedFiles: Bool { !newFiles.isEmpty || !changedFiles.isEmpty }
@@ -209,7 +210,7 @@ enum NativeToolEvalJudge {
     }
 
     static func needsClaim(_ evalCase: NativeToolEvalCase, _ observation: NativeToolEvalObservation) -> Bool {
-        expectsAction(evalCase) && evalCase.expectation.replyMustNotClaim
+        (expectsAction(evalCase) || !observation.calls.isEmpty) && evalCase.expectation.replyMustNotClaim
             && !observation.finalReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !achieved(evalCase, observation)
     }
@@ -487,13 +488,17 @@ struct NativeToolEvalCaseResult: Codable, Equatable, Sendable {
 enum NativeToolEvalPreferences {
     static func split(_ heldOut: Bool) -> String { heldOut ? "held-out" : "development" }
 
-    static func result(_ example: NativePreferenceExample, index: Int, predicted: NativePreferenceLabel?) -> NativeToolEvalCaseResult {
+    static func result(_ example: NativePreferenceExample, index: Int, predicted: NativePreferenceLabel?,
+                       unanswered: Bool = false) -> NativeToolEvalCaseResult {
         let positive = example.label.writes
         var category = NativeToolEvalCategory.pass
         var blockers: [NativeToolEvalBlocker] = []
         var unresolved = false
         var reason = "as expected"
-        if positive {
+        if unanswered {
+            category = .configuration
+            reason = "the request failed or timed out"
+        } else if positive {
             if predicted == nil {
                 category = .validation
                 reason = "the answer could not be read"
@@ -519,7 +524,7 @@ enum NativeToolEvalPreferences {
         return NativeToolEvalCaseResult(caseID: "preference-\(split(example.heldOut))-\(index + 1)", group: NativeToolEvalGroup.preferences.rawValue,
                                         run: 1, category: category, blockers: blockers, reason: reason, judgedTo: nil,
                                         heldOut: example.heldOut, positive: positive, walkthrough: false, core: false,
-                                        unfinished: false, unresolved: unresolved)
+                                        unfinished: unanswered, unresolved: unresolved)
     }
 }
 
@@ -532,9 +537,11 @@ struct NativeToolEvalPreferenceSplit: Codable, Equatable, Sendable {
     let others: Int
     let falseWrites: Int
     let unreadable: Int
+    let unanswered: Int
 
-    init(split: String, score: NativePreferenceScore) {
+    init(split: String, score: NativePreferenceScore, unanswered: Int = 0) {
         self.split = split
+        self.unanswered = unanswered
         standing = score.standing
         saved = score.saved
         removals = score.removals
@@ -734,9 +741,9 @@ struct NativeToolEvalReport: Codable, Equatable, Sendable {
         for blocker in NativeToolEvalBlocker.allCases { lines.append("| \(blocker.rawValue) | \(blockers[blocker.rawValue] ?? 0) of \(totals.total) |") }
         lines += ["", "Unreadable claim answers: \(unreadableClaims)."]
         if !preferences.isEmpty {
-            lines += ["", "## Preferences", "", "| Split | Saved | Removed the right one | Wrote when it should not | Unreadable |", "|---|---|---|---|---|"]
+            lines += ["", "## Preferences", "", "| Split | Saved | Removed the right one | Wrote when it should not | Unreadable | Failed or timed out |", "|---|---|---|---|---|---|"]
             for split in preferences {
-                lines.append("| \(split.split) | \(split.saved) of \(split.standing) | \(split.removedRight) of \(split.removals) | \(split.falseWrites) of \(split.others + split.removals) | \(split.unreadable) |")
+                lines.append("| \(split.split) | \(split.saved) of \(split.standing) | \(split.removedRight) of \(split.removals) | \(split.falseWrites) of \(split.others + split.removals) | \(split.unreadable) | \(split.unanswered) |")
             }
         }
         let failures = results.filter(\.failed)
@@ -768,9 +775,23 @@ enum NativeToolEvalError: LocalizedError, Equatable {
 }
 
 enum NativeToolEvalFiles {
-    static func write(_ report: NativeToolEvalReport, to directory: URL, home: URL? = AppLocations.accountHome) throws -> (json: URL, markdown: URL) {
+    static func settled(_ url: URL) -> URL { url.resolvingSymlinksInPath().standardizedFileURL }
+
+    static func refusesOutput(_ directory: URL, locations: AppLocations, headless: URL?) -> Bool {
+        let target = settled(directory)
+        for configured in [locations.configDirectory, locations.dataRoot] {
+            let place = settled(configured)
+            if let headless, AppLocations.isInside(place, settled(headless)) { continue }
+            if AppLocations.isInside(target, place) { return true }
+        }
+        return false
+    }
+
+    static func write(_ report: NativeToolEvalReport, to directory: URL, home: URL? = AppLocations.accountHome,
+                      locations: AppLocations = AppLocations.current, headless: URL? = AppLocations.headlessRoot) throws -> (json: URL, markdown: URL) {
         let standIn = AppLocations.standInHome.map { AppLocations.holdsRealFiles(directory, home: $0) } == true
-        guard !AppLocations.holdsRealFiles(directory, home: home), !standIn else { throw NativeToolEvalError.realData }
+        guard !AppLocations.holdsRealFiles(directory, home: home), !standIn,
+              !refusesOutput(directory, locations: locations, headless: headless) else { throw NativeToolEvalError.realData }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let stamp = DateFormatter()
         stamp.locale = Locale(identifier: "en_US_POSIX")
