@@ -853,41 +853,35 @@ enum NativeToolEvalFiles {
         AppLocations.fileType(url.path) == S_IFLNK
     }
 
-    static func lexical(_ url: URL) -> URL {
-        var parts: [String] = []
-        for part in url.pathComponents where part != "/" && part != "." && !part.isEmpty {
-            if part == ".." { _ = parts.popLast() } else { parts.append(part) }
-        }
-        return URL(fileURLWithPath: "/" + parts.joined(separator: "/"), isDirectory: true)
-    }
-
     static func ancestries(_ directory: URL) -> [URL]? {
-        var current = absolute(directory)
-        var starts = [current]
-        for _ in 0..<64 {
-            let parts = current.pathComponents.filter { $0 != "/" }
-            var prefix = URL(fileURLWithPath: "/", isDirectory: true)
-            var next: URL?
-            for (index, part) in parts.enumerated() {
-                prefix = prefix.appendingPathComponent(part)
-                guard isLink(prefix) else { continue }
-                guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: prefix.path) else { return nil }
-                var through = destination.hasPrefix("/") ? URL(fileURLWithPath: destination)
-                    : prefix.deletingLastPathComponent().appendingPathComponent(destination)
-                for rest in parts[(index + 1)...] { through = through.appendingPathComponent(rest) }
-                next = lexical(through)
-                break
+        let raw = directory.path
+        let written = raw.hasPrefix("/") ? raw : FileManager.default.currentDirectoryPath + "/" + raw
+        var pending = written.components(separatedBy: "/")
+        var resolved: [String] = []
+        var starts = [absolute(directory)]
+        var substitutions = 0
+        while !pending.isEmpty {
+            let component = pending.removeFirst()
+            if component.isEmpty || component == "." { continue }
+            if component == ".." {
+                _ = resolved.popLast()
+                continue
             }
-            guard let next else {
-                starts.append(settled(current))
-                var seen: Set<String> = []
-                return starts.filter { seen.insert($0.path).inserted }
+            let candidate = URL(fileURLWithPath: "/" + (resolved + [component]).joined(separator: "/"), isDirectory: true)
+            if isLink(candidate) {
+                substitutions += 1
+                guard substitutions <= 64,
+                      let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: candidate.path) else { return nil }
+                if destination.hasPrefix("/") { resolved.removeAll() }
+                pending.insert(contentsOf: destination.components(separatedBy: "/"), at: 0)
+            } else {
+                resolved.append(component)
+                starts.append(candidate)
             }
-            guard !starts.contains(where: { $0.path == next.path }) else { return nil }
-            current = next
-            starts.append(current)
         }
-        return nil
+        starts.append(URL(fileURLWithPath: "/" + resolved.joined(separator: "/"), isDirectory: true))
+        var seen: Set<String> = []
+        return starts.filter { seen.insert($0.path).inserted }
     }
 
     static func inside(_ url: URL, _ folder: URL) -> Bool {

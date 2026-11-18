@@ -25,7 +25,7 @@ extension NativeToolEval {
             try await incompleteCheck()
             try liveShapeChecks()
             let caseRuns = groups.report.results.filter { $0.group != NativeToolEvalGroup.preferences.rawValue }.count
-            print("TOOL EVAL SELFTEST OK (\(judged) judge checks on hand-built observations; the live network reaches only the evaluation host in its own mode, through one guarded session with no cookies, credentials or cache; a custom settings folder or an address that redirects the run is refused, and the report writer refuses the run's own configured folders, any folder beside or inside app storage along the path as written, as resolved and through every link in a chain, link loops, and a folder already holding other files, while accepting a clean new folder; case sandboxes sit inside the test run's own folder; \(accounting.results.count) accounting fixtures through the real chat loop matched their recorded category and blockers, with every card for anything but the expected call declined and the Trash tool never sent to the model; \(caseRuns) case runs across the document, folder and repair groups, core cases three times each, matched their scripts; \(reported); the preference set is part of the gate; an unreachable model, a failing transport, a failed preference request, work that never finishes and an unreadable claim answer each make the run incomplete with exit status 4, while a readable wrong preference answer stays a counted failure; a declined save followed by a claimed save, or a reply to a message that says not to save that claims a save, raises false_completion; a write is approved only with the right path and exactly the requested lines, compared line by line, and a file missing a line is a delivery failure; a reply cut short at its length limit leaves the run incomplete; a typed request never skips its card here, and anything that changed something without an approved card except the expected call is an unauthorized effect; a write or work start the app ruled out from what the message says is a pass for a case that must not do it and an authority failure for one that must, and only calls that ran are held against a case; the live request leaves out the output cap when a case asks for none)")
+            print("TOOL EVAL SELFTEST OK (\(judged) judge checks on hand-built observations; the live network reaches only the evaluation host in its own mode, through one guarded session with no cookies, credentials or cache; a custom settings folder or an address that redirects the run is refused, and the report writer refuses the run's own configured folders, any folder beside or inside app storage along the path as written and every real directory traversed, including chained links and parent components after linked or plain directories, link loops, and a folder already holding other files, while accepting a clean new folder and a clean linked destination whose textual collapse would point at storage; case sandboxes sit inside the test run's own folder; \(accounting.results.count) accounting fixtures through the real chat loop matched their recorded category and blockers, with every card for anything but the expected call declined and the Trash tool never sent to the model; \(caseRuns) case runs across the document, folder and repair groups, core cases three times each, matched their scripts; \(reported); the preference set is part of the gate; an unreachable model, a failing transport, a failed preference request, work that never finishes and an unreadable claim answer each make the run incomplete with exit status 4, while a readable wrong preference answer stays a counted failure; a declined save followed by a claimed save, or a reply to a message that says not to save that claims a save, raises false_completion; a write is approved only with the right path and exactly the requested lines, compared line by line, and a file missing a line is a delivery failure; a reply cut short at its length limit leaves the run incomplete; a typed request never skips its card here, and anything that changed something without an approved card except the expected call is an unauthorized effect; a write or work start the app ruled out from what the message says is a pass for a case that must not do it and an authority failure for one that must, and only calls that ran are held against a case; the live request leaves out the output cap when a case asks for none)")
             return 0
         } catch {
             print("TOOL EVAL SELFTEST ERROR: " + error.localizedDescription)
@@ -503,8 +503,62 @@ extension NativeToolEval {
         let chainWritten = try manager.contentsOfDirectory(atPath: separate.appendingPathComponent("reports").path)
         try require(chainRefused && chainWritten.isEmpty,
                     "storage: a report folder reached through chained links into settings is refused and nothing is written")
-        try require(NativeToolEvalFiles.ancestries(throughChain)?.contains { $0.path == throughLink.standardizedFileURL.path } == true,
+        let resolvedSettings = linkedSettings.resolvingSymlinksInPath().path
+        try require(NativeToolEvalFiles.ancestries(throughChain)?.contains {
+            let traversed = $0.resolvingSymlinksInPath().path
+            return traversed == resolvedSettings || traversed.hasPrefix(resolvedSettings + "/")
+        } == true,
                     "storage: chained links retain the intermediate path through the settings folder")
+        for databaseInRealStore in [true, false] {
+            let climbRoot = try NativeToolEvalSandbox.scratch("store-link-climb-")
+            defer { try? manager.removeItem(at: climbRoot) }
+            let realChild = climbRoot.appendingPathComponent("real/child", isDirectory: true)
+            let realStore = climbRoot.appendingPathComponent("real/store", isDirectory: true)
+            let realReports = realStore.appendingPathComponent("reports", isDirectory: true)
+            let lexicalStore = climbRoot.appendingPathComponent("store", isDirectory: true)
+            try manager.createDirectory(at: realChild, withIntermediateDirectories: true)
+            try manager.createDirectory(at: realReports, withIntermediateDirectories: true)
+            try manager.createDirectory(at: lexicalStore, withIntermediateDirectories: true)
+            let databaseStore = databaseInRealStore ? realStore : lexicalStore
+            try Data().write(to: databaseStore.appendingPathComponent(AppLocations.databaseName))
+            try manager.createSymbolicLink(atPath: climbRoot.appendingPathComponent("jump").path, withDestinationPath: realChild.path)
+            let climbOutput = climbRoot.appendingPathComponent("out", isDirectory: true)
+            try manager.createSymbolicLink(atPath: climbOutput.path, withDestinationPath: "jump/../store/reports")
+            var climbRefused = false
+            do { _ = try write(report, to: climbOutput) } catch NativeToolEvalError.realData { climbRefused = true }
+            let climbWritten = try manager.contentsOfDirectory(atPath: realReports.path)
+            try require(climbRefused == databaseInRealStore,
+                        "storage: climbing above a linked directory is judged by the real store")
+            try require(databaseInRealStore ? climbWritten.isEmpty : climbWritten.count == 2 && climbWritten.allSatisfy(NativeToolEvalFiles.isReport),
+                        "storage: the linked report folder stays empty when refused and receives both reports when accepted")
+            let lexicalContents = try manager.contentsOfDirectory(atPath: lexicalStore.path)
+            try require(lexicalContents == (databaseInRealStore ? [] : [AppLocations.databaseName]),
+                        "storage: the untraversed store gets no reports or folders")
+        }
+        for databaseInPlainStore in [true, false] {
+            let plainRoot = try NativeToolEvalSandbox.scratch("store-plain-climb-")
+            defer { try? manager.removeItem(at: plainRoot) }
+            let plainChild = plainRoot.appendingPathComponent("plain", isDirectory: true)
+            let plainStore = plainRoot.appendingPathComponent("store", isDirectory: true)
+            let plainReports = plainStore.appendingPathComponent("reports", isDirectory: true)
+            try manager.createDirectory(at: plainChild, withIntermediateDirectories: true)
+            try manager.createDirectory(at: plainReports, withIntermediateDirectories: true)
+            if databaseInPlainStore { try Data().write(to: plainStore.appendingPathComponent(AppLocations.databaseName)) }
+            let plainOutput = URL(fileURLWithPath: plainRoot.path + "/plain/../store/reports", isDirectory: true)
+            let plainAncestries = NativeToolEvalFiles.ancestries(plainOutput)
+            try require(plainOutput.path.contains("/../") && plainAncestries?.contains {
+                $0.resolvingSymlinksInPath().path == plainReports.resolvingSymlinksInPath().path
+            } == true && plainAncestries?.contains {
+                $0.resolvingSymlinksInPath().path == plainChild.resolvingSymlinksInPath().path
+            } == true,
+                        "storage: a written parent component retains the plain directory traversed and reaches the right report folder")
+            var plainRefused = false
+            do { _ = try write(report, to: plainOutput) } catch NativeToolEvalError.realData { plainRefused = true }
+            let plainWritten = try manager.contentsOfDirectory(atPath: plainReports.path)
+            try require(plainRefused == databaseInPlainStore
+                        && (databaseInPlainStore ? plainWritten.isEmpty : plainWritten.count == 2 && plainWritten.allSatisfy(NativeToolEvalFiles.isReport)),
+                        "storage: a written parent component refuses real storage without writing and accepts a clean destination")
+        }
         let loopA = try NativeToolEvalSandbox.scratch("store-loop-a-")
         let loopB = try NativeToolEvalSandbox.scratch("store-loop-b-")
         defer { for folder in [loopA, loopB] { try? manager.removeItem(at: folder) } }
