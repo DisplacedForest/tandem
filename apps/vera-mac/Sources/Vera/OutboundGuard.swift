@@ -18,7 +18,7 @@ enum OutboundGuard {
 
     static let errorDomain = "OutboundGuard"
     static let refusalCode = 1
-    static let optInSettings = ["VERA_MEMORY_LIVE_BASE", "VERA_IMAGE_LIVE_BASE", "VERA_PAGE_FETCH_LIVE_URL"]
+    static let optInSettings = ["VERA_MEMORY_LIVE_BASE", "VERA_IMAGE_LIVE_BASE", "VERA_PAGE_FETCH_LIVE_URL", "VERA_TOOL_EVAL_BASE"]
     static let localSchemes: Set<String> = ["file", "data", "about", "blob"]
 
     nonisolated(unsafe) private(set) static var policy: Policy = .open

@@ -206,6 +206,26 @@ extension SelfTest {
         try require(together.issues.isEmpty && together.definitions.count == shipped.count,
                     "All shipped tools taken together are kept by the registry with no issue")
         try require(shipped.count == 27, "Every shipped tool family that can be built here was checked: \(shipped.count) tools")
+        let undeclared: Set<String> = [NativeCompanionProfileTools.toolID]
+        for definition in shipped {
+            if !undeclared.contains(definition.id) {
+                try require(definition.isDeclared,
+                            "\(definition.name) is declared as a read with no action or a write that names its action. This proves the declaration, not that the handler's effect matches it")
+            }
+            if definition.confirmation == .required || definition.governed || definition.alwaysAsks {
+                try require(definition.effect == .write, "\(definition.name) asks first or is governed by rules, so it is declared a write")
+            }
+            if let deadline = definition.timeout {
+                try require(deadline >= .seconds(1) && deadline <= .seconds(300),
+                            "\(definition.name) declares a deadline between 1 and 300 seconds, not \(deadline)")
+            }
+            for example in definition.examples {
+                let raw = try NativeToolLoop.serializedResult(.object(example))
+                do { _ = try definition.validatedArguments(raw) } catch {
+                    throw NativeTaskFixture.Failure.assertion("\(definition.name) accepts its own declared example \(raw). Its handler is not run here, so this proves the inputs it advertises, not what it does with them")
+                }
+            }
+        }
 
         let stems: [[String]] = [["ta", "sk"], ["back", "ground"], ["work", "er"], ["ag", "ent"], ["eng", "ine"]]
         var listed: Set<String> = ["ve" + "ra"]
