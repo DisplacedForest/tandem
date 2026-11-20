@@ -130,20 +130,30 @@ struct SafeAppReplacement {
     private static func pruneSuperseded(keeping current: URL, target: URL, identifier: String) {
         let fm = FileManager.default
         let directory = target.deletingLastPathComponent()
-        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
+        let receiptName = "receipt.json"
+        guard let installed = try? AppFileIdentity.read(target),
+              let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
         for name in names where name.hasPrefix(transactionPrefix) && name != current.lastPathComponent {
             let folder = directory.appendingPathComponent(name, isDirectory: true)
             var info = stat()
-            guard lstat(folder.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
-                  info.st_uid == geteuid() else { continue }
-            if let data = try? Data(contentsOf: folder.appendingPathComponent("receipt.json")) {
-                guard let receipt = try? JSONDecoder().decode(AppReplacementReceipt.self, from: data),
+            guard lstat(folder.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == geteuid(),
+                  let contents = try? fm.contentsOfDirectory(atPath: folder.path) else { continue }
+            if contents.contains(receiptName) {
+                let receiptURL = folder.appendingPathComponent(receiptName)
+                var receiptInfo = stat()
+                guard lstat(receiptURL.path, &receiptInfo) == 0, receiptInfo.st_mode & S_IFMT == S_IFREG,
+                      receiptInfo.st_size <= 1_048_576,
+                      let data = try? Data(contentsOf: receiptURL),
+                      let receipt = try? JSONDecoder().decode(AppReplacementReceipt.self, from: data),
                       receipt.identifier == identifier,
-                      receipt.target.standardizedFileURL.path == target.standardizedFileURL.path else { continue }
+                      Set(contents).isSubset(of: [receiptName, receipt.target.lastPathComponent]),
+                      (try? AppFileIdentity.read(receipt.target)) == installed else { continue }
             } else {
-                guard let contents = try? fm.contentsOfDirectory(atPath: folder.path),
-                      contents.allSatisfy({ $0 == target.lastPathComponent }) else { continue }
+                guard contents == [target.lastPathComponent] else { continue }
             }
+            var recheck = stat()
+            guard lstat(folder.path, &recheck) == 0, recheck.st_dev == info.st_dev,
+                  recheck.st_ino == info.st_ino else { continue }
             try? fm.removeItem(at: folder)
         }
     }
