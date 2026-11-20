@@ -28,7 +28,7 @@ To restore a retained app, quit Vera and run:
 /Applications/Tandem.app/Contents/Helpers/VeraAppReplacement --rollback /path/to/receipt.json
 ```
 
-Rollback requires the current installation and retained app to match that receipt and pass signature validation. It uses another atomic exchange and retains the displaced replacement under a new receipt. A receipt marked `changed` cannot be used to roll back. No automatic cleanup deletes retained apps. Remove an obsolete rollback directory only after verifying the new installation works and keeping any required backup.
+Rollback requires the current installation and retained app to match that receipt and pass signature validation. It uses another atomic exchange and retains the displaced replacement under a new receipt. A receipt marked `changed` cannot be used to roll back. Each successful replacement or rollback keeps only the rollback directory it just wrote. It removes older rollback directories whose receipt names the same installed app, and leftovers from an interrupted install that hold nothing but a partial copy of that app. Directories for a different app, links, and anything it cannot identify are left alone. A failed replacement removes nothing, so the last good rollback copy stays. Keep your own backup of any earlier version you may want back.
 
 This mechanism preserves a usable namespace during copy failures and process interruption on filesystems that support atomic rename exchange. Unsupported filesystems fail without a delete-and-copy fallback. The tests exercise process termination, not power loss. Receipt writes are atomic but are not a power-loss durability guarantee. Relaunch is requested after the exchange; this is not a health check or an automatic post-launch health rollback.
 

@@ -133,6 +133,81 @@ class ReplacementTests(unittest.TestCase):
         self.assertEqual(self.output(), "new")
         self.assertEqual(self.receipt_state(Path(result.stdout.strip())), "installed")
 
+    def rollback_folders(self) -> list[Path]:
+        return sorted(self.root.glob(".Vera-replacement-*"))
+
+    def test_repeat_installs_keep_only_the_latest_rollback_copy(self) -> None:
+        first = self.run_fixture()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.run_fixture()
+        self.assertEqual(second.returncode, 0, second.stderr)
+        receipt = Path(second.stdout.strip())
+        self.assertEqual(self.rollback_folders(), [receipt.parent])
+        self.assertFalse(Path(first.stdout.strip()).exists())
+        self.assertEqual(self.receipt_state(receipt), "installed")
+        self.assertEqual(self.output(), "new")
+
+    def test_rollback_restores_previous_app_and_leaves_one_rollback_copy(self) -> None:
+        result = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rollback = subprocess.run([str(self.runner), "rollback-mock", result.stdout.strip()], capture_output=True, text=True)
+        self.assertEqual(rollback.returncode, 0, rollback.stderr)
+        receipt = Path(rollback.stdout.strip())
+        self.assertEqual(self.output(), "old")
+        self.assertEqual(self.rollback_folders(), [receipt.parent])
+        self.assertEqual(self.output(receipt.parent / self.target.name), "new")
+        self.assertEqual(self.receipt_state(receipt), "installed")
+
+    def test_interrupted_leftover_is_removed_by_next_install(self) -> None:
+        stale = self.root / ".Vera-replacement-stale"
+        (stale / self.target.name).mkdir(parents=True)
+        (stale / self.target.name / "partial").write_text("partial")
+        empty = self.root / ".Vera-replacement-empty"
+        empty.mkdir()
+        result = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.rollback_folders(), [Path(result.stdout.strip()).parent])
+
+    def test_unrelated_folders_and_links_are_left_alone(self) -> None:
+        other = self.root / "Other.app"
+        self.bundle(other, "1.0.0", "other")
+        foreign = subprocess.run([str(self.runner), "mock", str(self.source), str(other), "2.0.0", "update"],
+                                 capture_output=True, text=True)
+        self.assertEqual(foreign.returncode, 0, foreign.stderr)
+        foreign_receipt = Path(foreign.stdout.strip())
+        unknown = self.root / ".Vera-replacement-unknown"
+        unknown.mkdir()
+        (unknown / "notes.txt").write_text("keep")
+        unreadable = self.root / ".Vera-replacement-unreadable"
+        unreadable.mkdir()
+        (unreadable / "receipt.json").write_text("not a receipt")
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "file").write_text("untouched")
+        link = self.root / ".Vera-replacement-link"
+        link.symlink_to(outside)
+        for _ in range(2):
+            result = self.run_fixture()
+            self.assertEqual(result.returncode, 0, result.stderr)
+        current = Path(result.stdout.strip()).parent
+        self.assertEqual(set(self.rollback_folders()), {current, foreign_receipt.parent, unknown, unreadable, link})
+        self.assertEqual(self.receipt_state(foreign_receipt), "installed")
+        self.assertEqual(self.output(foreign_receipt.parent / other.name), "other")
+        self.assertEqual((unknown / "notes.txt").read_text(), "keep")
+        self.assertTrue(link.is_symlink())
+        self.assertEqual((outside / "file").read_text(), "untouched")
+
+    def test_failed_install_keeps_the_retained_rollback_copy(self) -> None:
+        result = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = Path(result.stdout.strip())
+        for mode in ("copy-failure", "reject-signature", "fail-copied", "fail-prepared"):
+            with self.subTest(mode=mode):
+                self.assertNotEqual(self.run_fixture(mode).returncode, 0)
+                self.assertEqual(self.rollback_folders(), [receipt.parent])
+                self.assertEqual(self.receipt_state(receipt), "installed")
+                self.assertEqual(self.output(receipt.parent / self.target.name), "old")
+
     def test_sigkill_during_copy_and_both_sides_of_swap(self) -> None:
         for phase in ("copy", "copied", "prepared", "installed"):
             with self.subTest(phase=phase):
