@@ -59,6 +59,8 @@ struct SafeAppReplacement {
         var checkpoint: (String) throws -> Void = { _ in }
     }
 
+    private static let transactionPrefix = ".Vera-replacement-"
+
     static func replace(source: URL, target requestedTarget: URL, version: String,
                         identifier: String = "app.vera.mac", allowFirstInstall: Bool = false,
                         expectedTarget: AppFileIdentity? = nil, expectedTargetManifest: String? = nil,
@@ -88,7 +90,7 @@ struct SafeAppReplacement {
             throw AppReplacementError("The installed app contents have changed")
         }
         let transaction = target.deletingLastPathComponent()
-            .appendingPathComponent(".Vera-replacement-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(transactionPrefix + UUID().uuidString, isDirectory: true)
         try fm.createDirectory(at: transaction, withIntermediateDirectories: false,
                                attributes: [.posixPermissions: 0o700])
         let candidate = transaction.appendingPathComponent(target.lastPathComponent, isDirectory: true)
@@ -121,10 +123,42 @@ struct SafeAppReplacement {
             throw AppReplacementError("Atomic app replacement failed: \(errno)")
         }
         try hooks.checkpoint("installed")
+        pruneSuperseded(keeping: transaction, target: target, identifier: identifier)
         return receiptURL
     }
 
-    static func rollback(receiptURL: URL) throws -> URL {
+    private static func pruneSuperseded(keeping current: URL, target: URL, identifier: String) {
+        let fm = FileManager.default
+        let directory = target.deletingLastPathComponent()
+        let receiptName = "receipt.json"
+        guard let installed = try? AppFileIdentity.read(target),
+              let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
+        for name in names where name.hasPrefix(transactionPrefix) && name != current.lastPathComponent {
+            let folder = directory.appendingPathComponent(name, isDirectory: true)
+            var info = stat()
+            guard lstat(folder.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == geteuid(),
+                  let contents = try? fm.contentsOfDirectory(atPath: folder.path) else { continue }
+            if contents.contains(receiptName) {
+                let receiptURL = folder.appendingPathComponent(receiptName)
+                var receiptInfo = stat()
+                guard lstat(receiptURL.path, &receiptInfo) == 0, receiptInfo.st_mode & S_IFMT == S_IFREG,
+                      receiptInfo.st_size <= 1_048_576,
+                      let data = try? Data(contentsOf: receiptURL),
+                      let receipt = try? JSONDecoder().decode(AppReplacementReceipt.self, from: data),
+                      receipt.identifier == identifier,
+                      Set(contents).isSubset(of: [receiptName, receipt.target.lastPathComponent]),
+                      (try? AppFileIdentity.read(receipt.target)) == installed else { continue }
+            } else {
+                guard contents == [target.lastPathComponent] else { continue }
+            }
+            var recheck = stat()
+            guard lstat(folder.path, &recheck) == 0, recheck.st_dev == info.st_dev,
+                  recheck.st_ino == info.st_ino else { continue }
+            try? fm.removeItem(at: folder)
+        }
+    }
+
+    static func rollback(receiptURL: URL, hooks: Hooks = Hooks()) throws -> URL {
         let receipt = try JSONDecoder().decode(AppReplacementReceipt.self, from: Data(contentsOf: receiptURL))
         guard receipt.previous != nil, try receipt.state(at: receiptURL) == .installed else {
             throw AppReplacementError("This receipt does not describe the current installation")
@@ -133,7 +167,8 @@ struct SafeAppReplacement {
         let version = try validateBundle(previous, identifier: receipt.identifier)
         return try replace(source: previous, target: receipt.target, version: version,
                            identifier: receipt.identifier, expectedTarget: receipt.staged,
-                           expectedTargetManifest: receipt.stagedManifest, expectedSourceManifest: receipt.previousManifest)
+                           expectedTargetManifest: receipt.stagedManifest, expectedSourceManifest: receipt.previousManifest,
+                           hooks: hooks)
     }
 
     static func manifest(_ app: URL) throws -> String {
