@@ -1236,7 +1236,7 @@ enum CompanionTalkControlFixture {
             try require(!tokens.contains { pronouns.contains($0) }, "No gendered pronoun: \(text)")
             try require(!text.contains("\u{2014}"), "No em dash: \(text)")
         }
-        try require(NativeDotContext.render(name: "Ada", resolver: NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "")).count
+        try require(NativeDotContext.render(resolver: NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(), requestText: "")).count
                     <= NativeDotContext.limit, "The reworded note keeps the standing context within its limit")
     }
 }

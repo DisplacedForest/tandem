@@ -271,9 +271,8 @@ enum NativeDotContext {
             .joined(separator: "\n")
     }
 
-    static func render(name: String, resolver: NativeRuleResolver) -> String {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let opening = trimmedName.isEmpty ? "You are the user's standing assistant." : "You are \(trimmedName), the user's standing assistant."
+    static func render(resolver: NativeRuleResolver) -> String {
+        let opening = "You are the user's standing assistant."
         let rules = NativeActionClass.configurable.map { "\($0.title): \(wording(resolver.choice(for: $0)))." }
         let floor = floorLine(resolver.global)
         return ([opening, coordinatorNote, "What asks first here:"] + rules + [floor]).joined(separator: "\n")

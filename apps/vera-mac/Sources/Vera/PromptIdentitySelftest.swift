@@ -12,6 +12,7 @@ enum PromptIdentitySelftest {
         try naming(require)
         try composition(require)
         try await preview(require)
+        try await companionWork(require)
         print("PROMPT IDENTITY SELFTEST OK")
     }
 
@@ -105,11 +106,17 @@ enum PromptIdentitySelftest {
         text.components(separatedBy: "\n").filter { !$0.hasPrefix("Current date and time:") }.joined(separator: "\n")
     }
 
+    static func withoutHandles(_ text: String) -> String {
+        text.replacingOccurrences(of: #""item": "[^"]*""#, with: #""item": """#, options: .regularExpression)
+    }
+
     static func preview(_ require: (Bool, String) throws -> Void) async throws {
         let store = try fixtureStore()
         for companion in [false, true] {
             let preview = store.fullPromptPreview(companion: companion, now: fixed, timeZone: zone)
-            try require(preview.text == NativeSystemPrompt.compose(assembled: preview.sentInput, companionInstruction: preview.companionInstruction),
+            try require(preview.text == NativeSystemPrompt.compose(assembled: preview.sentInput, companionInstruction: preview.companionInstruction,
+                                                                   talkSection: preview.talkSection, grantNote: preview.grantNote,
+                                                                   otherWorkRule: preview.otherWorkRule),
                         "The full prompt view joins its parts with the same function the send path uses")
             try require(!preview.text.contains(NativeSystemPrompt.memoryPlaceholder)
                         && preview.parts.contains { $0.name == NativeSystemPrompt.memoryPlaceholderName && !$0.sent },
@@ -124,7 +131,8 @@ enum PromptIdentitySelftest {
             let editable = FullPromptSheet.blocks(preview.parts).compactMap(\.destination)
             try require(editable == [.persona, .userContext, .preferences], "Persona, user context and preferences can be edited from the view")
             if companion {
-                try require(occurrences("Your name is Wren.", in: preview.text) == 1 && titles.contains("Standing role"),
+                try require(occurrences("Your name is Wren.", in: preview.text) == 1 && occurrences("Wren", in: preview.text) == 1
+                            && titles.contains("Standing role"),
                             "The companion view names the companion once and shows its standing role")
             } else {
                 try require(!preview.text.contains("Your name is") && preview.text.contains(NativeContextAssembler.unnamedRule)
@@ -147,10 +155,26 @@ enum PromptIdentitySelftest {
                                nativeCapabilityOverrides: [NativeSessionFixture.config.model: ModelCapabilityProfile(
                                    acceptsImages: false, supportsTools: true, supportsStreaming: true, maxImagesPerRequest: 0)],
                                artifactPersistenceEnabled: false)
-        let tooledText = tooled.fullPromptPreview(companion: false, now: fixed, timeZone: zone).text
-        try require(NativeFolderTools.toolNames.allSatisfy { tooledText.contains("- \($0) (") }
-                    && NativeCommandTools.toolNames.allSatisfy { tooledText.contains("- \($0) (") },
-                    "Folder and command tools that are on in Settings show in the full prompt")
+        func listsFileTools(_ text: String) -> Bool {
+            (NativeFolderTools.toolNames.union(NativeCommandTools.toolNames)).allSatisfy { text.contains("- \($0) (") }
+        }
+        func listsAnyFileTool(_ text: String) -> Bool {
+            (NativeFolderTools.toolNames.union(NativeCommandTools.toolNames)).contains { text.contains("- \($0) (") }
+        }
+        let ungranted = tooled.fullPromptPreview(companion: false, now: fixed, timeZone: zone).text
+        try require(!listsAnyFileTool(ungranted) && !ungranted.contains("Folders shared with this chat"),
+                    "Without a shared folder the full prompt has no folder or command tools and no folder note")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("prompt-identity-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        tooled.newConversation()
+        tooled.grantFolder(folder)
+        guard let grantedID = tooled.selectedID, let note = NativeFolderTools.grantNote(tooled.grants(for: grantedID)) else {
+            throw NativeTaskFixture.Failure.assertion("The tooled store shares a folder")
+        }
+        let granted = tooled.fullPromptPreview(companion: false, now: fixed, timeZone: zone).text
+        try require(listsFileTools(granted) && granted.contains(note),
+                    "With a shared folder the full prompt lists folder and command tools and the folder note")
         let transport = NativeSessionFixtureTransport()
         let sending = try fixtureStore(transport: transport)
         sending.newConversation()
@@ -161,5 +185,23 @@ enum PromptIdentitySelftest {
         let sent = transport.histories.last?.first { $0.role == "system" }?.content ?? ""
         let shown = sending.fullPromptPreview(companion: false).text
         try require(!sent.isEmpty && withoutClock(sent) == withoutClock(shown), "The normal chat sends exactly the prompt the view shows")
+    }
+
+    static func companionWork(_ require: (Bool, String) throws -> Void) async throws {
+        let harness = try await CompanionTalkControlFixture.harness { _, _, _ in CompanionAskedWorkTransport.say("It's going well.") }
+        defer { Task { await CompanionTalkControlFixture.finish(harness) } }
+        let work = try await CompanionTalkControlFixture.start(harness, "Compare the opening hours of the two libraries.")
+        try await CompanionTalkControlFixture.settle(harness, work, .going)
+        let shown = harness.store.fullPromptPreview(companion: true).text
+        let ask = "How is that going?"
+        _ = try await CompanionTalkControlFixture.send(harness, ask)
+        guard let record = harness.transport.records.last(where: { $0.user == ask }) else {
+            throw NativeTaskFixture.Failure.assertion("The companion message was sent")
+        }
+        let sent = CompanionTalkControlFixture.system(record.messages)
+        try require(shown.contains(CompanionTalkCopy.otherWork) && shown.contains(String(CompanionTalkCopy.lead.prefix(40))),
+                    "With work running the companion view has the work section and rule")
+        try require(withoutHandles(withoutClock(sent)) == withoutHandles(withoutClock(shown)),
+                    "The companion sends exactly the prompt the view shows while work is running, apart from each turn's own work handles")
     }
 }

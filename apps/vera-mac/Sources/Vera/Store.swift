@@ -2516,6 +2516,18 @@ final class ChatStore: ObservableObject {
         return (turnRegistry, profileTool)
     }
 
+    func turnAuthorizer(transport: any NativeChatTransport, model: String) -> NativeRequestAuthorizer {
+        let observe: NativeRequestAuthorizer.Observer = { [weak self] source in await self?.notePermissionCheck(source) }
+        return NativeRequestAuthorizer(transport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: transport, model: model),
+                                       listTransport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: transport, model: model),
+                                       deadline: instructionCheckTimeout, observe: observe)
+    }
+
+    var previewAuthorizer: NativeRequestAuthorizer? {
+        guard let nativeTransport, let nativeConfig else { return nil }
+        return turnAuthorizer(transport: nativeTransport, model: nativeConfig.model)
+    }
+
     func baseTurnEnabledToolIDs(for turn: NativeConversationTurn, supportsTools: Bool, grantsAvailable: Bool,
                                 profileTool: Bool) -> Set<String> {
         let (authority, consented) = turnToolAuthority(for: turn)
@@ -2555,17 +2567,14 @@ final class ChatStore: ObservableObject {
         var turnRegistry = built.registry
         let profileTool = built.profileTool
         let checkTimeout = instructionCheckTimeout
-        let checkModel = nativeConfig.model
-        let checkTransport = nativeTransport
-        let observe: NativeRequestAuthorizer.Observer = { [weak self] source in await self?.notePermissionCheck(source) }
-        let authorizer = NativeRequestAuthorizer(transport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: checkTransport, model: checkModel),
-                                                 listTransport: requestAuthorization ?? NativeRequestAuthorizer.chat(transport: checkTransport, model: checkModel),
-                                                 deadline: checkTimeout, observe: observe)
+        let authorizer = turnAuthorizer(transport: nativeTransport, model: nativeConfig.model)
         let trusted = turn.companionEvent == nil ? NativeTrustedRequest.typed(typed, messageID: turn.userMessageID, conversationID: id) : nil
         let restrictions = trusted.map { NativeRestrictionCheck(authorizer: authorizer, messageID: $0.messageID, text: $0.text, cache: requestRestrictionCache) }
         let capture = composerSentTurns.removeValue(forKey: turn.id)
-        let talk = companionTalkControl(for: turn, supportsTools: ModelCapabilityCatalog.resolve(model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile.supportsTools)
-        if let talk { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + companionTalkTools(talk, turn: turn, typed: typed, capture: capture, authorizer: authorizer, timeout: checkTimeout)) }
+        let talkSetup = companionTalkSetup(for: turn, supportsTools: ModelCapabilityCatalog.resolve(model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile.supportsTools,
+                                           typed: typed, capture: capture, authorizer: authorizer, timeout: checkTimeout)
+        let talk = talkSetup?.control
+        if let talkSetup { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + talkSetup.tools) }
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
@@ -2591,8 +2600,7 @@ final class ChatStore: ObservableObject {
                                                      grantsAvailable: !turnGrants.isEmpty, profileTool: profileTool != nil)
         if talk != nil { enabledToolIDs.insert(CompanionTalkTools.toolID) }
         if turn.companionEvent != nil { enabledToolIDs = [] }
-        let grantNote = enabledToolIDs.contains(NativeFolderTools.toolID) || enabledToolIDs.contains(NativeCommandTools.toolID)
-            ? NativeFolderTools.grantNote(turnGrants) : nil
+        let grantNote = NativeFolderTools.turnGrantNote(enabledIDs: enabledToolIDs, grants: turnGrants)
         let bridgeConfig = effectiveBridgeConfig
         let bridgeTransportFactory = visionBridgeTransportFactory
         var memorySettings = turn.memorySettings
@@ -2752,7 +2760,7 @@ final class ChatStore: ObservableObject {
                         + accessNotes,
                     assistantProfile: turnDotContext(turn)))
                 turnMessages = companionRequestMessages(turnMessages, turn: turn)
-                let otherWorkRule: String = talk == nil ? NativeSystemPrompt.ordinaryOtherWorkRule : CompanionTalkCopy.otherWork
+                let otherWorkRule = NativeSystemPrompt.otherWorkRule(talking: talk != nil)
                 let systemPrompt = NativeSystemPrompt.compose(
                     assembled: assembled, companionInstruction: companionProfileInstruction(for: turn),
                     talkSection: talk?.section, grantNote: grantNote, revisionNote: revisionNote, preferenceNote: preferenceNote,

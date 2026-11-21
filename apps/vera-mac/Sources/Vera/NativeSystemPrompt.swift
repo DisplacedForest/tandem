@@ -55,6 +55,10 @@ enum NativeSystemPrompt {
     static let memoryPlaceholder = "Saved memories and library material are added here when they're relevant to the message."
     static let ordinaryOtherWorkRule = "Other accepted turns may still be working; this message does not cancel or change them."
 
+    static func otherWorkRule(talking: Bool) -> String {
+        talking ? CompanionTalkCopy.otherWork : ordinaryOtherWorkRule
+    }
+
     static func replyInstructions(otherWorkRule: String) -> String {
         "Answer the user's question directly and concisely. Use at most two web lookups for current facts, then answer from the evidence or explain what remains uncertain. Only the final user message is the current request. Earlier requests are context, not permission to run their tools again. Respect the current request's tool restrictions. " + ChatStore.researchReplyRule + " Do not add progress commentary about other turns to an unrelated answer. " + otherWorkRule
     }

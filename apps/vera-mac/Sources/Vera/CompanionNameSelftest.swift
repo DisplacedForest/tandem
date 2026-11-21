@@ -39,9 +39,12 @@ extension SelfTest {
         try require(!ordinaryPrompt.isEmpty && !ordinaryPrompt.contains("Your name is") && !ordinaryPrompt.contains("Ada"),
                     "An ordinary chat's prompt never carries the companion's name")
         let namedContext = NativeContextAssembler.assemble(NativeContextInput(
-            persona: "You are an assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
-            timeZone: TimeZone(identifier: "America/Chicago")!, assistantName: ordinary.companionName, companionThread: true))
+            persona: "You are Bob, a helpful assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
+            timeZone: TimeZone(identifier: "America/Chicago")!, assistantName: ordinary.companionName, companionThread: true,
+            assistantProfile: NativeDotContext.render(resolver: NativeRuleSource().resolver(for: "c", requestText: ""))))
         try require(namedContext.prompt.contains("Your name is Ada."), "The companion's own conversation is still told its name")
+        try require(namedContext.prompt.components(separatedBy: "Ada").count - 1 == 1,
+                    "The companion's name appears once in its whole prompt, even when the persona claims another")
         final class FlakyDisk: @unchecked Sendable { var contents: [String: Any] = [:]; var failing = true }
         let disk = FlakyDisk()
         let flaky = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { disk.contents },

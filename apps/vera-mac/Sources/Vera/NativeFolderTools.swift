@@ -32,6 +32,10 @@ enum NativeFolderTools {
         return (object["path"] ?? object["from"]) as? String
     }
 
+    static func turnGrantNote(enabledIDs: Set<String>, grants: [FolderGrant]) -> String? {
+        enabledIDs.contains(toolID) || enabledIDs.contains(NativeCommandTools.toolID) ? grantNote(grants) : nil
+    }
+
     static func grantNote(_ grants: [FolderGrant]) -> String? {
         guard !grants.isEmpty else { return nil }
         let list = grants.map { grant in

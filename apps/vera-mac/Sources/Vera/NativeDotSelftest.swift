@@ -69,9 +69,9 @@ extension SelfTest {
         guard let dotContext = store.dotContext(for: veraID, requestText: "what's next?") else {
             throw NativeTaskFixture.Failure.assertion("The Vera thread gets the standing context")
         }
-        try require(!dotContext.lowercased().contains("goal") && dotContext.contains("You are Ada") && dotContext.contains("Run commands in shared folders: hand off to the user.")
+        try require(!dotContext.lowercased().contains("goal") && dotContext.hasPrefix("You are the user's standing assistant.") && !dotContext.contains("Ada") && dotContext.contains("Run commands in shared folders: hand off to the user.")
                     && dotContext.contains("always handed to the user") && dotContext.contains(NativeDotContext.coordinatorNote)
-                    && dotContext.count <= NativeDotContext.limit, "The standing context carries the name, coordinator role and the rules in effect")
+                    && dotContext.count <= NativeDotContext.limit, "The standing context leaves the name to the session line and carries the coordinator role and the rules in effect")
         try require(store.dotContext(for: focused.id, requestText: "hi") == nil, "Focused chats never receive the standing context")
         let veraPrompt = NativeContextAssembler.assemble(NativeContextInput(persona: "Persona", timestamp: Date(), timeZone: .current,
                                                                             assistantProfile: dotContext)).prompt
@@ -79,7 +79,7 @@ extension SelfTest {
                                                                                assistantProfile: store.dotContext(for: focused.id, requestText: "hi"))).prompt
         try require(veraPrompt.contains("Your standing role") && !focusedPrompt.contains("Your standing role"),
                     "Only the Vera thread's prompt has the standing assistant section")
-        let unnamed = NativeDotContext.render(name: "", resolver: resolver)
+        let unnamed = NativeDotContext.render(resolver: resolver)
         try require(unnamed.hasPrefix("You are the user's standing assistant.") && unnamed.contains(NativeDotContext.coordinatorNote)
                     && unnamed.count <= NativeDotContext.limit, "An unnamed companion keeps the coordinator role")
 
@@ -328,7 +328,7 @@ extension SelfTest {
             var each = NativeRules.defaults
             for action in NativeActionClass.configurable { each.set(choice, for: action) }
             let eachResolver = NativeRuleResolver(global: each, conversation: NativeConversationRules(), requestText: "")
-            for text in [NativeDotContext.render(name: "Ada", resolver: eachResolver), NativeDotContext.headerSummary(resolver: eachResolver)] {
+            for text in [NativeDotContext.render(resolver: eachResolver), NativeDotContext.headerSummary(resolver: eachResolver)] {
                 let lowered = text.lowercased()
                 try require(!lowered.contains("pre-approv") && !lowered.contains("preapprov") && !lowered.contains("go ahead") && !lowered.contains("go-ahead"),
                             "The rules text for the model never mentions a go ahead: \(text)")

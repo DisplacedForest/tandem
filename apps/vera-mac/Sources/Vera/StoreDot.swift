@@ -127,8 +127,7 @@ extension ChatStore {
 
     func dotContext(for conversationID: String, requestText: String) -> String? {
         guard isVeraThread(conversationID) else { return nil }
-        return NativeDotContext.render(name: companionName ?? "",
-                                       resolver: ruleResolver(for: conversationID, requestText: requestText))
+        return NativeDotContext.render(resolver: ruleResolver(for: conversationID, requestText: requestText))
     }
 
     func dotServiceOptions() -> [NativeDotServiceOption] {

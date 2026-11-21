@@ -69,9 +69,8 @@ extension SelfTest {
         let assembled = NativeContextAssembler.assemble(NativeContextInput(persona: "Persona", timestamp: Date(), timeZone: .current,
                                                                            assistantProfile: context)).prompt
             .components(separatedBy: "\n\n").filter { $0.hasPrefix("Your standing role") }.joined()
-        try require(context.contains("You are Ada") && assembled.contains(context), "The companion still gets its standing context")
-        try requireRetiredFree([context, assembled, NativeDotContext.render(name: "Ada", resolver: resolver),
-                                NativeDotContext.render(name: "", resolver: resolver),
+        try require(context.hasPrefix("You are the user's standing assistant.") && assembled.contains(context), "The companion still gets its standing context")
+        try requireRetiredFree([context, assembled, NativeDotContext.render(resolver: resolver),
                                 store.turnDotContext(retiredTurn(store, conversationID: threadID)) ?? ""], "The companion instructions")
 
         var setup = store.dotProfile
@@ -229,7 +228,7 @@ extension SelfTest {
     }
     private static func oldStoredContext(_ sentence: String) -> String {
         let resolver = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(choices: [.commands: .handOff]), requestText: "")
-        let current = NativeDotContext.render(name: "Ada", resolver: resolver).components(separatedBy: "\n")
+        let current = NativeDotContext.render(resolver: resolver).components(separatedBy: "\n")
         let oldCoordinator = current[1].replacingOccurrences(of: "longer work is handed to", with: "work on the " + retiredWord + " is handed to")
         return ([current[0], sentence, oldCoordinator] + current.dropFirst(2)).joined(separator: "\n")
     }
@@ -242,7 +241,7 @@ extension SelfTest {
     private static func checkRetiredStoredContext() async throws {
         let require = NativeTaskFixture.require
         let resolver = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(choices: [.commands: .handOff]), requestText: "")
-        let current = NativeDotContext.render(name: "Ada", resolver: resolver)
+        let current = NativeDotContext.render(resolver: resolver)
         for old in oldContexts {
             let cleaned = NativeDotContext.retired(old)
             try requireRetiredFree([cleaned], "A stored context from before")
@@ -287,7 +286,7 @@ extension SelfTest {
             throw NativeTaskFixture.Failure.assertion("The saved turn sends a system prompt")
         }
         let standing = system.components(separatedBy: "\n\n").filter { $0.hasPrefix("Your standing role") }.joined()
-        try require(standing.contains("Run commands in shared folders: hand off to the user.") && standing.contains("You are Ada"),
+        try require(standing.contains("Run commands in shared folders: hand off to the user.") && standing.contains("You are the user's standing assistant."),
                     "The saved turn keeps its own rules")
         try requireRetiredFree([standing], "The saved turn's standing context")
         try require(!system.contains("Grow tomatoes on the balcony"), "The saved text never reaches the model")

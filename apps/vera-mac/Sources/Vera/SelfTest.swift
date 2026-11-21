@@ -1839,7 +1839,7 @@ enum SelfTest {
             let builtIn = "Ver" + "a"
             let unnamedPrompts = [unnamedContext.prompt, NativeResearchWorker.planPrompt(identity: unnamedWorker),
                                   NativeResearchWorker.synthesisPrompt(identity: unnamedWorker), PiCheckpointPricing.system,
-                                  NativeDotContext.render(name: named.companionName ?? "", resolver: NativeRuleSource().resolver(for: "c", requestText: ""))]
+                                  NativeDotContext.render(resolver: NativeRuleSource().resolver(for: "c", requestText: ""))]
             guard unnamedPrompts.allSatisfy({ !$0.contains("Your name is") && !$0.contains(builtIn) && !$0.contains("our companion") }),
                   unnamedWorker.assistantName == nil, unnamedWorker.opening == "You are the user's assistant" else {
                 print("SELFTEST ERROR: a prompt for an unnamed companion claims a name"); exit(1)
