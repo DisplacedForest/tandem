@@ -403,7 +403,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
                 """, arguments: [conversationID])
-            return Self.markingScheduledResults(Self.decodeMessages(rows), db)
+            return Self.markingAnsweredAsks(Self.markingScheduledResults(Self.decodeMessages(rows), db))
         }
     }
 
@@ -425,7 +425,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 )
                 ORDER BY ordinal ASC
                 """, arguments: [conversationID, limit])
-            return Self.markingScheduledResults(Self.decodeMessages(rows), db)
+            return Self.markingAnsweredAsks(Self.markingScheduledResults(Self.decodeMessages(rows), db))
         }
     }
 
@@ -475,14 +475,6 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
-    func saveAskAnswer(_ message: Message) throws {
-        guard message.ask != nil, let metadata = Self.metadataJSON(for: message) else { return }
-        try database.write { db in
-            try db.execute(sql: "UPDATE messages SET metadata_json = ? WHERE id = ? AND role = 'assistant' AND content_type = ?",
-                           arguments: [metadata, message.id.uuidString, MessageContentType.text.rawValue])
-        }
-    }
-
     func postScheduleCheckIn(_ message: Message, conversationID: String, runID: String, key: String, referenceID: UUID, decisionID: String) throws -> Bool {
         try database.write { db in
             guard let snapshot = try Self.readTaskProjection(db, id: referenceID)?.snapshot,
@@ -526,7 +518,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         } else {
             activityJSON = String(decoding: try JSONEncoder().encode(message.toolActivities), as: UTF8.self)
         }
-        let metadata = try Self.keepingSavedAnswer(Self.metadataJSON(for: message), for: message, db: db)
+        let metadata = Self.metadataJSON(for: message)
             try db.execute(sql: """
                 INSERT INTO messages
                     (id, conversation_id, ordinal, role, content, created_at, state,
@@ -1014,6 +1006,20 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     }
 
+    static func markingAnsweredAsks(_ messages: [Message]) -> [Message] {
+        var marked = messages
+        var reply: String?
+        for index in marked.indices.reversed() {
+            if marked[index].role == .user {
+                reply = marked[index].text
+            } else if marked[index].ask != nil, let reply {
+                marked[index].answered = true
+                marked[index].answerText = reply
+            }
+        }
+        return marked
+    }
+
     static func markingScheduledResults(_ messages: [Message], _ db: Database) -> [Message] {
         messages.map { message in
             guard message.displayBlocks.contains(where: { if case .artifact(let artifact) = $0 { artifact.scheduled == nil } else { false } }),
@@ -1069,8 +1075,6 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                let raw: String = row["metadata_json"],
                let saved = try? JSONDecoder().decode(SavedAsk.self, from: Data(raw.utf8)) {
                 message.ask = saved.ask
-                message.answered = saved.answered ?? false
-                message.answerText = saved.answerText
             }
             return message
         }
@@ -1086,23 +1090,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
         guard message.role == .assistant, message.contentType == .text,
               let ask = message.ask else { return nil }
-        let saved = SavedAsk(ask: ask, answered: message.answered ? true : nil, answerText: message.answered ? message.answerText : nil)
-        return try? encode(saved)
-    }
-
-    private static func keepingSavedAnswer(_ metadata: String?, for message: Message, db: Database) throws -> String? {
-        guard let ask = message.ask, !message.answered, metadata != nil,
-              let stored = try String.fetchOne(db, sql: "SELECT metadata_json FROM messages WHERE id = ? AND role = 'assistant' AND content_type = ?",
-                                               arguments: [message.id.uuidString, MessageContentType.text.rawValue]),
-              let saved = try? JSONDecoder().decode(SavedAsk.self, from: Data(stored.utf8)),
-              saved.answered == true, saved.ask == ask else { return metadata }
-        return stored
+        return try? encode(SavedAsk(ask: ask))
     }
 
     private struct SavedAsk: Codable {
         let ask: VeraAsk
-        var answered: Bool?
-        var answerText: String?
     }
 
     private static func attachmentsJSON(for message: Message) -> String? {

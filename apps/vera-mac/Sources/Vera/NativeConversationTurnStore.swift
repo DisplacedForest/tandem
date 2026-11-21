@@ -502,6 +502,8 @@ extension ChatStore {
             try turnRepository?.retryTurn(turn.id, profile: turnProfile(for: turn.history.last?.routeNote))
             conversations[location.conversation].messages[location.reply].state = .streaming
             conversations[location.conversation].messages[location.reply].failure = nil
+            conversations[location.conversation].messages[location.reply].answered = false
+            conversations[location.conversation].messages[location.reply].answerText = nil
             scheduleConversationTurns()
         } catch { chatConfigurationError = error.localizedDescription }
     }
