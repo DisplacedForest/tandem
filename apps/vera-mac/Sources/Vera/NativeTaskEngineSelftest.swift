@@ -162,11 +162,12 @@ extension SelfTest {
         try await taskDocumentEndToEnd()
         try await taskDocumentAutomaticRetry()
         try await taskReplyCauses()
+        try await taskRequestLimits()
         try await taskScheduledRun()
         try await taskScheduleCheckIns()
         try await taskArbiterContract()
         try await taskDotGeneration()
-        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, automatic retry, retry, unsafe failure pause, cut off request pause, relaunch, gather resume, documents, document retry, scheduled runs, check-ins, check-in claim once, check-in mirror, live check-in card, stale waiting run, admission, dot tool generation)")
+        print("  task engine OK (store, dispatcher, exchange, router, cards end to end, cancel, automatic retry, retry, unsafe failure pause, cut off request pause, relaunch, gather resume, documents, document retry, request limits, scheduled runs, check-ins, check-in claim once, check-in mirror, live check-in card, stale waiting run, admission, dot tool generation)")
     }
 
     private static func researchPayload(_ query: String = "What color is the fictional moon Luma?") throws -> Data {

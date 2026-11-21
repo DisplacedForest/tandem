@@ -141,9 +141,11 @@ actor NativeTaskGenerationExchange {
         issued[task.id] = nil
         defer { issued[task.id] = nil }
         do {
-            return try await admission.perform(endpoint: binding.admissionBase, priority: .background, requestedSeconds: 90) { budget in
+            let ceiling = NativeTaskTransportLimits.configured.request
+            return try await admission.perform(endpoint: binding.admissionBase, priority: .background, requestedSeconds: ceiling,
+                                               queueSeconds: ceiling) { budget in
                 try await self.operation(task: task, binding: binding, phase: phase, attempt: "\(attempt)-\(ordinal)",
-                                         messages: messages, tools: tools, toolChoice: toolChoice, seconds: min(budget.seconds, 90))
+                                         messages: messages, tools: tools, toolChoice: toolChoice, seconds: min(budget.seconds, ceiling))
             }
         } catch is NativeInferenceAdmission.AdmissionError {
             if issued[task.id]?.delivered == true { throw NativeTaskGenerationFailure(code: "request_timeout") }

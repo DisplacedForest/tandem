@@ -108,7 +108,7 @@ struct NativeDocumentCheckpoint: Codable, Equatable, Sendable {
 }
 
 enum NativeDocumentWorker {
-    static let stepTimeoutSeconds: Double = 180
+    static let stepTimeoutSeconds = NativeTaskTransportLimits.configured.stepSeconds
     typealias Policy = NativeResourcePolicy
 
     static func firstSectionCharacters(_ binding: NativeTaskAdmissionBinding?) -> Int {

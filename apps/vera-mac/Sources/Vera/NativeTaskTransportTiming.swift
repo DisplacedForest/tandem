@@ -1,9 +1,48 @@
 import Foundation
 import os
 
-struct NativeTaskTransportLimits: Sendable {
-    var connectAndSend: Double = 10
-    var readIdle: Double = 45
+struct NativeTaskTransportLimits: Sendable, Equatable {
+    static let defaultConnectAndSendSeconds: Double = 10
+    static let defaultFirstReplySeconds: Double = 180
+    static let defaultReplyIdleSeconds: Double = 45
+    static let defaultRequestSeconds: Double = 600
+    static let stepOtherWorkSeconds: Double = 120
+    static let connectAndSendSetting = "VERA_BACKGROUND_CONNECT_SECONDS"
+    static let firstReplySetting = "VERA_BACKGROUND_FIRST_REPLY_SECONDS"
+    static let replyIdleSetting = "VERA_BACKGROUND_REPLY_IDLE_SECONDS"
+    static let requestSetting = "VERA_BACKGROUND_REQUEST_SECONDS"
+    static let configured = NativeTaskTransportLimits(environment: ProcessInfo.processInfo.environment)
+
+    var connectAndSend: Double
+    var firstReply: Double
+    var replyIdle: Double
+    var request: Double
+
+    init(connectAndSend: Double = Self.configured.connectAndSend, firstReply: Double = Self.configured.firstReply,
+         replyIdle: Double = Self.configured.replyIdle, request: Double = Self.configured.request) {
+        self.connectAndSend = connectAndSend
+        self.firstReply = firstReply
+        self.replyIdle = replyIdle
+        self.request = request
+    }
+
+    init(environment: [String: String]) {
+        func seconds(_ name: String, _ fallback: Double) -> Double {
+            guard let raw = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let value = Double(raw), value.isFinite, value > 0, value <= 86400 else { return fallback }
+            return value
+        }
+        self.init(connectAndSend: seconds(Self.connectAndSendSetting, Self.defaultConnectAndSendSeconds),
+                  firstReply: seconds(Self.firstReplySetting, Self.defaultFirstReplySeconds),
+                  replyIdle: seconds(Self.replyIdleSetting, Self.defaultReplyIdleSeconds),
+                  request: seconds(Self.requestSetting, Self.defaultRequestSeconds))
+    }
+
+    var valid: Bool {
+        [connectAndSend, firstReply, replyIdle, request].allSatisfy { $0.isFinite && $0 > 0 }
+    }
+
+    var stepSeconds: Double { request * 2 + Self.stepOtherWorkSeconds }
 }
 
 struct NativeTaskTransportTiming: Codable, Sendable {
@@ -16,7 +55,7 @@ struct NativeTaskTransportTiming: Codable, Sendable {
         }
     }
     enum Outcome: String, Codable, Sendable {
-        case completed, connect_send_timeout, read_idle_timeout, overall_timeout, transport_timeout, canceled
+        case completed, connect_send_timeout, first_reply_timeout, read_idle_timeout, overall_timeout, transport_timeout, canceled
         case provider_auth, provider_quota, provider_unavailable, provider_response
         case response_cut_short, response_finish, response_tool_calls, response_empty, response_too_large, response_unreadable, provider_error
     }
@@ -25,6 +64,8 @@ struct NativeTaskTransportTiming: Codable, Sendable {
     let status: Int?
     let setupSeconds: Double?
     let headersSeconds: Double?
+    let firstByteSeconds: Double?
+    let firstReplySeconds: Double?
     let finishSeconds: Double
     let dnsSeconds: Double?
     let connectSeconds: Double?
@@ -45,6 +86,8 @@ final class NativeTaskTransportObserver: NSObject, URLSessionTaskDelegate, @unch
     private let sink: @Sendable (NativeTaskTransportTiming) -> Void
     private var setup: Double?
     private var headers: Double?
+    private var firstByte: Double?
+    private var firstReply: Double?
     private var lastData: Double?
     private var status: Int?
     private var dns: Double?
@@ -70,28 +113,60 @@ final class NativeTaskTransportObserver: NSObject, URLSessionTaskDelegate, @unch
             guard terminal == nil else { return }
             setup = setup ?? elapsed
             headers = elapsed
-            lastData = elapsed
             status = response.statusCode
         }
     }
 
-    func receivedByte() {
-        lock.withLock { if terminal == nil { lastData = elapsed } }
+    func receivedBytes() {
+        lock.withLock {
+            guard terminal == nil else { return }
+            let now = elapsed
+            setup = setup ?? now
+            firstByte = firstByte ?? now
+            lastData = now
+        }
+    }
+
+    func replied() {
+        lock.withLock {
+            guard terminal == nil else { return }
+            firstReply = firstReply ?? lastData ?? elapsed
+        }
+    }
+
+    static let timedOut: Set<NativeTaskTransportTiming.Outcome> = [.connect_send_timeout, .first_reply_timeout, .read_idle_timeout,
+                                                                    .overall_timeout, .transport_timeout]
+
+    @discardableResult
+    func finishIfStalled(_ limits: NativeTaskTransportLimits) -> Bool {
+        finish(.read_idle_timeout, onlyBeforeSetup: false, stall: limits)
     }
 
     @discardableResult
-    func finish(_ outcome: NativeTaskTransportTiming.Outcome, onlyBeforeSetup: Bool = false, readIdle: Double? = nil) -> Bool {
+    func finish(_ outcome: NativeTaskTransportTiming.Outcome, onlyBeforeSetup: Bool = false) -> Bool {
+        finish(outcome, onlyBeforeSetup: onlyBeforeSetup, stall: nil)
+    }
+
+    private func finish(_ outcome: NativeTaskTransportTiming.Outcome, onlyBeforeSetup: Bool,
+                        stall: NativeTaskTransportLimits?) -> Bool {
         let value: NativeTaskTransportTiming? = lock.withLock {
             guard terminal == nil, !onlyBeforeSetup || setup == nil else { return nil }
-            if let readIdle {
-                guard let last = lastData ?? setup, elapsed - last >= readIdle else { return nil }
-            }
-            let timedOut: Set<NativeTaskTransportTiming.Outcome> = [.connect_send_timeout, .read_idle_timeout, .overall_timeout, .transport_timeout]
             let now = elapsed
-            let selected = (timedOut.contains(outcome) || outcome == .completed) && now >= overallSeconds ? .overall_timeout : outcome
+            var chosen = outcome
+            if let stall {
+                if firstReply == nil {
+                    guard let sent = setup, now - sent >= stall.firstReply else { return nil }
+                    chosen = .first_reply_timeout
+                } else {
+                    guard let last = lastData, now - last >= stall.replyIdle else { return nil }
+                    chosen = .read_idle_timeout
+                }
+            }
+            let selected = (Self.timedOut.contains(chosen) || chosen == .completed) && now >= overallSeconds ? .overall_timeout : chosen
             terminal = selected
             return NativeTaskTransportTiming(phase: phase, outcome: selected, status: status,
-                setupSeconds: setup, headersSeconds: headers, finishSeconds: now,
+                setupSeconds: setup, headersSeconds: headers, firstByteSeconds: firstByte,
+                firstReplySeconds: firstReply, finishSeconds: now,
                 dnsSeconds: dns, connectSeconds: connect, tlsSeconds: tls)
         }
         if let value { sink(value) }

@@ -215,7 +215,7 @@ enum NativeTaskWorkerFailures {
 enum NativeResearchWorker {
     static let maximumSources = NativeResourcePolicy.legacyMaximumSources
     static let perSourceCharacters = NativeResourcePolicy.legacySourceCharacters
-    static let stepTimeoutSeconds: Double = 240
+    static let stepTimeoutSeconds = NativeTaskTransportLimits.configured.stepSeconds
     static let loopRules = "Loop discipline, non-negotiable:\n- A result you have not been handed does not exist: never state or use a result before it arrives, and never cite a source you were not given."
 
     static func planPrompt(identity: NativeWorkerIdentity) -> String {
