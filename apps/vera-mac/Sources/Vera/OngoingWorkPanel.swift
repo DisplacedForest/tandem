@@ -49,8 +49,8 @@ enum OngoingWork {
     static let readyToOpen = "Ready to open"
 
     static func presentation(status: NativeTaskCardPresentation.Status, document: Bool,
-                             hasArtifact: Bool) -> (glyph: OngoingWorkItem.Glyph, state: String) {
-        let label = status.title(document: document)
+                             hasArtifact: Bool, title: String? = nil) -> (glyph: OngoingWorkItem.Glyph, state: String) {
+        let label = title ?? status.title(document: document)
         switch status {
         case .completed: return (.done, hasArtifact ? readyToOpen : label)
         case .preparing, .queued, .working, .stopping: return (.running, label)
@@ -66,7 +66,7 @@ enum OngoingWork {
         let display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot)
         let status = display?.card.status ?? .preparing
         let artifact = newFlow.contains(reference.id) ? nil : display?.artifact
-        let shown = presentation(status: status, document: document, hasArtifact: artifact != nil)
+        let shown = presentation(status: status, document: document, hasArtifact: artifact != nil, title: display?.card.statusTitle)
         return OngoingWorkItem(reference: reference, title: reference.request.displayTitle,
                                state: display?.card.listState(shown.state) ?? shown.state, glyph: shown.glyph, artifact: artifact)
     }

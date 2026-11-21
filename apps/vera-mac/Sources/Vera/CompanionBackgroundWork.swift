@@ -21,6 +21,10 @@ struct CompanionCurrentWork: Equatable, Sendable {
 
     var line: String { count.map { "\(words) \($0)" } ?? words }
 
+    static func shownWorkerType(_ reference: NativeTaskReference) -> String {
+        reference.request.scheduleID != nil ? NativeSchedule.companionWorkerType : reference.createRequest.workerType
+    }
+
     static func words(workerType: String, phase: String?, title: String) -> String {
         let subject = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let lead: String
@@ -84,7 +88,7 @@ extension ChatStore {
             work.current = current()
         }
         let threadID = veraThreadID
-        let owned = Set(schedules.filter { $0.owner == .dot }.map(\.id))
+        let owned = Set(schedules.filter(\.runsAsCompanion).map(\.id))
         let runs = scheduleRuns.values.flatMap { $0 }.filter { owned.contains($0.scheduleID) }
         let linked = Set(runs.compactMap { $0.taskReferenceID.flatMap(UUID.init(uuidString:)) })
         let runStart = Dictionary(runs.compactMap { run in
@@ -104,7 +108,7 @@ extension ChatStore {
                 work.running += 1
                 let started = messages.first { $0.id == reference.origin.userMessageID }?.createdAt
                     ?? runStart[reference.id] ?? .distantPast
-                let type = reference.createRequest.workerType
+                let type = CompanionCurrentWork.shownWorkerType(reference)
                 let phase = reference.snapshot?.checkpoint.phase
                 take(started, index, CompanionCurrentWork(kind: CompanionCurrentWork.kind(workerType: type, phase: phase),
                                                           words: CompanionCurrentWork.words(workerType: type, phase: phase, title: display.card.title)))

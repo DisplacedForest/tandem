@@ -208,7 +208,9 @@ enum NativeScheduleError: Error, LocalizedError, Equatable, Sendable {
 }
 
 struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
-    static let workerTypes: [String] = ["research", "document", "companion"]
+    static let companionWorkerType = "companion"
+    static let unreadableKind = "This schedule can't be run."
+    static let workerTypes: [String] = ["research", "document", companionWorkerType]
 
     let id: String
     var owner: NativeScheduleOwner
@@ -238,7 +240,7 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
             throw NativeScheduleError.invalid("Describe the work in up to 5,000 characters.")
         }
         guard Self.workerTypes.contains(workerType) else {
-            throw NativeScheduleError.invalid("Scheduled work must be research or a document.")
+            throw NativeScheduleError.invalid(Self.unreadableKind)
         }
         try cadence.validate()
         self.id = id
@@ -259,8 +261,13 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
     var timeZone: TimeZone { TimeZone(identifier: timeZoneID) ?? .current }
     var cadenceSummary: String { cadence.summary(timeZone: timeZone) }
     var isDocument: Bool { workerType == "document" }
-    var isCompanionWork: Bool { workerType == "companion" }
-    var workTitle: String { isDocument ? "Document" : "Research" }
+    var isCompanionWork: Bool { workerType == Self.companionWorkerType }
+    var runsAsCompanion: Bool { isCompanionWork || owner == .dot }
+    var detailLead: String { "\(cadenceSummary). " }
+
+    func checkInSentence(_ question: String) -> String {
+        "The scheduled \"\(title)\" stopped to ask: " + question
+    }
 
     func deliverables() -> [String] {
         isDocument ? ["Write the document the brief asks for"] : ["A cited summary of what was found"]
@@ -272,7 +279,7 @@ struct NativeSchedule: Identifiable, Equatable, Hashable, Sendable {
     }
 
     func taskRequest() throws -> NativeResearchTaskRequest {
-        if workerType == "companion" {
+        if isCompanionWork {
             return try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: instruction, mode: "scheduled", scheduleID: id), title: title)
         }
         return try NativeResearchTaskRequest(objective: instruction, deliverables: deliverables(), workerType: workerType, title: title,

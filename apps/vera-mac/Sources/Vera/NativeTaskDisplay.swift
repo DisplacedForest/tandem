@@ -130,9 +130,10 @@ struct NativeResearchArtifact: Codable, Hashable, Identifiable, Sendable {
     var sources: [PulseSource]
     var taskOutput: NativeTaskOutputReference? = nil
     var kind: String? = nil
+    var scheduled: Bool? = nil
 
     var isDocument: Bool { kind == "document" }
-    var openTitle: String { isDocument ? "Open document" : "Open report" }
+    var openTitle: String { scheduled == true ? "Open" : isDocument ? "Open document" : "Open report" }
 }
 
 struct NativeTaskOutputReference: Codable, Hashable, Sendable {
@@ -195,6 +196,7 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var stop: NativeTaskStop? = nil
     var canSetAside: Bool? = nil
     var canPickUp: Bool? = nil
+    var scheduled: Bool? = nil
 
     static let workStopped = "Work stopped"
     static let setAsideLine = "Put aside."
@@ -204,12 +206,13 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
 
     var isDocument: Bool { workerType == "document" }
     var isCompanion: Bool { workerType == "companion" }
+    var readsAsWork: Bool { isCompanion || scheduled == true }
     var stoppedStep: NativeTaskStop? { isCompanion && status == .completed ? stop.flatMap { $0.drawable ? $0 : nil } : nil }
     var stoppedHere: Bool { stoppedStep.map { $0.reason != NativeTaskStop.left } ?? false }
     var needsYou: Bool { isCompanion && status == .completed && !stoppedHere && (why != nil || stoppedStep != nil) }
 
     func listState(_ otherwise: String) -> String { needsYou || stoppedHere ? statusTitle : otherwise }
-    var statusTitle: String { isCompanion ? companionTitle : status.title(document: isDocument) }
+    var statusTitle: String { readsAsWork ? workTitle : status.title(document: isDocument) }
     var offeredChoices: [String] {
         guard let choices else { return canRetry ? ["retry"] : [] }
         return choices.filter { Self.choiceTitle($0) != nil }
@@ -225,7 +228,7 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
         }
     }
 
-    private var companionTitle: String {
+    private var workTitle: String {
         switch status {
         case .preparing: return "Starting the work"
         case .working: return "Working on it"
@@ -237,5 +240,5 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
         }
     }
     var statusIcon: InterfaceIcon { needsYou ? .needsYou : stoppedHere ? Status.stopped.icon : status.icon(document: isDocument) }
-    var stopTitle: String { isCompanion ? "Stop work" : isDocument ? "Stop writing" : "Stop research" }
+    var stopTitle: String { readsAsWork ? "Stop work" : isDocument ? "Stop writing" : "Stop research" }
 }

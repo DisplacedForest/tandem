@@ -96,9 +96,9 @@ extension SelfTest {
         try checkRuleDrafts(store, veraID: veraID)
 
         var paused = NativeDotProfile(state: .paused)
-        try require(!paused.allowsScheduledRun(owner: .dot) && paused.allowsScheduledRun(owner: .conversation), "Pause holds only the dot's schedules")
+        try require(!paused.allowsScheduledRun(runsAsCompanion: true) && paused.allowsScheduledRun(runsAsCompanion: false), "Pause holds only the dot's schedules")
         paused.state = .active
-        try require(paused.allowsScheduledRun(owner: .dot), "Resuming lets dot schedules run")
+        try require(paused.allowsScheduledRun(runsAsCompanion: true), "Resuming lets dot schedules run")
         let scheduleStore = NativeScheduleStore(database: try LocalChatRepository(inMemory: true).database)
         let moment = Date(timeIntervalSince1970: 1_800_000_000)
         let due = try NativeSchedule(owner: .dot, workerType: "research", title: "Weekly note", instruction: "Write the greenhouse note",
@@ -178,6 +178,7 @@ extension SelfTest {
         chatDraft.title = "Seed sale watch"
         chatDraft.instruction = "Look for seed sales"
         chatDraft.owner = .conversation
+        chatDraft.workerType = "research"
         guard store.createSchedule(dotDraft) != nil, let kept = store.createSchedule(chatDraft) else {
             throw NativeTaskFixture.Failure.assertion("Fixture schedules save")
         }
@@ -382,7 +383,7 @@ extension SelfTest {
                     "A profile that can't be read fails closed: \(store.dotProfile)")
         try require(store.chatConfigurationError?.contains("Scheduled work is paused and no services are connected until the settings are saved again.") == true,
                     "The failure says what is held and how to fix it: \(store.chatConfigurationError ?? "")")
-        try require(store.dotToolIDs(base: ["a", "b"]).isEmpty && !store.dotProfile.allowsScheduledRun(owner: .dot), "Nothing runs or connects while the profile is unreadable")
+        try require(store.dotToolIDs(base: ["a", "b"]).isEmpty && !store.dotProfile.allowsScheduledRun(runsAsCompanion: true), "Nothing runs or connects while the profile is unreadable")
         store.saveDotProfile { $0.connectedToolIDs = ["a"] }
         try require(try NativeDotProfileStore(database: repository.database).load()?.connectedToolIDs == ["a"], "Saving the settings repairs the stored profile")
         store.stopNativeTaskRecovery()
@@ -446,7 +447,7 @@ extension SelfTest {
         let afterResume = NativeScheduleRun(scheduleID: resumable.id, scheduledFor: laterResume.addingTimeInterval(60), outcome: .running)
         let laterFire = await store.fireSchedule(resumable, run: afterResume, bind: { _, _ in })
         try require(laterFire != .skipped("Missed while " + CompanionSavedText.marker + " was paused."), "A run due after resuming is not treated as missed: \(laterFire)")
-        try require(!NativeDotProfile(resumedAt: laterResume).missedWhilePaused(owner: .conversation, scheduledFor: resumedAt),
+        try require(!NativeDotProfile(resumedAt: laterResume).missedWhilePaused(runsAsCompanion: false, scheduledFor: resumedAt),
                     "Conversation schedules ignore the resume time")
         let legacy = try JSONDecoder().decode(NativeDotProfile.self, from: Data(#"{"goal":"g","state":"active"}"#.utf8))
         try require(legacy.resumedAt == nil, "A profile saved before resume times decodes without one")

@@ -3,10 +3,10 @@ import Foundation
 enum NativeScheduleTools {
     static let toolID = "scheduled-work"
     static let toolName = "schedule_task"
-    static let missingArguments = "Provide a title, the kind of work, an instruction and a repeat."
+    static let missingArguments = "Provide a title, an instruction and a repeat."
     static let weekdayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
     static let repeatKinds = ["daily", "weekdays", "weekly", "every_hours", "once"]
-    static let argumentNames: Set<String> = ["title", "worker_type", "instruction", "results_to", "repeat", "time", "weekday", "hours", "at"]
+    static let argumentNames: Set<String> = ["title", "instruction", "results_to", "repeat", "time", "weekday", "hours", "at"]
 
     static func turnEnabledIDs(snapshot: Set<String>, consented: Set<String>, authority: NativeTurnToolAuthority,
                                hasEngine: Bool, hasRepository: Bool, hasStore: Bool) -> Set<String> {
@@ -21,24 +21,24 @@ enum NativeScheduleTools {
         return base.union([toolID])
     }
 
-    static func definition(searchAvailable: @escaping @Sendable () -> Bool = { NativeWebSearch.resolvedBase() != nil },
+    static let description = "Proposes saving a schedule that has you do something later, either once at a set time or on a repeat. When to use: the person wants something done at a later time or regularly, such as every morning, on weekdays, weekly or every few hours. When not to use: work that should start now, which create_background_task handles when it is offered; something the person wants to be reminded of themselves, which apple_reminders_create handles when it is offered; a question you can answer now. Effects: nothing runs and nothing is saved until the person confirms the schedule in the app; once confirmed it is saved and listed in Scheduled. Inputs: a short title and the full instruction of what to do; repeat decides which timing fields apply: daily and weekdays need time, weekly needs weekday and time, every_hours needs hours, and once needs at, which must still be ahead. Returns message and saved; acknowledge in one sentence using the timing in message, do not say the schedule exists until saved is true, and never show identifiers. If it is refused over a timing field, retry once with that field corrected; if the person declines, leave it."
+
+    static func definition(companionThread: Bool = false,
                            now: @escaping @Sendable () -> Date = { Date() },
                            timeZone: @escaping @Sendable () -> TimeZone = { .current },
                            save: @escaping @Sendable (NativeScheduleDraft) async throws -> NativeSchedule) -> NativeToolDefinition {
         var built = NativeToolDefinition(id: toolID, name: toolName, title: "Schedule work",
-            description: "Proposes saving a schedule that runs research or writes a document later, either once at a set time or on a repeat. When to use: the person wants something looked into or written at a later time or regularly, such as every morning, on weekdays, weekly or every few hours. When not to use: work that should start now, which create_background_task handles when it is offered; something the person wants to be reminded of themselves, which apple_reminders_create handles when it is offered; a question you can answer now. Effects: nothing runs and nothing is saved until the person confirms the schedule in the app; once confirmed it is saved and listed in Scheduled. Inputs: repeat decides which timing fields apply: daily and weekdays need time, weekly needs weekday and time, every_hours needs hours, and once needs at, which must still be ahead. Research needs web search set up. Returns message and saved; acknowledge in one sentence using the timing in message, do not say the schedule exists until saved is true, and never show identifiers. If it is refused over a timing field, retry once with that field corrected; if the person declines, leave it.",
+            description: description,
             parameters: .object([
                 "type": .string("object"), "additionalProperties": .bool(false),
-                "required": .array([.string("title"), .string("worker_type"), .string("instruction"), .string("repeat")]),
+                "required": .array([.string("title"), .string("instruction"), .string("repeat")]),
                 "properties": .object([
                     "title": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(120),
                                       "description": .string("A one-line name for the schedule, up to 120 characters.")]),
-                    "worker_type": .object(["type": .string("string"), "minLength": .number(1), "enum": .array([.string("research"), .string("document")]),
-                                            "description": .string("research for a question answered from web sources, or document for a written piece.")]),
                     "instruction": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(5000),
-                                            "description": .string("What to research, or the brief for the document, written so it makes sense on its own each time it runs. Up to 5000 characters.")]),
+                                            "description": .string("What to do, written so it makes sense on its own each time it runs. Up to 5000 characters.")]),
                     "results_to": .object(["type": .string("string"), "minLength": .number(1), "enum": .array([.string("assistant"), .string("own_chat")]),
-                                           "description": .string("Where results go: assistant for the companion's ongoing conversation, or own_chat for a chat of its own. Default own_chat.")]),
+                                           "description": .string("Where results go: assistant for the companion's ongoing conversation, or own_chat for a chat of its own. Left out, a schedule asked for in the companion's conversation goes there and one asked for anywhere else gets its own chat.")]),
                     "repeat": .object(["type": .string("string"), "minLength": .number(1), "enum": .array(repeatKinds.map { NativeJSONValue.string($0) }),
                                        "description": .string("How often it runs: daily, weekdays, weekly, every_hours, or once.")]),
                     "time": .object(["type": .string("string"), "minLength": .number(1),
@@ -51,10 +51,7 @@ enum NativeScheduleTools {
                                    "description": .string("Local date and time as YYYY-MM-DDTHH:MM, still ahead. Needed for once.")]),
                 ]),
             ]), confirmation: .required, timeout: .seconds(10), action: .otherChanges, isAvailable: { true }, execute: { arguments in
-                let draft = try draft(from: arguments, now: now(), timeZone: timeZone())
-                if draft.workerType == "research", !searchAvailable() {
-                    throw NativeToolError.failed(NativeTaskTools.searchUnavailable)
-                }
+                let draft = try draft(from: arguments, now: now(), timeZone: timeZone(), companionThread: companionThread)
                 let schedule: NativeSchedule
                 NativeToolCallContext.effectStarts()
                 do { schedule = try await save(draft) } catch { throw NativeToolError.failed(error.localizedDescription) }
@@ -66,7 +63,7 @@ enum NativeScheduleTools {
             }, wants: wants, marksEffect: true)
         built.check = { arguments in
             do {
-                _ = try draft(from: arguments, now: now(), timeZone: timeZone())
+                _ = try draft(from: arguments, now: now(), timeZone: timeZone(), companionThread: companionThread)
                 return nil
             } catch NativeToolError.invalidArguments(let detail) {
                 return detail
@@ -79,25 +76,21 @@ enum NativeScheduleTools {
         return built
     }
 
-    static func draft(from arguments: [String: NativeJSONValue], now: Date, timeZone: TimeZone) throws -> NativeScheduleDraft {
+    static func draft(from arguments: [String: NativeJSONValue], now: Date, timeZone: TimeZone, companionThread: Bool = false) throws -> NativeScheduleDraft {
         guard Set(arguments.keys).isSubset(of: argumentNames) else {
             throw NativeToolError.invalidArguments("Unexpected field")
         }
         guard case .string(let title)? = arguments["title"],
-              case .string(let workerType)? = arguments["worker_type"],
               case .string(let instruction)? = arguments["instruction"],
               case .string(let repeatKind)? = arguments["repeat"] else {
             throw NativeToolError.invalidArguments(missingArguments)
         }
-        guard NativeResearchTaskRequest.chatWorkerTypes.contains(workerType) else {
-            throw NativeToolError.invalidArguments("Scheduled work must be research or a document.")
-        }
         var draft = NativeScheduleDraft()
         draft.title = title
         draft.instruction = instruction
-        draft.workerType = workerType
         switch arguments["results_to"] {
-        case nil, .string("own_chat")?: draft.owner = .conversation
+        case nil: draft.owner = companionThread ? .dot : .conversation
+        case .string("own_chat")?: draft.owner = .conversation
         case .string("assistant")?: draft.owner = .dot
         default: throw NativeToolError.invalidArguments("results_to must be assistant or own_chat.")
         }
@@ -129,11 +122,11 @@ enum NativeScheduleTools {
         return draft
     }
 
-    static func draft(inRequest request: String, now: Date = Date(), timeZone: TimeZone = .current) -> NativeScheduleDraft? {
+    static func draft(inRequest request: String, now: Date = Date(), timeZone: TimeZone = .current, companionThread: Bool = false) -> NativeScheduleDraft? {
         guard let data = request.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let values = try? object.mapValues({ try NativeJSONValue(any: $0) }) else { return nil }
-        return try? draft(from: values, now: now, timeZone: timeZone)
+        return try? draft(from: values, now: now, timeZone: timeZone, companionThread: companionThread)
     }
 
     static let wants = "schedule this"
@@ -146,7 +139,7 @@ enum NativeScheduleTools {
     }
 
     static func destination(for draft: NativeScheduleDraft) -> String {
-        draft.owner == .dot ? "Results go to \(CompanionSentence.placeholder)'s thread." : "Results go to its own chat."
+        draft.owner == .dot ? "Results go to \(CompanionSentence.placeholder)." : "Results go to its own chat."
     }
 
     private static func minute(_ value: NativeJSONValue?) throws -> Int {

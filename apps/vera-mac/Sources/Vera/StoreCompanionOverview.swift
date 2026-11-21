@@ -9,13 +9,16 @@ extension ChatStore {
         let threadID = veraThreadID
         let projection = repository as? any NativeTaskProjectionRepository
         var tasks: [CompanionActivityItem] = []
-        for reference in nativeTaskReferences where reference.origin.conversationID == threadID && reference.replacedBy == nil {
+        let owned = Set(schedules.filter(\.runsAsCompanion).map(\.id))
+        let linked = Set(scheduleRuns.values.flatMap { $0 }.filter { owned.contains($0.scheduleID) }
+            .compactMap { $0.taskReferenceID.flatMap(UUID.init(uuidString:)) })
+        for reference in nativeTaskReferences where (reference.origin.conversationID == threadID || linked.contains(reference.id)) && reference.replacedBy == nil {
             let saved = try? projection?.taskProjection(id: reference.id)
             let snapshot = saved?.snapshot ?? reference.snapshot
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot,
                                                                    connectionNote: saved?.connectionNote) else { continue }
             let date = snapshot.map { Date(timeIntervalSince1970: $0.updatedAt) }
-                ?? conversations.first { $0.id == threadID }?.messages.first { $0.id == reference.origin.assistantMessageID }?.createdAt
+                ?? conversations.first { $0.id == reference.origin.conversationID }?.messages.first { $0.id == reference.origin.assistantMessageID }?.createdAt
                 ?? .distantPast
             var card = display.card
             if reference.pendingChange != nil { card.canCancel = true }
@@ -24,7 +27,7 @@ extension ChatStore {
         }
         let runs = scheduleRuns.values.flatMap { $0 }
         let activity = CompanionOverviewModel.activity(tasks: tasks, runs: runs, schedules: schedules)
-        let results = threadID == nil ? [] : artifactRecords.filter { $0.conversationID == threadID }.map(CompanionOverviewModel.result)
+        let results = threadID == nil ? [] : artifactRecords.filter { $0.conversationID == threadID || ($0.conversationID != nil && $0.originTitle == CompanionSavedText.marker) }.map(CompanionOverviewModel.result)
         let options = dotServiceOptions()
         return CompanionOverviewModel.build(
             name: companion.leading, profile: dotProfile,
@@ -121,7 +124,7 @@ extension ChatStore {
 
     @discardableResult
     func switchCompanionSchedule(_ id: String, on: Bool) -> String? {
-        guard schedules.contains(where: { $0.id == id && $0.owner == .dot }) else { return nil }
+        guard schedules.contains(where: { $0.id == id && $0.runsAsCompanion }) else { return nil }
         setSchedule(id, enabled: on)
         return schedules.first { $0.id == id }?.enabled == on ? nil : scheduleError
     }

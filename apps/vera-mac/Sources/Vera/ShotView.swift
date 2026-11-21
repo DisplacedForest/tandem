@@ -407,7 +407,7 @@ struct ShotView: View {
 
     private var scheduleActivity: NativeToolActivity {
         NativeToolActivity(id: "s1", toolID: NativeScheduleTools.toolID, name: NativeScheduleTools.toolName, title: "Schedule work", round: 1,
-                           request: "{\"title\":\"Morning policy check\",\"worker_type\":\"research\",\"instruction\":\"Summarize overnight developments in semiconductor export policy with sources.\",\"results_to\":\"own_chat\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
+                           request: "{\"title\":\"Morning policy check\",\"instruction\":\"Summarize overnight developments in semiconductor export policy with sources.\",\"results_to\":\"own_chat\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
                            result: nil, state: .pending, confirmationRequired: true)
     }
 

@@ -1451,11 +1451,11 @@ extension SelfTest {
 
         let clock = NativeEffectTestClock(Date(timeIntervalSince1970: 1_803_000_000))
         let utc = TimeZone(identifier: "UTC") ?? .current
-        let schedule = NativeScheduleTools.definition(searchAvailable: { true }, now: { clock.now }, timeZone: { utc }, save: { _ in
+        let schedule = NativeScheduleTools.definition(now: { clock.now }, timeZone: { utc }, save: { _ in
             throw NativeTaskFixture.Failure.assertion("A refused schedule must not be saved")
         })
         let asked = NativeChatRulesCounter()
-        let base: [String: Any] = ["title": "Garden brief", "worker_type": "document", "instruction": "Write the garden brief"]
+        let base: [String: Any] = ["title": "Garden brief", "instruction": "Write the garden brief"]
         func scheduleArguments(_ extra: [String: Any]) throws -> String {
             String(decoding: try JSONSerialization.data(withJSONObject: base.merging(extra) { _, new in new }, options: [.sortedKeys]), as: UTF8.self)
         }
