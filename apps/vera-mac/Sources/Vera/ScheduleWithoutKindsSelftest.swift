@@ -17,12 +17,13 @@ extension SelfTest {
         try scheduleWithoutKindsPanels(require)
         try scheduleWithoutKindsRunWords(require)
         try scheduleWithoutKindsOldRoutineWords(require)
+        try scheduleWithoutKindsSavedResult(require)
         try await scheduleWithoutKindsProfileAside(require)
         try scheduleWithoutKindsLibrary(require)
         try scheduleWithoutKindsDelivered(require)
         try scheduleWithoutKindsCurrentLine(require)
         try await scheduleWithoutKindsDeletedChat(require)
-        print("  schedule without kinds OK (new schedules are the companion's with either destination, reload, edit keeps kind, old research and document load, fire and edit as before, own chat and companion runs start in the chosen chat without search, pause skips and notes both, profile and companion lists, start over counts and removes both and keeps the chat, tool has no kind field, results default per conversation, real loop allow decline and unreadable in both conversations, own chat question posts and is answered in the companion's conversation and the result lands in its own chat, old research question stays in its chat, no search line and reasons, the loaded question card updates where it was answered, card lines, words, profile and work panels, runs of older schedules read as plain work while chat work reads as before, every question, failure, step and delivered failure line the older routines write reads plainly on a scheduled run and as before from a chat, old saved cards decode, own chat run in the profile with put aside and pick back up, the companion's documents in the Library and profile and not the next companion's after start over, delivered results open plainly, the current work line, a deleted own chat takes its question card with it)")
+        print("  schedule without kinds OK (new schedules are the companion's with either destination, reload, edit keeps kind, old research and document load, fire and edit as before, own chat and companion runs start in the chosen chat without search, pause skips and notes both, profile and companion lists, start over counts and removes both and keeps the chat, tool has no kind field, results default per conversation, real loop allow decline and unreadable in both conversations, own chat question posts and is answered in the companion's conversation and the result lands in its own chat, old research question stays in its chat, no search line and reasons, the loaded question card updates where it was answered, card lines, words, profile and work panels, runs of older schedules read as plain work while chat work reads as before, every question, failure, step in every phase and delivered failure line the older routines write reads plainly on a scheduled run and as before from a chat, a result saved before the schedule mark opens plainly, old saved cards decode, own chat run in the profile with put aside and pick back up, the companion's documents in the Library and profile and not the next companion's after start over, delivered results open plainly, the current work line, a deleted own chat takes its question card with it)")
     }
 
     private static func scheduleWithoutKindsStore(_ require: (Bool, String) throws -> Void) async throws {
@@ -582,7 +583,8 @@ extension SelfTest {
     }
 
     private static func scheduleWithoutKindsOldRoutineWords(_ require: (Bool, String) throws -> Void) throws {
-        let kindWords: Set<String> = ["research", "researching", "document", "documents", "writing", "write", "written", "report", "reports"]
+        let kindWords: Set<String> = ["research", "researching", "document", "documents", "writing", "write", "written", "report", "reports",
+                                        "section", "sections", "outline", "draft", "drafting", "revising", "revised"]
         let banned = Set(CompanionTalkControlFixture.banned + CompanionTalkControlFixture.pronouns)
         func words(_ text: String) -> [String] {
             text.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
@@ -669,18 +671,94 @@ extension SelfTest {
                     let milestone = try shown("failed", checkpoint: checkpoint)
                     try require(!scheduled || plain(milestone), "A scheduled \(workerType) failure reads without a kind of work: \(milestone)")
                 }
-                let steps: [[String: Any]] = workerType == "document"
-                    ? [["phase": "condense"], ["phase": "outline"], ["phase": "assemble"]]
-                    : [["phase": "synthesize", "sources": [["n": 1, "title": "Saved forecast", "url": "local"]]], ["phase": "gather"], ["phase": "plan"]]
-                for checkpoint in steps {
-                    let milestone = try shown("running", checkpoint: checkpoint)
-                    try require(!scheduled || plain(milestone), "A scheduled \(workerType) step reads without a kind of work: \(milestone)")
-                    if !scheduled, workerType == "research", checkpoint["phase"] as? String == "synthesize" {
-                        try require(milestone == "Preparing the report from 1 source.", "Research from a chat still names its report: \(milestone)")
+                let outline: [[String: Any]] = [["heading": "Tonight", "instructions": "Say whether frost is likely."],
+                                                 ["heading": "Tomorrow", "instructions": "Say what to cover."],
+                                                 ["heading": "Beds", "instructions": "Say which beds to cover."]]
+                let source: [String: Any] = ["n": 1, "title": "Saved forecast", "url": "local"]
+                var steps: [(checkpoint: [String: Any], chat: String)] = []
+                if workerType == "document" {
+                    for phase in NativeDocumentPhase.allCases {
+                        let name = phase.rawValue
+                        steps.append((["phase": name], [.condense: "Condensing the material so it fits.", .assemble: "Putting the document together."][phase] ?? "Planning the outline."))
+                        steps.append((["phase": name, "outline": outline, "drafts": ["Frost is likely."]],
+                                      [.condense: "Condensing the material so it fits.", .draft: "Drafting section 2 of 3.", .revise: "Revising section 1 of 3.",
+                                       .assemble: "Putting the document together."][phase] ?? "Planning the outline."))
+                        if [.draft, .revise].contains(phase) {
+                            steps.append((["phase": name, "outline": outline, "drafts": ["Frost is likely."], "shrink_step": "\(name):1:0"], "Asking for a shorter section."))
+                        }
+                    }
+                } else {
+                    for phase in NativeResearchPhase.allCases {
+                        let name = phase.rawValue
+                        steps.append((["phase": name], [.gather: "Looking for useful sources.", .rag: "Checking saved knowledge alongside the gathered sources.",
+                                                        .synthesize: "Checking whether enough evidence is available."][phase] ?? "Planning the research."))
+                        steps.append((["phase": name, "sources": [source]],
+                                      [.gather: "Gathered 1 source. Checking the remaining questions.", .rag: "Checking saved knowledge alongside the gathered sources.",
+                                       .synthesize: "Preparing the report from 1 source."][phase] ?? "Planning the research."))
+                    }
+                }
+                for step in steps {
+                    let milestone = try shown("running", checkpoint: step.checkpoint)
+                    if scheduled {
+                        try require(plain(milestone), "A scheduled \(workerType) step reads without a kind of work: \(step.checkpoint) became \(milestone)")
+                    } else {
+                        try require(milestone == step.chat, "A \(workerType) step from a chat reads as before: \(milestone)")
+                    }
+                }
+                if workerType == "document" {
+                    let progress: [(checkpoint: [String: Any], chat: String)] = [
+                        (["outline": outline], "Stopping. The outline is saved."),
+                        (["outline": outline, "drafts": ["Frost is likely."]], "Stopping. Saved 1 section of 3."),
+                        (["outline": outline, "drafts": ["Frost is likely.", "Cover the beds."]], "Stopping. Saved 2 sections of 3."),
+                    ]
+                    for item in progress {
+                        var object = (try JSONSerialization.jsonObject(with: NativeTaskFixture.snapshot(reference, id: remote, state: "running", canceled: true))) as? [String: Any] ?? [:]
+                        object["worker_type"] = workerType
+                        object["checkpoint"] = item.checkpoint
+                        let snapshot = try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical(object))
+                        let milestone = try NativeTaskProjection.display(reference: reference, snapshot: snapshot).card.milestone
+                        try require(scheduled ? plain(milestone) : milestone == item.chat, "A \(workerType) stop reads right: \(milestone)")
+                    }
+                    let report: [String: Any] = ["kind": "document_report", "query": request.objective, "report": "# Frost\n\nNo frost tonight.", "sources": []]
+                    for (unrevised, chat) in [([1], "One section wasn't revised."), ([0, 2], "2 sections weren't revised.")] {
+                        var object = (try JSONSerialization.jsonObject(with: NativeTaskFixture.snapshot(reference, id: remote, state: "completed"))) as? [String: Any] ?? [:]
+                        object["worker_type"] = workerType
+                        object["checkpoint"] = ["outline": outline, "unrevised": unrevised]
+                        object["result"] = report
+                        let snapshot = try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical(object))
+                        let milestone = try NativeTaskProjection.display(reference: reference, snapshot: snapshot).card.milestone
+                        try require(scheduled ? plain(milestone) : milestone == chat, "A finished \(workerType) with unrevised parts reads right: \(milestone)")
                     }
                 }
             }
         }
+    }
+
+    private static func scheduleWithoutKindsSavedResult(_ require: (Bool, String) throws -> Void) throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let engine = try NativeTaskEngineIdentity(CardShot.engineURL)
+        var lines: [String: String] = [:]
+        for scheduled in [true, false] {
+            let origin = try NativeTaskFixture.origin(repository)
+            let request = try NativeResearchTaskRequest(objective: "Frost check", deliverables: ["A short note"], workerType: "document",
+                                                        scheduleID: scheduled ? UUID().uuidString.lowercased() : nil)
+            let prepared = try repository.prepareTaskReference(origin: origin, engine: engine, request: request, profile: nil)
+            var message = Message(role: .assistant, text: "", state: .complete)
+            message.contentType = .deliveredResult
+            message.delivery = NativeDeliveredMessage(referenceID: prepared.id.uuidString, kind: NativeDeliveredMessage.result, title: "Frost check",
+                                                      finished: true, document: true)
+            message.displayBlocks = [.artifact(NativeResearchArtifact(id: UUID().uuidString, title: "Frost check", report: "# Frost", sources: [], kind: "document"))]
+            try repository.saveMessage(message, conversationID: origin.conversationID, ordinal: 2)
+            let loaded = try repository.messages(conversationID: origin.conversationID).first { $0.id == message.id }
+            let recent = try repository.recentMessages(conversationID: origin.conversationID, limit: 5).first { $0.id == message.id }
+            for found in [loaded, recent] {
+                guard case .artifact(let artifact)? = found?.displayBlocks.first else { throw NativeTaskFixture.Failure.assertion("The saved result loads") }
+                lines[scheduled ? "scheduled" : "chat"] = artifact.openTitle
+                try require(artifact.openTitle == (scheduled ? "Open" : "Open document"),
+                            "A result saved without the schedule mark opens as \(scheduled ? "Open" : "Open document"): \(artifact.openTitle)")
+            }
+        }
+        try require(lines.count == 2, "Both saved results were checked")
     }
 
     private static func scheduleWithoutKindsProfileAside(_ require: (Bool, String) throws -> Void) async throws {

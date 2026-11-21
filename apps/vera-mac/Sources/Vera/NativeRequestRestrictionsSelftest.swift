@@ -241,7 +241,7 @@ extension SelfTest {
              "Start research on a question across web sources now, carrying on after this reply and reporting back in this chat"),
             (restrictionStarter(hits), ["worker_type": .string("document"), "objective": .string("SECRET-OBJECTIVE")],
              "Start writing a document for the Library now, carrying on after this reply and reporting back in this chat"),
-            (scheduler, ["repeat": .string("every_hours"), "hours": .number(6), "instruction": .string("SECRET-INSTRUCTION")],
+            (scheduler, ["repeat": .string("every_hours"), "hours": .number(6)],
              "Set up a schedule that runs a separate piece of work later, every 6 hours"),
             (reminder("apple_reminders_list"), ["list": .string("Errands")], "Read reminders from the list \"Errands\""),
             (reminder("apple_reminders_create"), ["list": .string("Errands"), "title": .string("SECRET-TITLE")], "Add a reminder to the list \"Errands\""),
@@ -254,6 +254,11 @@ extension SelfTest {
             try require(described == expected && !described.contains("SECRET") && !described.contains("\u{2014}"),
                         "Every call is described plainly by what it would do, never by its free text: \(described)")
         }
+        let scheduled = NativeActionDescription.describe(scheduler, arguments: ["repeat": .string("daily"), "time": .string("08:00"),
+                                                                                "title": .string("SECRET-TITLE"), "instruction": .string("Check the frost forecast")])
+        try require(scheduled == "Set up a schedule that runs a separate piece of work later, every day, doing this each time: \"Check the frost forecast\""
+                    && !scheduled.contains("SECRET"),
+                    "A proposed schedule is described with what it would do each time, without its name or a kind: \(scheduled)")
     }
 
     private static func restrictionNothingRefused() async throws {
@@ -313,28 +318,45 @@ extension SelfTest {
 
     private static func restrictionScheduled() async throws {
         let require = NativeTaskFixture.require
-        let saved = NativeChatRulesCounter()
-        let scheduler = NativeScheduleTools.definition(save: { _ in
-            saved.hit()
-            throw NativeToolError.failed("unused")
-        })
-        let script = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply(["schedule anything"]))) { content in
-            let action = SelfTest.restrictionAction(content).lowercased()
-            return .text(NativeRequestAuthorizer.refusalCheckReply(action.contains("schedule") && action.contains("later") ? .ruledOut : .notRuledOut))
+        let cases: [(refused: String, text: String, instruction: String, ruledOut: Bool, label: String)] = [
+            ("schedule anything", "Don't schedule anything, just tell me what you know about green tea.", "Check my calendar for tomorrow", true,
+             "Saying not to schedule anything rules out a schedule"),
+            ("research anything", "Don't research anything, just tell me what you know about green tea.", "Research green tea and sum up what you find", true,
+             "Saying not to research rules out a schedule that would research"),
+            ("research anything", "Don't research anything, just tell me what you know about green tea.", "Check my calendar for tomorrow", false,
+             "Saying not to research leaves a schedule that only checks a calendar to its card"),
+        ]
+        for item in cases {
+            let saved = NativeChatRulesCounter()
+            let scheduler = NativeScheduleTools.definition(save: { _ in
+                saved.hit()
+                throw NativeToolError.failed("unused")
+            })
+            let script = NativeRestrictionScript(.text(NativeRequestAuthorizer.refusalsReply([item.refused]))) { content in
+                let action = SelfTest.restrictionAction(content).lowercased()
+                let covered = item.refused == "schedule anything" ? action.contains("schedule") && action.contains("later") : action.contains("research")
+                return .text(NativeRequestAuthorizer.refusalCheckReply(covered ? .ruledOut : .notRuledOut))
+            }
+            let cards = NativeRestrictionCards(approves: true)
+            let arguments = String(decoding: try JSONSerialization.data(withJSONObject: ["title": "Tea", "instruction": item.instruction, "repeat": "daily", "time": "08:00"],
+                                                                         options: [.sortedKeys]), as: UTF8.self)
+            let (activities, transport) = try await restrictionDrive([scheduler],
+                [restrictionRound([restrictionCall("later", NativeScheduleTools.toolName, arguments)]), restrictionDone],
+                script: script, text: item.text, cards: cards)
+            let asked = restrictionAction(script.checkRequests.first?.last?.content ?? "")
+            let words = asked.lowercased().replacingOccurrences(of: item.instruction.lowercased(), with: "")
+            try require(asked.contains("schedule") && asked.contains(item.instruction) && !words.contains("research") && !words.contains("document"),
+                        "The check sees that this sets up a schedule and what it would do, with no kind added: \(asked)")
+            let refusedHere = (activities.first?.result ?? "").contains(NativeRefusalList.ruledOutSentence)
+            if item.ruledOut {
+                try require(activities.first?.state == .failed && refusedHere && saved.count == 0 && cards.names.isEmpty,
+                            "\(item.label), and no card is shown")
+                try require((transport.histories.last ?? []).contains { $0.role == "tool" && $0.content.contains(NativeRefusalList.ruledOutSentence) },
+                            "The model is told the person asked not to")
+            } else {
+                try require(!refusedHere && !cards.names.isEmpty, "\(item.label): \(cards.names)")
+            }
         }
-        let cards = NativeRestrictionCards(approves: true)
-        let arguments = "{\"title\":\"Tea\",\"instruction\":\"Find out about green tea\",\"repeat\":\"daily\",\"time\":\"08:00\"}"
-        let (activities, transport) = try await restrictionDrive([scheduler],
-            [restrictionRound([restrictionCall("later", NativeScheduleTools.toolName, arguments)]), restrictionDone],
-            script: script, text: "Don't schedule anything, just tell me what you know about green tea.", cards: cards)
-        let asked = restrictionAction(script.checkRequests.first?.last?.content ?? "")
-        try require(asked.contains("schedule") && !asked.contains("research") && !asked.contains("green tea"),
-                    "The check sees a plain description that says this sets up a schedule, without a kind or the instruction text: \(asked)")
-        try require(activities.first?.state == .failed && (activities.first?.result ?? "").contains(NativeRefusalList.ruledOutSentence)
-                    && saved.count == 0 && cards.names.isEmpty,
-                    "Saying not to schedule anything rules out a schedule, and no card is shown")
-        try require((transport.histories.last ?? []).contains { $0.role == "tool" && $0.content.contains(NativeRefusalList.ruledOutSentence) },
-                    "The model is told the person asked not to")
     }
 
     private static func restrictionUnclear() async throws {

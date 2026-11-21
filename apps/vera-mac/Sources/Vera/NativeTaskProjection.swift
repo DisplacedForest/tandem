@@ -87,13 +87,13 @@ enum NativeTaskProjection {
             } else if document {
                 card.milestone = documentMilestone(snapshot.checkpoint, scheduled: scheduled)
             } else {
-                switch snapshot.checkpoint.phase {
-                case "gather":
+                switch snapshot.checkpoint.phase.flatMap(NativeResearchPhase.init(rawValue:)) {
+                case .gather:
                     card.milestone = count > 0 ? "Gathered \(sourcePhrase). Checking the remaining questions." : "Looking for useful sources."
-                case "rag": card.milestone = "Checking saved knowledge alongside the gathered sources."
-                case "synthesize":
+                case .rag: card.milestone = "Checking saved knowledge alongside the gathered sources."
+                case .synthesize:
                     card.milestone = count > 0 ? "Preparing the report from \(sourcePhrase)." : "Checking whether enough evidence is available."
-                default: card.milestone = neutral ? "Planning the work." : "Planning the research."
+                case .plan, .condense, nil: card.milestone = neutral ? "Planning the work." : "Planning the research."
                 }
             }
         case .blocked:
@@ -248,20 +248,21 @@ enum NativeTaskProjection {
 
     static func documentMilestone(_ checkpoint: NativeTaskCheckpoint, scheduled: Bool = false) -> String {
         let planned = checkpoint.outline.count
-        if let phase = checkpoint.phase, ["draft", "revise"].contains(phase),
-           checkpoint.shrinkStep == "\(phase):\(checkpoint.drafts.count):\(checkpoint.revisions.count)" {
+        let phase = checkpoint.phase.flatMap(NativeDocumentPhase.init(rawValue:))
+        if let phase, [.draft, .revise].contains(phase),
+           checkpoint.shrinkStep == "\(phase.rawValue):\(checkpoint.drafts.count):\(checkpoint.revisions.count)" {
             return NativeTaskWorkerFailures.shorterSectionNote
         }
-        switch checkpoint.phase {
-        case "condense": return condensingLine
-        case "draft":
+        switch phase {
+        case .condense: return condensingLine
+        case .draft:
             guard planned > 0 else { return "Planning the outline." }
             return "Drafting section \(min(checkpoint.drafts.count + 1, planned)) of \(planned)."
-        case "revise":
+        case .revise:
             guard planned > 0 else { return "Planning the outline." }
             return "Revising section \(min(checkpoint.revisions.count + 1, planned)) of \(planned)."
-        case "assemble": return scheduled ? "Putting it together." : "Putting the document together."
-        default: return "Planning the outline."
+        case .assemble: return scheduled ? "Putting it together." : "Putting the document together."
+        case .outline, nil: return "Planning the outline."
         }
     }
 

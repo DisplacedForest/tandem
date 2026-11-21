@@ -105,9 +105,9 @@ extension SelfTest {
                     "Consent revoked after the send drops the tool")
         let described = NativeActionDescription.describe(NativeScheduleTools.definition(save: { _ in throw NativeToolError.failed("unused") }),
                                                          arguments: ["repeat": .string("weekly"),
-                                                                     "title": .string("SECRET-TITLE"), "instruction": .string("SECRET-INSTRUCTION")])
-        try require(described == "Set up a schedule that runs a separate piece of work later, every week",
-                    "A proposed schedule is described plainly for the refusal check, without its free text: \(described)")
+                                                                     "title": .string("SECRET-TITLE"), "instruction": .string("Check lumber prices")])
+        try require(described == "Set up a schedule that runs a separate piece of work later, every week, doing this each time: \"Check lumber prices\"",
+                    "A proposed schedule is described for the refusal check by what it would do, without its name: \(described)")
 
         let save: @Sendable (NativeScheduleDraft) async throws -> NativeSchedule = { draft in
             try NativeSchedule(owner: draft.owner, workerType: draft.workerType, title: draft.title,

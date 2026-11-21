@@ -172,6 +172,7 @@ enum NativeActionDescription {
             return "Start " + work(string(arguments, "worker_type")) + " now, carrying on after this reply and reporting back in this chat"
         case (NativeScheduleTools.toolID, NativeScheduleTools.toolName):
             return "Set up a schedule that runs " + work(nil) + " later, " + cadence(arguments)
+                + (string(arguments, "instruction").map { ", doing this each time: " + quoted($0) } ?? "")
         case (NativeRemindersTools.toolID, "apple_reminders_get_lists"):
             return "Read the names of the person's reminder lists"
         case (NativeRemindersTools.toolID, "apple_reminders_list"):

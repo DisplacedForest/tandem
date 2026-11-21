@@ -1,5 +1,9 @@
 import Foundation
 
+enum NativeResearchPhase: String, CaseIterable, Sendable {
+    case plan, gather, rag, condense, synthesize
+}
+
 struct NativeResearchSource: Codable, Equatable, Sendable {
     var n: Int
     var title: String
@@ -8,7 +12,7 @@ struct NativeResearchSource: Codable, Equatable, Sendable {
 }
 
 struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
-    var phase = "plan"
+    var phase = NativeResearchPhase.plan.rawValue
     var subquestions: [String] = []
     var nextQuery = 0
     var sources: [NativeResearchSource] = []
@@ -54,7 +58,7 @@ struct NativeResearchCheckpoint: Codable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        phase = try container.decodeIfPresent(String.self, forKey: .phase) ?? "plan"
+        phase = try container.decodeIfPresent(String.self, forKey: .phase) ?? NativeResearchPhase.plan.rawValue
         subquestions = try container.decodeIfPresent([String].self, forKey: .subquestions) ?? []
         nextQuery = try container.decodeIfPresent(Int.self, forKey: .nextQuery) ?? 0
         sources = try container.decodeIfPresent([NativeResearchSource].self, forKey: .sources) ?? []
@@ -312,7 +316,7 @@ enum NativeResearchWorker {
         checkpoint.condenseSize = items.reduce(0) { $0 + NativeResourcePolicy.wireCost($1) }
         checkpoint.condenseQueue = NativeResourcePolicy.parts(items, budget: condensePartBytes(policy, identity: identity, divisor: checkpoint.condenseDivisor))
         checkpoint.condenseDone = []
-        checkpoint.phase = "condense"
+        checkpoint.phase = NativeResearchPhase.condense.rawValue
     }
 
     static func text(_ value: String, _ limit: Int) -> String {
@@ -447,7 +451,7 @@ enum NativeResearchWorker {
             }
         }
         switch checkpoint.phase {
-        case "plan":
+        case NativeResearchPhase.plan.rawValue:
             let material = [payload.query] + payload.deliverables
             if !policy.legacy, checkpoint.question == nil, material.reduce(0, { $0 + NativeResourcePolicy.wireCost($1) }) > policy.materialBytes {
                 startCondense(&checkpoint, target: "question", items: material, policy: policy, identity: identity)
@@ -465,9 +469,9 @@ enum NativeResearchWorker {
                 checkpoint.note(["plan: the planner did not return usable sub-questions"])
             }
             checkpoint.note = NativeTaskDelivery.note(in: response)
-            checkpoint.phase = "gather"
+            checkpoint.phase = NativeResearchPhase.gather.rawValue
             return try progress(checkpoint)
-        case "condense":
+        case NativeResearchPhase.condense.rawValue:
             guard !checkpoint.condenseQueue.isEmpty else {
                 let done = checkpoint.condenseDone
                 let size = done.reduce(0) { $0 + NativeResourcePolicy.wireCost($1) }
@@ -476,7 +480,7 @@ enum NativeResearchWorker {
                     : size <= policy.materialBytes
                 if fits {
                     if notesTarget { checkpoint.notes = done } else { checkpoint.question = done.joined(separator: "\n\n") }
-                    checkpoint.phase = notesTarget ? "synthesize" : "plan"
+                    checkpoint.phase = notesTarget ? NativeResearchPhase.synthesize.rawValue : NativeResearchPhase.plan.rawValue
                     checkpoint.condenseDone = []
                     checkpoint.condenseTarget = nil
                     return try progress(checkpoint)
@@ -507,9 +511,9 @@ enum NativeResearchWorker {
             checkpoint.condenseQueue.removeFirst()
             checkpoint.condenseCalls += 1
             return try progress(checkpoint)
-        case "gather":
+        case NativeResearchPhase.gather.rawValue:
             guard checkpoint.nextQuery < checkpoint.subquestions.count else {
-                checkpoint.phase = "synthesize"
+                checkpoint.phase = NativeResearchPhase.synthesize.rawValue
                 return try progress(checkpoint)
             }
             let question = checkpoint.subquestions[checkpoint.nextQuery]
@@ -520,11 +524,11 @@ enum NativeResearchWorker {
                 checkpoint.note(["search '\(text(question, NativeResourcePolicy.noteQuestionCharacters))': \(error.localizedDescription)"])
             }
             checkpoint.nextQuery += 1
-            if checkpoint.nextQuery == checkpoint.subquestions.count { checkpoint.phase = "synthesize" }
+            if checkpoint.nextQuery == checkpoint.subquestions.count { checkpoint.phase = NativeResearchPhase.synthesize.rawValue }
             return try progress(checkpoint, added: added)
         default:
             guard !checkpoint.sources.isEmpty else {
-                checkpoint.phase = "gather"
+                checkpoint.phase = NativeResearchPhase.gather.rawValue
                 checkpoint.nextQuery = 0
                 return try pause(&checkpoint, "No usable sources were gathered.")
             }
