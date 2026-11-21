@@ -230,7 +230,7 @@ extension SelfTest {
         let resolver = NativeRuleResolver(global: .defaults, conversation: NativeConversationRules(choices: [.commands: .handOff]), requestText: "")
         let current = NativeDotContext.render(resolver: resolver).components(separatedBy: "\n")
         let oldCoordinator = current[1].replacingOccurrences(of: "longer work is handed to", with: "work on the " + retiredWord + " is handed to")
-        return ([current[0], sentence, oldCoordinator] + current.dropFirst(2)).joined(separator: "\n")
+        return (["You are Ada, the user's standing assistant.", sentence, oldCoordinator] + current.dropFirst(2)).joined(separator: "\n")
     }
 
     private static var oldContexts: [String] {
@@ -246,7 +246,8 @@ extension SelfTest {
             let cleaned = NativeDotContext.retired(old)
             try requireRetiredFree([cleaned], "A stored context from before")
             try require(cleaned == current, "Only the retired lines change and every rule line stays byte for byte: \(cleaned)")
-            let kept = old.components(separatedBy: "\n").filter { !$0.lowercased().contains(retiredWord) }
+            try require(!cleaned.contains("Ada"), "A saved opening that named the companion no longer names it: \(cleaned)")
+            let kept = old.components(separatedBy: "\n").filter { !$0.lowercased().contains(retiredWord) && !$0.hasSuffix("the user's standing assistant.") }
             try require(kept.allSatisfy { cleaned.components(separatedBy: "\n").contains($0) }, "Every other stored line survives unchanged")
         }
         try require(NativeDotContext.retired("Stored block\nRun commands in shared folders: hand off to the user.")
