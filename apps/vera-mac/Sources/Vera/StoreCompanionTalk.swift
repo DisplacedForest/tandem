@@ -18,7 +18,7 @@ extension ChatStore {
 
     private func companionTalkReferences() -> [NativeTaskReference] {
         guard let threadID = veraThreadID else { return [] }
-        let owned = Set(schedules.filter { $0.owner == .dot }.map(\.id))
+        let owned = Set(schedules.filter(\.runsAsCompanion).map(\.id))
         let linked = Set(scheduleRuns.values.flatMap { $0 }.filter { owned.contains($0.scheduleID) }
             .compactMap { $0.taskReferenceID.flatMap(UUID.init(uuidString:)) })
         let stored = ((try? nativeTaskRepository?.taskReferences(conversationID: nil)) ?? nil) ?? nativeTaskReferences
@@ -64,7 +64,7 @@ extension ChatStore {
         let (snapshot, connectionNote) = companionTalkSnapshot(reference)
         guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot, connectionNote: connectionNote) else { return nil }
         let card = display.card
-        let workerType = reference.createRequest.workerType
+        let workerType = CompanionCurrentWork.shownWorkerType(reference)
         let title = CompanionTalkTools.clipped(card.title, CompanionTalkTools.titleLimit)
         let what = CompanionCurrentWork.words(workerType: workerType, phase: snapshot?.checkpoint.phase, title: title)
         let phase = companionTalkPhase(card.status, state: snapshot?.state)
@@ -74,7 +74,7 @@ extension ChatStore {
         var decisionID: String?
         if phase == .waiting, let decision = snapshot?.decision {
             decisionID = decision.id
-            let shown = CompanionSavedText.plain(SavedWording.question(decision.prompt), name: companionName, appWritten: workerType == "companion")
+            let shown = CompanionSavedText.plain(SavedWording.question(decision.prompt, scheduled: reference.request.scheduleID != nil), name: companionName, appWritten: reference.createRequest.workerType == "companion")
             question = CompanionTalkTools.clipped(shown, CompanionTalkTools.questionLimit)
             for wire in decision.choices where !NativeTaskProjection.carryOnChoices.contains(wire) {
                 guard let choiceTitle = NativeTaskCardPresentation.choiceTitle(wire) else { continue }

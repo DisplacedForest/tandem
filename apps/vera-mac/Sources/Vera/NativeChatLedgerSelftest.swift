@@ -540,7 +540,7 @@ extension SelfTest {
                 NativeChatEffects.idempotencyKey(turnID: turn.id.uuidString, attempt: turn.attempt?.uuidString ?? "", round: 1, call: call) }
         }
         let utc = TimeZone(identifier: "UTC") ?? .current
-        let schedule = ruled(NativeScheduleTools.definition(searchAvailable: { true }, now: { clock.now }, timeZone: { utc }, save: { draft in
+        let schedule = ruled(NativeScheduleTools.definition(now: { clock.now }, timeZone: { utc }, save: { draft in
             log.add("saved")
             return try NativeSchedule(owner: draft.owner, workerType: draft.workerType, title: draft.title, instruction: draft.instruction,
                                       cadence: draft.cadence, timeZone: utc)
@@ -550,14 +550,14 @@ extension SelfTest {
             return NativeCardAnswer(kind: .allowOnce, byPerson: true)
         }
         let late = try await chatLedgerLoop([schedule], calls: [[NativeChatToolCall(id: "tb-once", name: NativeScheduleTools.toolName,
-            arguments: "{\"title\":\"Garden brief\",\"worker_type\":\"document\",\"instruction\":\"Write the garden brief\",\"repeat\":\"once\",\"at\":\"2027-02-22T09:00\"}")]],
+            arguments: "{\"title\":\"Garden brief\",\"instruction\":\"Write the garden brief\",\"repeat\":\"once\",\"at\":\"2027-02-22T09:00\"}")]],
             hook: lateCard)
         try require(late?.activities.first?.state == .failed && log.count("saved") == 0 && (try row("tb-once"))?.state == .uncertain
                     && (try row("tb-once"))?.receipt == absent,
                     "A one-time schedule approved after its time passed is recorded as not having happened and nothing is saved")
         let approving = chatLedgerHook(ledger, turn: turn, rules: rules, grants: grants, log: log) { _ in NativeCardAnswer(kind: .allowOnce, byPerson: true) }
         let daily = try await chatLedgerLoop([schedule], calls: [[NativeChatToolCall(id: "tb-daily", name: NativeScheduleTools.toolName,
-            arguments: "{\"title\":\"Garden brief\",\"worker_type\":\"document\",\"instruction\":\"Write the garden brief\",\"repeat\":\"daily\",\"time\":\"09:00\"}")]],
+            arguments: "{\"title\":\"Garden brief\",\"instruction\":\"Write the garden brief\",\"repeat\":\"daily\",\"time\":\"09:00\"}")]],
             hook: approving)
         try require(daily?.activities.first?.state == .succeeded && log.count("saved") == 1 && (try row("tb-daily"))?.state == .completed,
                     "A schedule that saves is completed")

@@ -403,7 +403,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
                 """, arguments: [conversationID])
-            return Self.decodeMessages(rows)
+            return Self.markingScheduledResults(Self.decodeMessages(rows), db)
         }
     }
 
@@ -425,7 +425,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 )
                 ORDER BY ordinal ASC
                 """, arguments: [conversationID, limit])
-            return Self.decodeMessages(rows)
+            return Self.markingScheduledResults(Self.decodeMessages(rows), db)
         }
     }
 
@@ -1004,6 +1004,21 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     private static func encode<T: Encodable>(_ value: T) throws -> String {
         String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
+    }
+
+    static func markingScheduledResults(_ messages: [Message], _ db: Database) -> [Message] {
+        messages.map { message in
+            guard message.displayBlocks.contains(where: { if case .artifact(let artifact) = $0 { artifact.scheduled == nil } else { false } }),
+                  let referenceID = message.delivery?.referenceID, let id = UUID(uuidString: referenceID),
+                  let reference = try? readTaskReference(db, id: id), reference.request.scheduleID != nil else { return message }
+            var marked = message
+            marked.displayBlocks = message.displayBlocks.map { block in
+                guard case .artifact(var artifact) = block, artifact.scheduled == nil else { return block }
+                artifact.scheduled = true
+                return .artifact(artifact)
+            }
+            return marked
+        }
     }
 
     static func decodeMessages(_ rows: [Row]) -> [Message] {

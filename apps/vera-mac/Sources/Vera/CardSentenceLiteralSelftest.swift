@@ -379,18 +379,18 @@ extension SelfTest {
         for name in names {
             let label = name ?? "no name"
             let research = try checkIn(name: name, workerType: "research")
-            try require(research == "The scheduled research \"Hostile check\" stopped to ask: " + hostileQuestion,
+            try require(research == "The scheduled \"Hostile check\" stopped to ask: " + hostileQuestion,
                         "A research check-in quotes the whole question unchanged for \(label): \(research ?? "")")
             let document = try checkIn(name: name, workerType: "document")
-            try require(document == "The scheduled document \"Hostile check\" stopped to ask: " + hostileQuestion,
+            try require(document == "The scheduled \"Hostile check\" stopped to ask: " + hostileQuestion,
                         "A document check-in quotes the whole question unchanged for \(label): \(document ?? "")")
             let companion = try checkIn(name: name, workerType: "companion")
-            try require(companion == "The scheduled research \"Hostile check\" stopped to ask: " + subject(name) + hostileTail,
+            try require(companion == "The scheduled \"Hostile check\" stopped to ask: " + subject(name) + hostileTail,
                         "A companion check-in fills the name and keeps the hostile tail for \(label): \(companion ?? "")")
         }
 
         func scheduleRequest(_ resultsTo: String) throws -> NativeToolConfirmationRequest {
-            let arguments: [String: Any] = ["title": "Daily check", "worker_type": "document", "instruction": "Write a short note about \(joined)",
+            let arguments: [String: Any] = ["title": "Daily check", "instruction": "Write a short note about \(joined)",
                                             "results_to": resultsTo, "repeat": "every_hours", "hours": 6]
             let data = try JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
             var built = NativeToolConfirmationRequest(activity: NativeToolActivity(
@@ -406,13 +406,13 @@ extension SelfTest {
               let ordinaryClosing = NativeToolConfirmationBar.closingLine(for: toCompanion, actor: "Tandem") else {
             throw NativeTaskFixture.Failure.assertion("A schedule card has a closing line")
         }
-        try require(nameParts(companionClosing) == 1 && companionClosing.plain(name: "Ada") == "Results go to Ada's thread."
-                    && companionClosing.plain(name: nil) == "Results go to your companion's thread.",
+        try require(nameParts(companionClosing) == 1 && companionClosing.plain(name: "Ada") == "Results go to Ada."
+                    && companionClosing.plain(name: nil) == "Results go to your companion.",
                     "The companion conversation's schedule card names where results go")
-        try require(nameParts(ordinaryClosing) == 0 && ordinaryClosing == .literal("Results go to your companion's thread."),
+        try require(nameParts(ordinaryClosing) == 0 && ordinaryClosing == .literal("Results go to your companion."),
                     "An ordinary chat's schedule closing line is literal")
         for name in names {
-            try require(ordinaryClosing.plain(name: name) == "Results go to your companion's thread." && !ordinaryClosing.plain(name: name).contains("Ada"),
+            try require(ordinaryClosing.plain(name: name) == "Results go to your companion." && !ordinaryClosing.plain(name: name).contains("Ada"),
                         "An ordinary chat's schedule closing line never names the companion for \(name ?? "no name")")
         }
         let ownChat = try scheduleRequest("own_chat")

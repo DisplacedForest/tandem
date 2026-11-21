@@ -1815,7 +1815,11 @@ final class ChatStore: ObservableObject {
     func purgeConversation(_ id: String) throws {
         discardedConversationIDs.insert(id)
         let stored = (try? repository?.messages(conversationID: id)) ?? []
+        let mirrored = (try? (repository as? LocalChatRepository)?.mirroredCardMessageIDs(originConversationID: id)) ?? []
         try repository?.deleteConversation(id)
+        if !mirrored.isEmpty {
+            for index in conversations.indices { conversations[index].messages.removeAll { mirrored.contains($0.id) } }
+        }
         removeRules(for: .conversation(id))
         for message in stored {
             for attachment in message.attachments { attachmentStore.remove(attachment) }
@@ -2421,7 +2425,7 @@ final class ChatStore: ObservableObject {
         }
         definitions.append(contentsOf: folderToolDefinitions(for: turn.conversationID, ledger: NativeFileChangeLedger(), alwaysAvailable: true))
         definitions.append(contentsOf: commandToolDefinitions(for: turn, decision: .ask, record: { _ in }, alwaysAvailable: true))
-        if let scheduleTool = scheduleToolDefinition() { definitions.append(scheduleTool) }
+        if let scheduleTool = scheduleToolDefinition(companionThread: isVeraThread(turn.conversationID)) { definitions.append(scheduleTool) }
         if let profileTool { definitions.append(profileTool) }
         let registry = NativeToolRegistry(definitions: definitions)
         return registry.active(enabledIDs: allowed).contains { $0.id == activity.toolID && $0.name == activity.name }
@@ -2480,7 +2484,7 @@ final class ChatStore: ObservableObject {
                 ])
             }
         }
-        if let scheduleTool = scheduleToolDefinition() {
+        if let scheduleTool = scheduleToolDefinition(companionThread: isVeraThread(id)) {
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + [scheduleTool])
         }
         let turnGrants = grants(for: id)

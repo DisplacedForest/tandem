@@ -76,7 +76,7 @@
 6 apps/vera-mac/Sources/Vera/NativeRuntimeMemoryRetryContract.swift
 9 apps/vera-mac/Sources/Vera/NativeRuntimeMemorySelftest.swift
 1 apps/vera-mac/Sources/Vera/NativeScheduleShotFixture.swift
-3 apps/vera-mac/Sources/Vera/NativeScheduleToolsSelftest.swift
+1 apps/vera-mac/Sources/Vera/NativeScheduleToolsSelftest.swift
 11 apps/vera-mac/Sources/Vera/NativeSchedulerCatchUpSelftest.swift
 14 apps/vera-mac/Sources/Vera/NativeSchedulerSelftest.swift
 3 apps/vera-mac/Sources/Vera/NativeSessionSafetyFixture.swift

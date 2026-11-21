@@ -29,7 +29,7 @@ enum CardShot {
         var size = CGSize(width: 1180, height: 760)
         let content: AnyView
         switch variant {
-        case "card-command", "card-folder-edit", "card-once-only", "card-send", "card-reminder", "card-schedule", "card-schedule-companion", "card-send-companion",
+        case "card-command", "card-folder-edit", "card-once-only", "card-send", "card-reminder", "card-schedule", "card-schedule-companion", "card-schedule-anything", "card-schedule-anything-own", "card-send-companion",
              "card-send-recipient", "card-send-unknown", "card-send-fixed":
             let chat = self.chat(variant, store: store)
             content = AnyView(ShotView(store: store, section: .chat, cardChat: chat, width: size.width))
@@ -175,7 +175,7 @@ enum CardShot {
     static func chat(_ variant: String, store: ChatStore) -> CardShotChat {
         let conversation = Conversation(id: "card-chat", title: "Greenhouse notes", messages: [], updatedAt: Date())
         let conversationID: String
-        if variant == "card-send-companion" {
+        if variant == "card-send-companion" || variant.hasPrefix("card-schedule-anything") {
             store.dotProfile = NativeDotProfile(state: .active, setupCompleted: true)
             store.openVeraThread()
             conversationID = store.veraThreadID ?? conversation.id
@@ -206,7 +206,14 @@ enum CardShot {
             ask = "Every weekday at 7, check the frost forecast for the greenhouse."
             let schedule = NativeScheduleTools.definition(save: { _ in throw NativeToolError.unavailable })
             (activity, subject) = ruledActivity(schedule, rules: .defaults, id: "card-schedule",
-                                                request: "{\"title\":\"Frost check\",\"worker_type\":\"research\",\"instruction\":\"Check the overnight frost forecast for the greenhouse.\",\"results_to\":\"\(variant == "card-schedule" ? "own_chat" : "assistant")\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
+                                                request: "{\"title\":\"Frost check\",\"instruction\":\"Check the overnight frost forecast for the greenhouse.\",\"results_to\":\"\(variant == "card-schedule" ? "own_chat" : "assistant")\",\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
+                                                ask: ask, conversationID: conversationID)
+        case "card-schedule-anything", "card-schedule-anything-own":
+            ask = "Every weekday at 7, check my calendar and the weather and tell me what's on today."
+            let schedule = NativeScheduleTools.definition(companionThread: true, save: { _ in throw NativeToolError.unavailable })
+            let resultsTo = variant == "card-schedule-anything-own" ? ",\"results_to\":\"own_chat\"" : ""
+            (activity, subject) = ruledActivity(schedule, rules: .defaults, id: "card-schedule",
+                                                request: "{\"title\":\"Morning summary\",\"instruction\":\"Check my calendar and the weather and tell me what's on today.\"\(resultsTo),\"repeat\":\"weekdays\",\"time\":\"07:00\"}",
                                                 ask: ask, conversationID: conversationID)
         case "card-folder-edit":
             ask = "Add the afternoon vent check to the plan."
