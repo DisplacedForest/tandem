@@ -328,7 +328,7 @@ extension SelfTest {
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MemoryEndpointWire.self]
-        let session = URLSession(configuration: configuration)
+        let session = OutboundGuard.session(configuration: configuration)
         let wired = NativeMemoryService(configuration: NativeMemoryServiceConfiguration(
             baseURL: URL(string: "https://memory.example/v1")!, apiKey: "memory-key",
             embeddingsModel: "qwen3-embedding", extractionModel: "", rerankModel: "qwen3-reranker"), session: session)

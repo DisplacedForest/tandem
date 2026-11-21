@@ -128,8 +128,7 @@ enum MessageReactionsSelftest {
 
     static func copySweep() throws {
         let banned = ["vera", "background", "worker", "agent", "task", "he", "she", "him", "her", "his", "hers", "himself", "herself"]
-        let strings = MessageReplyCopy.added + MessageActions.addedStrings + [MessageReaction.addLabel, MessageReaction.addSymbol]
-            + MessageMenuAction.offered.map(\.symbol)
+        let strings = MessageReplyCopy.added + MessageActions.addedStrings + [MessageReaction.addLabel]
         for text in strings {
             let words = text.lowercased().split { !$0.isLetter }.map(String.init)
             let hit = banned.first { words.contains($0) }

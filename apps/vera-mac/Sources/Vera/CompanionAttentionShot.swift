@@ -27,7 +27,7 @@ enum CompanionAttentionShot {
         guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
         host.cacheDisplay(in: host.bounds, to: bitmap)
         guard let data = bitmap.representation(using: .png, properties: [:]) else { exit(1) }
-        do { try data.write(to: URL(fileURLWithPath: path)); print("Rendered companion attention") }
+        do { try data.write(to: AppLocations.checkedOutput(path)); print("Rendered companion attention") }
         catch { exit(1) }
     }
 }

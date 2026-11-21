@@ -87,8 +87,12 @@ extension LocalChatRepository: NativeTaskRepository {
         let id = UUID()
         let binding: NativeTaskAdmissionBinding?
         if let profile {
+            let sized = engine == NativeTaskLocalEngine.identity && NativeResearchTaskRequest.chatWorkerTypes.contains(request.workerType)
             binding = NativeTaskAdmissionBinding(id: profile.id, admissionBase: profile.provider.base,
-                enrollmentDigest: nativeTaskDigest(try nativeTaskEncoded(profile) + nativeTaskEncoded(request)))
+                enrollmentDigest: nativeTaskDigest(try nativeTaskEncoded(profile) + nativeTaskEncoded(request)),
+                outputTokens: sized ? profile.outputLimit : nil,
+                reasoning: sized ? profile.reasoning ?? false : nil,
+                contextTokens: sized ? profile.contextTokens ?? NativeResourcePolicy.defaultContextTokens : nil)
         } else {
             binding = nil
         }

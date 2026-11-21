@@ -2,6 +2,7 @@ import Foundation
 
 enum NativeTaskProjection {
     static let carryOnChoices: Set<String> = ["continue", "finish"]
+    static let workingLine = "Working on it."
 
     static func carriesOn(_ snapshot: NativeTaskSnapshot) -> Bool {
         guard snapshot.state == .needsDecision, let choices = snapshot.decision?.choices else { return false }
@@ -10,6 +11,16 @@ enum NativeTaskProjection {
 
     static func display(reference: NativeTaskReference, snapshot: NativeTaskSnapshot?,
                         connectionNote: String? = nil, retryPending: Bool = false)
+        throws -> (card: NativeTaskCardPresentation, artifact: NativeResearchArtifact?) {
+        var shown = try projected(reference: reference, snapshot: snapshot, connectionNote: connectionNote, retryPending: retryPending)
+        guard reference.request.scheduleID != nil else { return shown }
+        shown.card.milestone = SavedWording.scheduled(shown.card.milestone)
+        shown.card.connectionNote = shown.card.connectionNote.map(SavedWording.scheduled)
+        return shown
+    }
+
+    private static func projected(reference: NativeTaskReference, snapshot: NativeTaskSnapshot?,
+                                  connectionNote: String?, retryPending: Bool)
         throws -> (card: NativeTaskCardPresentation, artifact: NativeResearchArtifact?) {
         let id = reference.id.uuidString
         let dot = reference.createRequest.workerType == "companion"
@@ -72,7 +83,7 @@ enum NativeTaskProjection {
         case .queued, .running:
             card.status = snapshot.state == .running ? .working : .queued
             if dot {
-                card.milestone = "Working on it."
+                card.milestone = workingLine
             } else if document {
                 card.milestone = documentMilestone(snapshot.checkpoint, scheduled: scheduled)
             } else {
@@ -101,12 +112,12 @@ enum NativeTaskProjection {
             }
             if dot, carriesOn(snapshot) {
                 card.status = .working
-                card.milestone = "Working on it."
+                card.milestone = workingLine
                 break
             }
             card.status = .needsInput
             card.milestone = retryPending ? "Your retry is saved. Waiting to continue."
-                : decision.prompt
+                : SavedWording.question(decision.prompt)
             card.canRetry = decision.choices.contains("retry") && !retryPending
             if dot, !retryPending, let details = decision.details, details.unicodeScalars.count <= 20000 { card.details = details }
             if dot, !retryPending { card.covers = CardAnswers.shown(decision.covers) }
@@ -119,6 +130,18 @@ enum NativeTaskProjection {
             case "input_limit" where scheduled: card.milestone = "What the schedule asks for is too large. Edit the schedule to ask for less."
             case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large. Start a new document with a shorter brief." : "The research input is too large. Start a smaller research request."
             case "request_conflict": card.milestone = "The saved request could not be resumed safely. \(again)."
+            case "profile_changed" where document: card.milestone = NativeTaskWorkerFailures.modelChangedMessage
+            case "progress_too_large": card.milestone = NativeDocumentWorker.progressTooLargeMessage
+            case "plan_too_large":
+                let sizes = snapshot.checkpoint.oversize ?? []
+                card.milestone = sizes.count == 2
+                    ? NativeResourcePolicy.planTooLarge(needed: sizes[0], room: sizes[1])
+                    : "This document would need more than Tandem can save in one document. Ask for it as two documents."
+            case "result_too_large":
+                let sizes = snapshot.checkpoint.oversize ?? []
+                card.milestone = sizes.count == 2
+                    ? NativeResourcePolicy.tooLarge(sizes[0], limit: sizes[1], document: document)
+                    : "The finished result is larger than Tandem can save. The finished parts are kept."
             default:
                 if dot {
                     card.milestone = "I couldn't finish this."
@@ -149,7 +172,7 @@ enum NativeTaskProjection {
                   [nil, NativeCompanionShape.answer, NativeCompanionShape.document].contains(result.shape) else {
                 throw NativeTaskHTTPError.invalidResponse
             }
-            let companionSources = try displaySources(result.sources)
+            let companionSources = try displaySources(result.sources, numbered: NativeWebTools.maximumSources)
             card.status = .completed
             card.sources = companionSources
             card.why = result.why
@@ -178,16 +201,17 @@ enum NativeTaskProjection {
             }
             if document {
                 guard result.kind == "document_report", result.sources.isEmpty,
-                      result.report.unicodeScalars.count <= NativeDocumentWorker.reportCharacters else {
+                      result.report.unicodeScalars.count <= NativeResourcePolicy.savedResultBytes else {
                     throw NativeTaskHTTPError.invalidResponse
                 }
                 card.status = .completed
-                card.milestone = scheduled ? "It's ready to open." : "The document is ready."
+                card.milestone = !snapshot.checkpoint.unrevised.isEmpty ? NativeTaskProjection.unrevisedLine(snapshot.checkpoint.unrevised.count)
+                    : scheduled ? "It's ready to open." : "The document is ready."
                 return (card, NativeResearchArtifact(
                     id: snapshot.id, title: reference.request.displayTitle,
                     report: result.report, sources: [], kind: "document", scheduled: scheduled ? true : nil))
             }
-            guard result.kind == "research_report", result.report.unicodeScalars.count <= 16000 else {
+            guard result.kind == "research_report", result.report.unicodeScalars.count <= NativeResourcePolicy.savedResultBytes else {
                 throw NativeTaskHTTPError.invalidResponse
             }
             let resultSources = try displaySources(result.sources)
@@ -216,9 +240,20 @@ enum NativeTaskProjection {
         return written > 0 ? "Saved \(written) \(sectionWord) of \(planned)." : "The outline is saved."
     }
 
+    static let condensingLine = "Condensing the material so it fits."
+
+    static func unrevisedLine(_ count: Int) -> String {
+        count == 1 ? "One section wasn't revised." : "\(count) sections weren't revised."
+    }
+
     static func documentMilestone(_ checkpoint: NativeTaskCheckpoint, scheduled: Bool = false) -> String {
         let planned = checkpoint.outline.count
+        if let phase = checkpoint.phase, ["draft", "revise"].contains(phase),
+           checkpoint.shrinkStep == "\(phase):\(checkpoint.drafts.count):\(checkpoint.revisions.count)" {
+            return NativeTaskWorkerFailures.shorterSectionNote
+        }
         switch checkpoint.phase {
+        case "condense": return condensingLine
         case "draft":
             guard planned > 0 else { return "Planning the outline." }
             return "Drafting section \(min(checkpoint.drafts.count + 1, planned)) of \(planned)."
@@ -230,12 +265,13 @@ enum NativeTaskProjection {
         }
     }
 
-    static func displaySources(_ sources: [NativeTaskSource]) throws -> [PulseSource] {
-        guard sources.count <= 14, Set(sources.map(\.n)).count == sources.count else {
+    static func displaySources(_ sources: [NativeTaskSource], numbered cap: Int? = nil) throws -> [PulseSource] {
+        let highest = cap ?? max(1, sources.count)
+        guard sources.count <= highest, Set(sources.map(\.n)).count == sources.count else {
             throw NativeTaskHTTPError.invalidResponse
         }
         return try sources.map { source in
-            guard (1...14).contains(source.n), source.title.unicodeScalars.count <= NativeTaskSource.labelScalars,
+            guard (1...highest).contains(source.n), source.title.unicodeScalars.count <= NativeTaskSource.labelScalars,
                   source.url.unicodeScalars.count <= 1024 else {
                 throw NativeTaskHTTPError.invalidResponse
             }

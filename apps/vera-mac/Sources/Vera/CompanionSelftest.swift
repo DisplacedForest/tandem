@@ -8,11 +8,7 @@ extension SelfTest {
         let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
         try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let suiteName = "tandem-companion-selftest-\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else {
-            throw NativeTaskFixture.Failure.assertion("companion defaults suite")
-        }
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let defaults = AppLocations.scratchPreferences()
         let repository = try LocalChatRepository(inMemory: true, artifactDirectory: artifacts)
         let config = NativeChatConfig(
             baseURL: URL(string: "https://model.example/v1")!, apiKey: nil,
@@ -68,7 +64,8 @@ extension SelfTest {
         }
         func settle() async throws {
             for _ in 0..<500 {
-                if thread()?.messages.contains(where: { $0.role == .assistant && $0.state == .streaming }) == false { return }
+                if thread()?.messages.contains(where: { $0.role == .assistant && $0.state == .streaming }) == false,
+                   !store.turnExecutions.values.contains(where: { $0.record.conversationID == threadID }) { return }
                 try await Task.sleep(nanoseconds: 10_000_000)
             }
             throw NativeTaskFixture.Failure.assertion("the assistant reply settles")

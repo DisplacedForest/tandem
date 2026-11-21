@@ -72,10 +72,10 @@ struct NativeTypedWords: Hashable, Sendable {
         joins(character) || "!#$%&'*/=?^`{|}~".contains(character)
     }
 
-    static func spans(_ text: String, _ value: String, strict: Bool = false, exact: Bool = false) -> [Range<String.Index>] {
-        let needle = exact ? value : value.lowercased()
+    static func spans(_ text: String, _ value: String, strict: Bool = false, exact: Bool = false, cased: Bool = false) -> [Range<String.Index>] {
+        let needle = exact || cased ? value : value.lowercased()
         guard !needle.isEmpty else { return [] }
-        let haystack = exact ? text : text.lowercased()
+        let haystack = exact || cased ? text : text.lowercased()
         guard haystack.count == text.count else { return [] }
         var found: [Range<String.Index>] = []
         var start = haystack.startIndex
@@ -98,8 +98,8 @@ struct NativeTypedWords: Hashable, Sendable {
         }
     }
 
-    static func holds(_ text: String, _ value: String, strict: Bool = false) -> Bool {
-        !spans(text, value, strict: strict).isEmpty
+    static func holds(_ text: String, _ value: String, strict: Bool = false, cased: Bool = false) -> Bool {
+        !spans(text, value, strict: strict, cased: cased).isEmpty
     }
 
     static func finishes(_ text: String, at index: String.Index) -> Bool {
@@ -133,7 +133,7 @@ struct NativeTypedWords: Hashable, Sendable {
         return next == text.endIndex || !(text[next].isLetter || text[next].isNumber)
     }
 
-    func names(_ target: NativeRuleTarget, inCurrentOnly: Bool = false) -> Bool {
+    func names(_ target: NativeRuleTarget, inCurrentOnly: Bool = false, keepingCase: Bool = false) -> Bool {
         let texts = inCurrentOnly ? [current] : self.texts
         switch target.kind {
         case .recipient, .service:
@@ -146,7 +146,7 @@ struct NativeTypedWords: Hashable, Sendable {
             guard !command.isEmpty else { return false }
             return texts.contains { text in
                 let spaced = text.replacingOccurrences(of: "`", with: " ").split(whereSeparator: \.isWhitespace).joined(separator: " ")
-                return Self.holds(spaced, command)
+                return Self.holds(spaced, command, cased: keepingCase)
             }
         }
     }

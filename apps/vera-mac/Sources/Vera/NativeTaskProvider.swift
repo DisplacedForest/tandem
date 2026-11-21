@@ -13,6 +13,7 @@ struct NativeTaskProvider {
     static func completion(config: NativeChatConfig, binding: NativeTaskProfileBinding,
                            job: NativeTaskGenerationJob,
                            limits: NativeTaskTransportLimits = .init(),
+                           protocolClasses: [AnyClass] = [],
                            diagnostics: @escaping @Sendable (NativeTaskTransportTiming) -> Void = NativeTaskTransportTiming.log) async throws -> NativeTaskGenerationCompletion {
         let started = ContinuousClock.now
         guard try NativeTaskEngineIdentity(config.baseURL) == binding.provider,
@@ -33,7 +34,9 @@ struct NativeTaskProvider {
                ["none", "minimal", "low", "medium", "high"].contains(effort) { reasoning["effort"] = .string(effort) }
             if !reasoning.isEmpty { options.topLevel.append(.init(key: "reasoning", value: .object(reasoning), source: .saved)) }
         }
-        options.topLevel.append(.init(key: "max_tokens", value: .number(Double(binding.limits.maximumOutputTokens)), source: .override))
+        if let limit = NativeTaskConfiguration.outputLimit(config.options) {
+            options.topLevel.append(.init(key: "max_tokens", value: .number(Double(limit)), source: .saved))
+        }
         let bounded = NativeChatConfig(baseURL: binding.provider.base, apiKey: config.apiKey,
             model: binding.executionModel, chatTemplateKwargs: nil,
             streaming: false, options: options)
@@ -57,7 +60,8 @@ struct NativeTaskProvider {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = request.timeoutInterval
         configuration.timeoutIntervalForResource = remaining
-        let session = URLSession(configuration: configuration, delegate: observer, delegateQueue: nil)
+        if !protocolClasses.isEmpty { configuration.protocolClasses = protocolClasses + (configuration.protocolClasses ?? []) }
+        let session = OutboundGuard.session(configuration: configuration, delegate: observer, delegateQueue: nil)
         let setupTimer = Task {
             do { try await Task.sleep(for: .seconds(min(limits.connectAndSend, remaining))) } catch { return }
             if observer.finish(.connect_send_timeout, onlyBeforeSetup: true) { session.invalidateAndCancel() }
@@ -82,7 +86,7 @@ struct NativeTaskProvider {
             let result = try await withTaskCancellationHandler {
                 try Task.checkCancellation()
                 let (bytes, response) = try await session.bytes(for: request, delegate: observer)
-                guard let response = response as? HTTPURLResponse else { throw NativeTaskGenerationFailure(code: "provider_response") }
+                guard let response = response as? HTTPURLResponse else { throw NativeTaskGenerationFailure(code: "response_unreadable") }
                 observer.received(response)
                 guard (200..<300).contains(response.statusCode) else {
                     throw NativeTaskGenerationFailure(code: failureCode(status: response.statusCode))
@@ -90,11 +94,11 @@ struct NativeTaskProvider {
                 var data = Data()
                 for try await byte in bytes {
                     try Task.checkCancellation()
-                    guard data.count < 1048576 else { throw NativeTaskGenerationFailure(code: "provider_response") }
+                    guard data.count < 1048576 else { throw NativeTaskGenerationFailure(code: "response_too_large") }
                     observer.receivedByte()
                     data.append(byte)
                 }
-                return try completed(NativeChatClient.completeSnapshot(from: data), job: job)
+                return try completed(snapshot(from: data, text: job.tools == nil), job: job)
             } onCancel: {
                 observer.finish(.canceled)
                 session.invalidateAndCancel()
@@ -109,24 +113,43 @@ struct NativeTaskProvider {
             }
             return result
         } catch {
+            func failure(_ code: String, finishReason: String? = nil) -> NativeTaskGenerationFailure {
+                NativeTaskGenerationFailure(code: code, detail: NativeTaskGenerationFailureDetail(
+                    phase: job.phase, httpStatus: observer.httpStatus, finishReason: finishReason))
+            }
             if Task.isCancelled || error is CancellationError {
                 observer.finish(.canceled)
                 throw CancellationError()
             }
             if let outcome = observer.outcome,
                [.connect_send_timeout, .read_idle_timeout, .overall_timeout, .transport_timeout].contains(outcome) {
-                throw NativeTaskGenerationFailure(code: "request_timeout")
+                throw failure("request_timeout")
             }
             if let error = error as? NativeTaskGenerationFailure {
                 observer.finish(NativeTaskTransportTiming.Outcome(rawValue: error.code) ?? .provider_response)
-                throw error
+                throw failure(error.code, finishReason: error.detail?.finishReason)
             }
             if let error = error as? URLError, error.code == .timedOut {
                 observer.finish(.transport_timeout)
-                throw NativeTaskGenerationFailure(code: "request_timeout")
+                throw failure("request_timeout")
             }
             observer.finish(.provider_unavailable)
-            throw NativeTaskGenerationFailure(code: "provider_unavailable")
+            throw failure("provider_unavailable")
+        }
+    }
+
+    static func snapshot(from data: Data, text: Bool) throws -> NativeChatStreamSnapshot {
+        do {
+            return try NativeChatClient.completeSnapshot(from: data)
+        } catch let error as NativeChatClient.ClientError {
+            if case .provider = error { throw NativeTaskGenerationFailure(code: "provider_error") }
+            if text, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let choice = (object["choices"] as? [[String: Any]])?.first,
+               choice["finish_reason"] as? String == "length" {
+                throw NativeTaskGenerationFailure(code: "response_cut_short",
+                                                  detail: NativeTaskGenerationFailureDetail(phase: nil, finishReason: "length"))
+            }
+            throw NativeTaskGenerationFailure(code: "response_unreadable")
         }
     }
 
@@ -144,11 +167,14 @@ struct NativeTaskProvider {
     }
 
     static func completedText(_ snapshot: NativeChatStreamSnapshot) throws -> String {
-        guard snapshot.finishReason == "stop", snapshot.toolCalls.isEmpty,
-              !snapshot.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              snapshot.content.utf8.count <= 262144 else {
-            throw NativeTaskGenerationFailure(code: "provider_response")
+        func failure(_ code: String) -> NativeTaskGenerationFailure {
+            NativeTaskGenerationFailure(code: code, detail: NativeTaskGenerationFailureDetail(phase: nil, finishReason: snapshot.finishReason))
         }
+        if snapshot.finishReason == "length" { throw failure("response_cut_short") }
+        guard snapshot.toolCalls.isEmpty else { throw failure("response_tool_calls") }
+        guard snapshot.finishReason == "stop" else { throw failure("response_finish") }
+        guard !snapshot.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw failure("response_empty") }
+        guard snapshot.content.utf8.count <= 262144 else { throw failure("response_too_large") }
         return snapshot.content
     }
 }

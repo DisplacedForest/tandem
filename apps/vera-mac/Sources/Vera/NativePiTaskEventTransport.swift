@@ -57,7 +57,7 @@ struct PiOwnedTaskEventTransport: Sendable {
     }
 
     static func open(_ request: URLRequest, protocolClasses: [AnyClass]? = nil) -> PiOwnedTaskEventConnection {
-        let session = URLSession(configuration: configuration(protocolClasses: protocolClasses), delegate: PiOwnedEventRedirectGuard(), delegateQueue: nil)
+        let session = OutboundGuard.session(configuration: configuration(protocolClasses: protocolClasses), delegate: PiOwnedEventRedirectGuard(), delegateQueue: nil)
         let (events, continuation) = AsyncThrowingStream<AssistantTaskEvent, Error>.makeStream(bufferingPolicy: .bufferingOldest(maximumBufferedEvents))
         let operation = Task {
             defer { session.invalidateAndCancel() }

@@ -193,12 +193,12 @@ extension SelfTest {
         let summary = store.dotRemovalSummary()
         try require(summary.messages == 3 && summary.memories == 1 && summary.proposals == 1 && summary.schedules == 1
                     && summary.artifacts == 1 && !summary.services, "The removal summary counts what start over removes: \(summary)")
-        try require(summary.sentence == "This removes 3 messages, 1 memory, 1 suggested memory and 1 schedule. Your 1 artifact stays in Artifacts.",
+        try require(summary.sentence == "This removes 3 messages, 1 memory, 1 suggested memory and 1 schedule. Your Library is kept.",
                     "The removal summary reads plainly: \(summary.sentence)")
         store.saveDotProfile { $0.connectedToolIDs = ["a"] }
         let withServices = store.dotRemovalSummary()
         try require(withServices.services && withServices.sentence
-                    == "This removes 3 messages, 1 memory, 1 suggested memory, 1 schedule and the service choices. Your 1 artifact stays in Artifacts.",
+                    == "This removes 3 messages, 1 memory, 1 suggested memory, 1 schedule and the service choices. Your Library is kept.",
                     "The removal summary lists the service choices when some were made: \(withServices.sentence)")
         let servicesOnly = NativeDotRemovalSummary(services: true)
         try require(servicesOnly.sentence == "This removes the service choices.", "Service choices alone read plainly: \(servicesOnly.sentence)")

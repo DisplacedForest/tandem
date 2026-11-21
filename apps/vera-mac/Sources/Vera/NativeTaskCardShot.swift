@@ -84,7 +84,7 @@ enum NativeTaskCardShot {
             exit(1)
         }
         do {
-            try png.write(to: URL(fileURLWithPath: path))
+            try png.write(to: AppLocations.checkedOutput(path))
             print("Rendered task card")
         } catch {
             FileHandle.standardError.write(Data("Task card image couldn't be saved\n".utf8))
@@ -121,7 +121,7 @@ struct NativeTaskCardShotSurface: View {
             result.status = .needsInput
             result.milestone = "Waiting for your decision. Send the booking request to the inspector?"
             result.choices = ["decline", "never", "allow_always", "allow_here", "approve"]
-            result.details = "Send a booking request\nmessage: Please book the workshop inspection for Tuesday morning and confirm by email.\nto: inspections@example.com"
+            result.details = "To: inspections@example.com\nMessage: Please book the workshop inspection for Tuesday morning and confirm by email."
         case "task-card-answer":
             result.title = "What's the weather in Chicago tomorrow?"
             result.workerType = "companion"
@@ -161,7 +161,50 @@ struct NativeTaskCardShotSurface: View {
             result.canCancel = false
         default: break
         }
-        if [.stopped, .needsInput].contains(result.status) && !result.isCompanion {
+        let documentState = variant.components(separatedBy: "-card-document-")
+        if documentState.count == 2, ["cut-short", "empty", "unusable", "model-changed", "shorter", "credential", "outline-cut-short", "condensing", "unrevised", "too-large", "plan-too-large"].contains(documentState[1]) {
+            result.title = "Workshop plan"
+            result.workerType = "document"
+            switch documentState[1] {
+            case "model-changed":
+                result.status = .failed
+                result.milestone = NativeTaskWorkerFailures.modelChangedMessage
+                result.canCancel = false
+            case "shorter":
+                let saved = "{\"phase\":\"draft\",\"outline\":[{\"heading\":\"Layout\",\"instructions\":\"Bench\"},{\"heading\":\"Tools\",\"instructions\":\"Saws\"}],\"drafts\":[\"Bench along the wall.\"],\"revisions\":[],\"shrink_step\":\"draft:1:0\"}"
+                if let checkpoint = try? JSONDecoder().decode(NativeTaskCheckpoint.self, from: Data(saved.utf8)) {
+                    result.milestone = NativeTaskProjection.documentMilestone(checkpoint)
+                }
+            case "condensing":
+                result.milestone = NativeTaskProjection.condensingLine
+            case "unrevised":
+                result.status = .completed
+                result.milestone = NativeTaskProjection.unrevisedLine(1)
+                result.canCancel = false
+            case "too-large":
+                result.status = .failed
+                result.milestone = NativeResourcePolicy.tooLarge(301_250, limit: NativeResourcePolicy.documentCharacters, document: true)
+                result.canCancel = false
+            case "plan-too-large":
+                result.status = .failed
+                result.milestone = NativeResourcePolicy.planTooLarge(needed: 288_720, room: NativeResourcePolicy.documentCharacters)
+                result.canCancel = false
+            case "outline-cut-short":
+                result.status = .needsInput
+                result.milestone = NativeTaskWorkerFailures.outlineCutShortMessage
+                result.canRetry = true
+            case "credential":
+                result.status = .needsInput
+                result.milestone = NativeTaskWorkerFailures.retryPrompt(NativeTaskWorkerFailures.pauseMessage("credential_unavailable", sections: true))
+                result.canRetry = true
+            default:
+                result.status = .needsInput
+                result.milestone = documentState[1] == "cut-short" ? NativeTaskWorkerFailures.sectionCutShortMessage
+                    : documentState[1] == "empty" ? NativeTaskWorkerFailures.sectionEmptyMessage : NativeTaskWorkerFailures.sectionUnusableMessage
+                result.canRetry = true
+            }
+        }
+        if [.stopped, .needsInput].contains(result.status) && !result.isCompanion && !result.isDocument {
             result.sources = [
                 PulseSource(n: 1, title: "Installation reference", url: "local"),
                 PulseSource(n: 2, title: "Material comparison", url: "local"),
@@ -196,11 +239,11 @@ struct NativeTaskCardShotSurface: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             VStack(alignment: .leading, spacing: 12) {
-                Text(card.isDocument ? "I'll write that in the background. We can keep talking here." : "I'll research that in the background. We can keep talking here.")
+                Text(card.isDocument ? "I'll write that up. We can keep talking here." : "I'll look into that. We can keep talking here.")
                     .font(.system(size: 14))
                 NativeDisplayBlocksView(
                     blocks: blocks, engineConfigured: variant != "task-card-offline",
-                    onCancel: { _ in }, onRetry: { _ in }, onDecide: { _, _ in }, onSaveAnswer: { _ in })
+                    onCancel: { _ in }, onRetry: { _ in }, onDecide: { _, _ in })
             }
             HStack {
                 Spacer()

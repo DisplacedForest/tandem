@@ -81,6 +81,7 @@ final class NativeAttachmentStore: Sendable {
     }
 
     func save(url: URL) throws -> MessageAttachment {
+        AppLocations.refuseRealFile(url)
         guard let data = try? Data(contentsOf: url) else {
             throw NativeAttachmentError.unreadable(url.lastPathComponent)
         }
@@ -94,6 +95,7 @@ final class NativeAttachmentStore: Sendable {
 
     func data(for fileName: String) -> Data? {
         guard let url = url(for: fileName) else { return nil }
+        AppLocations.refuseRealFile(url)
         return try? Data(contentsOf: url)
     }
 

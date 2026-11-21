@@ -34,8 +34,8 @@ enum MessageReplyCopy {
     static let chipLead = "In reply to: "
     static let barLead = "Replying to: "
     static let cancel = "Cancel reply"
-    static let symbol = "arrowshape.turn.up.left"
-    static let cancelSymbol = "xmark"
+    static let icon: InterfaceIcon = .reply
+    static let cancelIcon: InterfaceIcon = .close
     static let reactionFailed = "The reaction couldn't save."
     static let instruction = "A line in parentheses after a message naming reactions shows how the person you are talking with reacted to it, and a lead in that starts with \"In reply to the earlier message\" quotes the start of the message they are answering. A reaction alone needs no answer."
 
@@ -48,7 +48,7 @@ enum MessageReplyCopy {
     }
 
     static var added: [String] {
-        [chipLead, barLead, cancel, symbol, cancelSymbol, reactionFailed, instruction,
+        [chipLead, barLead, cancel, reactionFailed, instruction,
          reactionLine(["x"]), replyLead("x")]
     }
 }

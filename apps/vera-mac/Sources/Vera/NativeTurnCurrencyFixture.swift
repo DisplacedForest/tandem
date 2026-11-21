@@ -8,6 +8,54 @@ final class NativeTurnCurrencyFlag: @unchecked Sendable {
     func raise() { lock.withLock { raised = true } }
 }
 
+struct NativeTurnCurrencyHold: Sendable {
+    static let ceilingSeconds = 120
+    let gate: DispatchSemaphore
+    let task: Task<Void, Error>
+
+    func release() async throws {
+        gate.signal()
+        try await task.value
+    }
+}
+
+@MainActor
+final class NativeTurnCurrencyProbe {
+    static let stallLimit: Duration = .milliseconds(200)
+    static let waitFloor: Duration = .milliseconds(200)
+    static let retryLimit: Duration = .seconds(1)
+    static let tickLimit: Duration = .milliseconds(1_500)
+    private(set) var started = false
+    private(set) var finished = false
+    private var startedAt: ContinuousClock.Instant?
+
+    var responsive: Bool {
+        guard let startedAt else { return false }
+        return !finished && startedAt.duration(to: .now) < Self.stallLimit
+    }
+
+    static func prompt(_ body: () -> Void) -> Bool {
+        let start = ContinuousClock.now
+        body()
+        return start.duration(to: .now) < stallLimit
+    }
+
+    func run<Value: Sendable>(_ work: @escaping @MainActor () async -> Value) -> Task<Value, Never> {
+        Task { @MainActor in
+            self.startedAt = .now
+            self.started = true
+            let value = await work()
+            self.finished = true
+            return value
+        }
+    }
+
+    func untilStarted() async throws {
+        for _ in 0..<100_000 where !started { await Task.yield() }
+        guard started else { throw NativeTaskFixture.Failure.assertion("The probed call never started") }
+    }
+}
+
 final class NativeSteppedTransport: NativeChatTransport, @unchecked Sendable {
     let first = NativeSessionGate()
     let second = NativeSessionGate()
@@ -92,6 +140,26 @@ enum NativeTurnCurrencyFixture {
         return holder
     }
 
+    static func hold(_ url: URL, exclusive: Bool = true,
+                     finish: @escaping @Sendable (Database) throws -> Void = { try $0.execute(sql: "ROLLBACK") }) async throws -> NativeTurnCurrencyHold {
+        let other = try controlConnection(url)
+        let held = NativeTurnCurrencyFlag()
+        let gate = DispatchSemaphore(value: 0)
+        let task = Task.detached {
+            try other.writeWithoutTransaction { db in
+                try db.execute(sql: exclusive ? "BEGIN EXCLUSIVE" : "BEGIN IMMEDIATE")
+                held.raise()
+                guard gate.wait(timeout: .now() + .seconds(NativeTurnCurrencyHold.ceilingSeconds)) == .success else {
+                    try db.execute(sql: "ROLLBACK")
+                    throw NativeTaskFixture.Failure.assertion("A held lock was never released by its check")
+                }
+                try finish(db)
+            }
+        }
+        try await NativeSessionFixture.eventually("Another connection holds the lock") { held.value }
+        return NativeTurnCurrencyHold(gate: gate, task: task)
+    }
+
     static func checkpointContention() async throws {
         let require = NativeTaskFixture.require
         let (url, repository, store, turn) = try lockedRepository()
@@ -99,27 +167,34 @@ enum NativeTurnCurrencyFixture {
         guard let location = store.turnLocation(turn) else { throw NativeTaskFixture.Failure.assertion("The claimed turn has a location") }
         var message = store.conversations[location.conversation].messages[location.reply]
         message.text = "Checkpoint under contention"
-        let holder = try await holdExclusive(url, seconds: 0.9)
-        let start = ContinuousClock.now
-        store.scheduleTurnCheckpoint(turn, message: message, ordinal: location.reply)
-        try require(elapsed(since: start) < .milliseconds(50), "Scheduling a checkpoint must not block the main actor while the database is locked")
-        let statusStart = ContinuousClock.now
-        store.setTurnStatus("Working on this answer", turn: turn)
-        try require(elapsed(since: statusStart) < .milliseconds(50), "Status updates must not wait behind a checkpoint write")
-        try await holder.value
-        try require(store.turnExecutions[turn.id]?.checkpointFailingSince != nil,
-                    "A checkpoint that met the lock is remembered for retry")
+        let holder = try await hold(url)
+        let scheduled = NativeTurnCurrencyProbe.prompt { store.scheduleTurnCheckpoint(turn, message: message, ordinal: location.reply) }
+        try require(scheduled && store.turnExecutions[turn.id]?.checkpoint != nil && store.turnExecutions[turn.id]?.checkpointFailingSince == nil,
+                    "Scheduling a checkpoint must not block the main actor while the database is locked")
+        await Task.yield()
+        let noted = NativeTurnCurrencyProbe.prompt { store.setTurnStatus("Working on this answer", turn: turn) }
+        try require(noted && store.turnStatuses[turn.assistantMessageID] == "Working on this answer"
+                    && store.turnExecutions[turn.id]?.checkpoint != nil && store.turnExecutions[turn.id]?.checkpointFailingSince == nil,
+                    "Status updates must not wait behind a checkpoint write")
+        try await NativeSessionFixture.eventually("A checkpoint that met the lock is remembered for retry") {
+            store.turnExecutions[turn.id]?.checkpointFailingSince != nil && store.turnExecutions[turn.id]?.checkpoint == nil
+        }
         try require(store.conversations[location.conversation].messages[location.reply].state == .streaming
                     && store.turnExecutions[turn.id]?.task == nil && store.turnOwned(turn),
                     "A failed checkpoint never interrupts the answer")
+        try await holder.release()
         let released = ContinuousClock.now
         message.text = "Checkpoint after release"
         store.scheduleTurnCheckpoint(turn, message: message, ordinal: location.reply)
-        try await NativeSessionFixture.eventually("The retried checkpoint lands once storage frees") {
-            (try? repository.messages(conversationID: turn.conversationID))?[location.reply].text == "Checkpoint after release"
+        guard let retry = store.turnExecutions[turn.id]?.checkpoint else {
+            throw NativeTaskFixture.Failure.assertion("The retried checkpoint is scheduled at once")
         }
-        try require(elapsed(since: released) < .milliseconds(150), "The retried checkpoint lands promptly after release")
-        try await NativeSessionFixture.eventually("The failure window clears") { store.turnExecutions[turn.id]?.checkpointFailingSince == nil }
+        await retry.value
+        let landed = released.duration(to: .now)
+        try require(try repository.messages(conversationID: turn.conversationID)[location.reply].text == "Checkpoint after release"
+                    && landed < NativeTurnCurrencyProbe.retryLimit,
+                    "The retried checkpoint lands promptly after release")
+        try require(store.turnExecutions[turn.id]?.checkpointFailingSince == nil, "The failure window clears")
         store.turnExecutions = [:]
         store.conversationTurnLoop?.cancel()
     }
@@ -134,21 +209,23 @@ enum NativeTurnCurrencyFixture {
         message.state = .complete
         store.turnExecutions[turn.id]?.finalization = (.complete, message, location.reply)
         store.suspendsTurnScheduling = false
-        let holder = try await holdExclusive(url, seconds: 0.9)
-        let start = ContinuousClock.now
-        store.scheduleConversationTurns()
-        try require(elapsed(since: start) < .milliseconds(50), "Finalization must not block the main actor while the database is locked")
-        let statusStart = ContinuousClock.now
-        store.setTurnStatus("Working on this answer", turn: turn)
-        try require(elapsed(since: statusStart) < .milliseconds(50), "Status updates must not wait behind finalization")
-        try await holder.value
+        let holder = try await hold(url)
+        let scheduled = NativeTurnCurrencyProbe.prompt { store.scheduleConversationTurns() }
+        try require(scheduled && store.isSchedulingTurns && store.turnExecutions[turn.id]?.finalization != nil,
+                    "Finalization must not block the main actor while the database is locked")
+        await Task.yield()
+        let noted = NativeTurnCurrencyProbe.prompt { store.setTurnStatus("Working on this answer", turn: turn) }
+        try require(noted && store.turnStatuses[turn.assistantMessageID] == "Working on this answer" && store.isSchedulingTurns,
+                    "Status updates must not wait behind finalization")
+        try await NativeSessionFixture.eventually("The locked tick settles") { !store.isSchedulingTurns }
+        try require(store.turnExecutions[turn.id]?.finalization != nil, "A finalization that met the lock stays pending")
+        try await holder.release()
         let released = ContinuousClock.now
         store.scheduleConversationTurns()
-        try await NativeSessionFixture.eventually("Finalization lands once storage frees") {
-            !store.isSchedulingTurns && store.turnExecutions[turn.id] == nil
-                && (try? repository.conversationTurns())?.first(where: { $0.id == turn.id })?.state == .complete
-        }
-        try require(elapsed(since: released) < .milliseconds(1_500), "Finalization completes on the first tick after release")
+        try await NativeSessionFixture.eventually("The tick after release settles") { !store.isSchedulingTurns }
+        try require(released.duration(to: .now) < NativeTurnCurrencyProbe.tickLimit && store.turnExecutions[turn.id] == nil
+                    && (try repository.conversationTurns()).first(where: { $0.id == turn.id })?.state == .complete,
+                    "Finalization completes on the first tick after release")
         try require(try repository.messages(conversationID: turn.conversationID)[location.reply].text == "Finished under contention",
                     "The finalized message is saved in full")
         let (url2, repository2, store2, turn2) = try lockedRepository()
@@ -159,21 +236,15 @@ enum NativeTurnCurrencyFixture {
         stale.state = .complete
         store2.turnExecutions[turn2.id]?.finalization = (.complete, stale, location2.reply)
         store2.suspendsTurnScheduling = false
-        let other = try controlConnection(url2)
-        let held = NativeTurnCurrencyFlag()
-        let superseder = Task.detached {
-            try other.writeWithoutTransaction { db in
-                try db.execute(sql: "BEGIN EXCLUSIVE")
-                held.raise()
-                Thread.sleep(forTimeInterval: 0.6)
-                try db.execute(sql: "UPDATE native_conversation_turns SET state='stopped' WHERE id=?", arguments: [turn2.id.uuidString])
-                try db.execute(sql: "COMMIT")
-            }
+        let stoppedID = turn2.id.uuidString
+        let superseder = try await hold(url2) { db in
+            try db.execute(sql: "UPDATE native_conversation_turns SET state='stopped' WHERE id=?", arguments: [stoppedID])
+            try db.execute(sql: "COMMIT")
         }
-        try await NativeSessionFixture.eventually("The superseding connection holds the lock") { held.value }
         store2.scheduleConversationTurns()
-        try await superseder.value
         try await NativeSessionFixture.eventually("The locked tick settles") { !store2.isSchedulingTurns }
+        try require(store2.turnExecutions[turn2.id]?.finalization != nil, "A tick that met the lock keeps the execution")
+        try await superseder.release()
         store2.scheduleConversationTurns()
         try await NativeSessionFixture.eventually("The stale tick releases the superseded execution") {
             !store2.isSchedulingTurns && store2.turnExecutions[turn2.id] == nil
@@ -194,22 +265,35 @@ enum NativeTurnCurrencyFixture {
         guard let location = store.turnLocation(turn) else { throw NativeTaskFixture.Failure.assertion("The claimed turn has a location") }
         let activity = NativeToolActivity(id: "dispatch-under-lock", toolID: "apple-reminders", name: "apple_reminders_list",
             title: "List reminders", round: 1, request: "{}", result: nil, state: .pending, confirmationRequired: false)
-        let holder = try await holdExclusive(url, seconds: 0.9)
-        let start = ContinuousClock.now
-        let marking = Task { await store.markTurnDispatchOffMain(activity, turn: turn) }
-        try await Task.sleep(for: .milliseconds(20))
-        try require(elapsed(since: start) < .milliseconds(150), "Marking a dispatch must not block the main actor while the database is locked")
-        let statusStart = ContinuousClock.now
-        store.setTurnStatus("Working on this answer", turn: turn)
-        try require(elapsed(since: statusStart) < .milliseconds(50), "Status updates must not wait behind the dispatch marker")
+        let holder = try await hold(url)
+        let probe = NativeTurnCurrencyProbe()
+        let marking = probe.run { await store.markTurnDispatchOffMain(activity, turn: turn) }
+        try await probe.untilStarted()
+        try require(probe.responsive, "Marking a dispatch must not block the main actor while the database is locked")
+        let noted = NativeTurnCurrencyProbe.prompt { store.setTurnStatus("Working on this answer", turn: turn) }
+        try require(noted && store.turnStatuses[turn.assistantMessageID] == "Working on this answer" && !probe.finished,
+                    "Status updates must not wait behind the dispatch marker")
         let marked = await marking.value
         try require(!marked, "A dispatch marker that cannot land declines the tool call instead of running it unmarked")
-        try await holder.value
+        guard let attempt = turn.attempt else { throw NativeTaskFixture.Failure.assertion("The claimed turn has an attempt") }
+        let turnID = turn.id
+        let waited = await Task.detached { () -> Duration? in
+            let start = ContinuousClock.now
+            do {
+                try repository.markTurnDispatch(turnID, attempt: attempt, activity: activity)
+                return nil
+            } catch {
+                return start.duration(to: .now)
+            }
+        }.value
+        try require(waited.map { $0 >= NativeTurnCurrencyProbe.waitFloor } == true,
+                    "A dispatch marker that meets the lock waits for it before giving up")
+        try await holder.release()
         let released = ContinuousClock.now
         try require(try repository.messages(conversationID: turn.conversationID)[location.reply].toolActivities.isEmpty,
                     "A declined dispatch leaves no marker behind")
         let again = await store.markTurnDispatchOffMain(activity, turn: turn)
-        try require(again && elapsed(since: released) < .milliseconds(150), "The marker lands promptly once storage frees")
+        try require(again && released.duration(to: .now) < NativeTurnCurrencyProbe.retryLimit, "The marker lands promptly once storage frees")
         try require(try repository.messages(conversationID: turn.conversationID)[location.reply].toolActivities.contains { $0.id == activity.id },
                     "The dispatch marker is saved before the tool runs")
         store.turnExecutions[turn.id] = nil
@@ -226,13 +310,15 @@ enum NativeTurnCurrencyFixture {
 
     static func dispatchRevocation() async throws {
         let require = NativeTaskFixture.require
-        let (url, repository) = try fileRepository()
+        let (url, base) = try fileRepository()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let repository = NativeSessionReadFailureRepository(base)
+        repository.lock.withLock { repository.failReadsAfterAcceptance = false }
         let store = NativeSessionFixture.store(repository, transport: NativeSessionFixtureTransport(), gate: NativeSessionGate())
         store.suspendsTurnScheduling = true
         store.sendText("check the reference")
-        let pending = try repository.conversationTurns()[0]
-        guard let turn = try repository.claimTurn(pending.id, attempt: UUID()) else {
+        let pending = try base.conversationTurns()[0]
+        guard let turn = try base.claimTurn(pending.id, attempt: UUID()) else {
             throw NativeTaskFixture.Failure.assertion("The pending turn can be claimed")
         }
         store.turnExecutions[turn.id] = NativeTurnExecution(turn)
@@ -243,13 +329,16 @@ enum NativeTurnCurrencyFixture {
         try require(allowed, "A consented tool dispatches once its marker lands")
         let revoked = NativeToolActivity(id: "dispatch-revoked", toolID: "hold", name: "hold", title: "Check the reference",
             round: 2, request: "{}", result: nil, state: .pending, confirmationRequired: false)
-        let holder = try await holdExclusive(url, seconds: 0.2, exclusive: false)
+        let release = DispatchSemaphore(value: 0)
+        repository.lock.withLock { repository.dispatchGate = release }
         let marking = Task { await store.prepareTurnDispatch(revoked, turn: turn) }
-        try await Task.sleep(for: .milliseconds(20))
+        try await NativeSessionFixture.eventually("The marker write is waiting") { repository.dispatchWaiting.value }
+        try require(try !base.messages(conversationID: turn.conversationID)[location.reply].toolActivities.contains { $0.id == revoked.id },
+                    "The marker has not landed while its write waits")
         store.updateNativeToolConsent([])
+        release.signal()
         let dispatched = await marking.value
-        try await holder.value
-        let activities = try repository.messages(conversationID: turn.conversationID)[location.reply].toolActivities
+        let activities = try base.messages(conversationID: turn.conversationID)[location.reply].toolActivities
         try require(activities.contains { $0.id == revoked.id }, "The marker landed after storage freed")
         try require(!dispatched, "A tool whose consent was revoked while its marker waited never runs")
         store.turnExecutions = [:]
@@ -480,8 +569,6 @@ enum NativeTurnCurrencyFixture {
         return (store, try repository.conversationTurns()[0])
     }
 
-    static func elapsed(since start: ContinuousClock.Instant) -> Duration { start.duration(to: .now) }
-
     static func classification() async throws {
         let require = NativeTaskFixture.require
         let repository = try LocalChatRepository(inMemory: true)
@@ -522,24 +609,28 @@ enum NativeTurnCurrencyFixture {
         store.turnExecutions[turn.id] = NativeTurnExecution(turn)
         for fenceDuringRead in [false, true] {
             let held = NativeTurnCurrencyFlag()
+            let gate = DispatchSemaphore(value: 0)
             let holder = Task.detached {
                 try repository.database.write { _ in
                     held.raise()
-                    Thread.sleep(forTimeInterval: 0.35)
+                    guard gate.wait(timeout: .now() + .seconds(NativeTurnCurrencyHold.ceilingSeconds)) == .success else {
+                        throw NativeTaskFixture.Failure.assertion("The held database queue was never released by its check")
+                    }
                 }
             }
             try await NativeSessionFixture.eventually("The database queue is held") { held.value }
-            let statusStart = ContinuousClock.now
-            store.setTurnStatus("Working on this answer", turn: turn)
-            try require(elapsed(since: statusStart) < .milliseconds(50), "Status updates must not wait on the database queue")
-            let start = ContinuousClock.now
-            let check = Task { await store.turnCurrency(turn) }
-            try await Task.sleep(for: .milliseconds(20))
-            try require(elapsed(since: start) < .milliseconds(150),
-                        "The currency check must not block the main actor while the database queue is busy")
+            let probe = NativeTurnCurrencyProbe()
+            let check = probe.run { await store.turnCurrency(turn) }
+            try await probe.untilStarted()
+            try require(probe.responsive, "The currency check must not block the main actor while the database queue is busy")
+            let status = fenceDuringRead ? "Still working on this answer" : "Working on this answer"
+            let noted = NativeTurnCurrencyProbe.prompt { store.setTurnStatus(status, turn: turn) }
+            try require(noted && store.turnStatuses[turn.assistantMessageID] == status && !probe.finished,
+                        "Status updates must not wait on the database queue")
             if fenceDuringRead { store.turnExecutions[turn.id] = nil }
-            let currency = await check.value
+            gate.signal()
             try await holder.value
+            let currency = await check.value
             try require(currency == (fenceDuringRead ? .superseded : .current),
                         fenceDuringRead ? "A check that outlives its attempt must not report it current"
                                         : "The check confirms the attempt once the queue frees")
@@ -557,25 +648,14 @@ enum NativeTurnCurrencyFixture {
         let (store, pending) = try pendingTurn(repository)
         let turn = try repository.claimTurn(pending.id, attempt: UUID())!
         store.turnExecutions[turn.id] = NativeTurnExecution(turn)
-        let other = try controlConnection(url)
-        let held = NativeTurnCurrencyFlag()
-        let holder = Task.detached {
-            try other.writeWithoutTransaction { db in
-                try db.execute(sql: "BEGIN EXCLUSIVE")
-                held.raise()
-                Thread.sleep(forTimeInterval: 0.6)
-                try db.execute(sql: "ROLLBACK")
-            }
-        }
-        try await NativeSessionFixture.eventually("Another connection holds an exclusive lock") { held.value }
-        let start = ContinuousClock.now
-        let check = Task { await store.turnCurrency(turn) }
-        try await Task.sleep(for: .milliseconds(20))
-        try require(elapsed(since: start) < .milliseconds(150),
-                    "The currency check must not block the main actor while another connection holds the lock")
+        let holder = try await hold(url)
+        let probe = NativeTurnCurrencyProbe()
+        let check = probe.run { await store.turnCurrency(turn) }
+        try await probe.untilStarted()
+        try require(probe.responsive, "The currency check must not block the main actor while another connection holds the lock")
         let currency = await check.value
         try require(currency == .unconfirmed, "A locked database is unconfirmed, not a stopped or replaced answer")
-        try await holder.value
+        try await holder.release()
         let recovered = await store.turnCurrency(turn)
         try require(recovered == .current, "The same attempt is current once storage frees")
         store.turnExecutions = [:]

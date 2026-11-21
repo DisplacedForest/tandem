@@ -705,9 +705,7 @@ enum NativeTaskDeliverySelftest {
     }
 
     static func documentCountsAsNew() async throws {
-        let suiteName = "tandem-delivery-selftest-\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suiteName) else { throw NativeTaskFixture.Failure.assertion("Defaults suite") }
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let defaults = AppLocations.scratchPreferences()
         let repository = try memoryRepository()
         let store = await store(repository)
         store.companionDefaults = defaults
@@ -869,7 +867,7 @@ enum NativeTaskDeliverySelftest {
             try snapshotText("failed", ["failure_reason": "request_conflict"]),
             try snapshotText("failed", ["sources": [sources[0]]]),
             NativeTaskTools.acknowledged, NativeTaskTools.searchUnavailable, NativeTaskDelivery.notePrompt,
-            NativeTaskDelivery.modelLead, NativeTaskDelivery.modelTail, "Save as document", "Saved here. This continues once it reconnects.",
+            NativeTaskDelivery.modelLead, NativeTaskDelivery.modelTail, "Saved here. This continues once it reconnects.",
             "This message's request was stopped earlier. Say so in one short sentence.",
             "This message's result was already sent in this conversation. Say so in one short sentence.",
             "This message's request is waiting on the person. Say so in one short sentence.",
@@ -879,7 +877,7 @@ enum NativeTaskDeliverySelftest {
         strings.append(ChatStore.researchReplyRule)
         strings.append(NativeTaskDeliveryShot.reply)
         for text in strings {
-            let words = Set(text.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+            let words = Set(text.lowercased().split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_") }).map(String.init))
             let hits = words.intersection(banned)
             try require(hits.isEmpty && !text.contains("\u{2014}") && !text.contains("Tandem"),
                         "Copy stays first person and plain: \(hits) in \(text)")

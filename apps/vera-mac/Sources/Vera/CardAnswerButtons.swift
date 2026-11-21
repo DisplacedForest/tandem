@@ -173,7 +173,7 @@ struct CardSplitButton: View {
                         .accessibilityLabel(Self.spoken(item.spoken, context: context))
                     }
                 } label: {
-                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(ink)
+                    InterfaceIconView(icon: .expand, size: InterfaceIconSize.mark).foregroundStyle(ink)
                         .frame(width: Self.caretWidth, height: Self.height)
                 }
                 .menuStyle(.button)

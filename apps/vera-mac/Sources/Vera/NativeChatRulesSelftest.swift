@@ -403,13 +403,17 @@ extension SelfTest {
         }
         func settle(_ store: ChatStore) async throws -> Bool {
             var sawCard = false
-            var waited = 0
-            try await Task.sleep(nanoseconds: 20_000_000)
-            while store.generating && waited < 500 {
+            for _ in 0..<6_000 {
                 if !store.turnConfirmations.isEmpty { sawCard = true }
-                try await Task.sleep(nanoseconds: 10_000_000); waited += 1
+                if let reply = store.selected?.messages.last, reply.role == .assistant,
+                   reply.state == .complete || reply.state == .interrupted,
+                   store.turnExecutions.isEmpty, !store.generating {
+                    return sawCard
+                }
+                try await Task.sleep(nanoseconds: 10_000_000)
             }
-            return sawCard || !store.turnConfirmations.isEmpty
+            if sawCard { return true }
+            throw NativeTaskFixture.Failure.assertion("The turn never finished")
         }
 
         let ran = NativeChatRulesCounter()

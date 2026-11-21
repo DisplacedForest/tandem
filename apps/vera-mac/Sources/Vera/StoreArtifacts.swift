@@ -12,6 +12,7 @@ extension ChatStore {
 
     func reloadArtifacts() {
         artifactRecords = (try? artifactRepository?.listArtifacts()) ?? []
+        taskPieceIDs = (try? artifactRepository?.artifactIDs(sourceKeyPrefix: Self.taskArtifactSourceKey(""))) ?? [:]
     }
 
     func artifactVersions(_ artifactID: String) -> [ArtifactVersion] {
@@ -25,11 +26,15 @@ extension ChatStore {
     }
 
     func artifactData(_ version: ArtifactVersion) -> Data? {
-        artifactFileURL(version).flatMap { try? Data(contentsOf: $0) }
+        artifactFileURL(version).flatMap { url in
+            AppLocations.refuseRealFile(url)
+            return try? Data(contentsOf: url)
+        }
     }
 
     func artifactSource(_ version: ArtifactVersion) -> Result<Data, ArtifactExportProblem> {
         guard let url = attachmentStore.url(for: version.fileName) else { return .failure(.sourceMissing) }
+        AppLocations.refuseRealFile(url)
         do {
             return .success(try Data(contentsOf: url))
         } catch {
@@ -156,6 +161,8 @@ extension ChatStore {
                 beforeText: change.before, truncated: change.truncated, contentAvailable: content != nil)), revising: target)
     }
 
+    static func taskArtifactSourceKey(_ id: String) -> String { "task:\(id)" }
+
     func recordTaskArtifacts(_ blocks: [NativeDisplayBlock], conversationID: String, messageID: String) {
         guard artifactRepository != nil else { return }
         let origin = artifactOriginTitle(conversationID: conversationID)
@@ -163,7 +170,7 @@ extension ChatStore {
         for block in blocks {
             guard case .artifact(let artifact) = block,
                   !artifact.report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            let sourceKey = "task:\(artifact.id)"
+            let sourceKey = Self.taskArtifactSourceKey(artifact.id)
             guard !recordedArtifactSourceKeys.contains(sourceKey) else { continue }
             let made = companionMadeArtifact(artifact.id, conversationID: conversationID) ? CompanionSavedText.marker : origin
             let draft = ArtifactDraft(
@@ -253,6 +260,7 @@ extension ChatStore {
     @discardableResult
     static func importLegacyCanvasLibrary(from url: URL, into repository: any ArtifactRepository) throws -> Int {
         AppLocations.refuseRealData(url)
+        AppLocations.refuseRealFile(url)
         guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
         let artifacts = try JSONDecoder().decode([Artifact].self, from: Data(contentsOf: url))
         for artifact in artifacts {

@@ -47,6 +47,17 @@ extension SelfTest {
         let neverSentence = RefusalCopy.plain(ruled)
         try require(RefusalCopy.label(ruled) == RefusalCopy.notRun && neverSentence.contains("Never") && !neverSentence.contains("start with"),
                     "A never reads as not run and names the rule without a command start: \(neverSentence)")
+        let ruleWhy = NativeRuleWhy.Rule(never)
+        try require(RefusalCopy.plain(NativeRuleWhy(kind: .rule, action: .commands, handsOff: true, rule: ruleWhy), places: RulePlaces(chats: [chat: "Greenhouse notes"]))
+                        == "Your rule: Never run commands in Greenhouse notes.", "A rule reason names the rule and its chat with no comma")
+        var everywhereRule = ruleWhy
+        everywhereRule.scope = .everywhere
+        try require(RefusalCopy.plain(NativeRuleWhy(kind: .rule, action: .commands, handsOff: true, rule: everywhereRule)) == "Your rule: Never run commands everywhere.",
+                    "A rule reason for an everywhere rule reads as one plain sentence")
+        try require(RefusalCopy.plain(ruled) == "Your rule: Never run commands " + RuleRows.lostChat + ".", "A rule reason with an unknown chat has no double space")
+        try require(RefusalCopy.plain(NativeRuleWhy(kind: .held, action: .payments, handsOff: true, item: .payments))
+                        == "\"" + NativeFloorItem.payments.title + "\" is left to you unless you turn it on under Advanced in Rules.",
+                    "A held reason says how to turn it on")
 
         let base = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent("refusal-" + UUID().uuidString.lowercased(), isDirectory: true)
         defer { try? FileManager.default.removeItem(at: base) }

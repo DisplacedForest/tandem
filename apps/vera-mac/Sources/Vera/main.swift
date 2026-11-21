@@ -4,10 +4,13 @@ import AppKit
 let arguments = CommandLine.arguments
 let piModes: Set<String> = ["--pi-document-contract", "--pi-task-stream-contract", "--pi-native-selftest", "--pi-native-reopen-contract", "--pi-native-contract", "--pi-native-recovery-contract", "--pi-checkpoint-selftest", "--pi-checkpoint", "--pi-provider-wiring-selftest", "--pi-candidate-mock", "--pi-candidate-contract", "--pi-candidate-selftest", "--pi-candidate-recovery-contract", "--pi-broker-mock", "--pi-broker-selftest"]
 let launchMode = LaunchPlan.mode(Array(arguments.dropFirst()), isolatedModes: piModes)
+LaunchPlan.settle(launchMode)
 if LaunchPlan.isHeadless(launchMode, environment: ProcessInfo.processInfo.environment) {
     AppLocations.isolateForHeadlessRun()
 }
+OutboundGuard.install(OutboundGuard.policy(for: launchMode, environment: ProcessInfo.processInfo.environment))
 AppLocations.settle()
+AppLocations.refuseRealArguments(Array(arguments.dropFirst()))
 AppLocations.checkSettingDataRoot()
 switch SelectedCredentialAuthorization.dispatch(Array(arguments.dropFirst())) {
 case .authorize(let values):
@@ -116,6 +119,10 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         do { try await NativeMemoryGate.selftest() }
         catch { print("memory-gate: FAIL \(error.localizedDescription)"); exit(1) }
     }
+} else if arguments.contains("--tool-eval-selftest") {
+    NativeApplicationEntry.runAsync { exit(await NativeToolEval.selftest()) }
+} else if arguments.contains("--tool-eval-live") {
+    NativeApplicationEntry.runAsync { exit(await NativeToolEval.live(arguments: Array(arguments.dropFirst()))) }
 } else if arguments.contains("--companion-live") {
     NativeApplicationEntry.runAsync { exit(await NativeCompanionLive.run(arguments: arguments)) }
 } else if arguments.contains("--memory-gate-live") {
@@ -140,6 +147,8 @@ if arguments.dropFirst().first == "--document-artifact-selftest" {
         do { try await NativePreferencesSelftest.run() }
         catch { print("native-preferences: FAIL \(error)"); exit(1) }
     }
+} else if arguments.contains("--preferences-live") {
+    NativeApplicationEntry.runAsync { exit(await NativePreferenceEval.run(arguments: arguments)) }
 } else if arguments.contains("--selftest") {
     NativeApplicationEntry.runAsync { await SelfTest.run() }
 } else if arguments.contains("--dump-context") {

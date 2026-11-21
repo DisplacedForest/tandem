@@ -23,6 +23,6 @@ struct NativeResearchImageProvider: ImageProvider {
 
 struct NativeResearchInlineImageProvider: InlineImageProvider {
     func image(with url: URL, label: String) async throws -> Image {
-        Image(systemName: "photo")
+        await MainActor.run { InterfaceIcon.image.menuImage ?? Image(nsImage: NSImage()) }
     }
 }

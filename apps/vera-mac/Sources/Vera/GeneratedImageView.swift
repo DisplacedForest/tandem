@@ -35,7 +35,7 @@ struct GeneratedImageView: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 } else if missing {
-                    Label("This image is no longer on disk", systemImage: "photo")
+                    Label { Text("This image is no longer on disk") } icon: { InterfaceIconView(icon: .image, size: InterfaceIconSize.small) }
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {

@@ -36,8 +36,9 @@ final class CompanionAsideLateWatcher: NativeTaskGenerationRepository, @unchecke
     func taskGenerationStale(referenceID: UUID, job: NativeTaskGenerationJob) -> Bool {
         lock.withLock { blind } ? false : base.taskGenerationStale(referenceID: referenceID, job: job)
     }
-    func finishTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob, response: String?, failure: String?) throws {
-        try base.finishTaskGeneration(referenceID: referenceID, job: job, response: response, failure: failure)
+    func finishTaskGeneration(referenceID: UUID, job: NativeTaskGenerationJob, response: String?, failure: String?,
+                              detail: NativeTaskGenerationFailureDetail?) throws {
+        try base.finishTaskGeneration(referenceID: referenceID, job: job, response: response, failure: failure, detail: detail)
     }
 }
 
@@ -726,7 +727,7 @@ enum CompanionWorkAsideFixture {
             let harness = try NativeTaskEngineHarness.makeTurns(repository: repository, counter: NativeTaskEngineCounter(),
                 workers: { exchange in ["companion": NativeCompanionWorker.make(exchange: exchange, environment: environment)] }) { job in
                     if job.messages.first?.content == NativeCompanionShape.classifierPrompt { return .text("{\"keep\": false}") }
-                    if job.messages.first?.content == NativeInstructionCheck.systemPrompt { return .text("{\"run\": false}") }
+                    if job.messages.first?.content == NativeRequestAuthorizer.systemPrompt { return .text("{\"decision\": \"not_authorized\"}") }
                     await recorder.record(job)
                     if !entered.value {
                         entered.value = true
@@ -920,7 +921,7 @@ enum CompanionWorkAsideFixture {
             nativeToolRegistry: NativeToolRegistry(definitions: [notes]),
             nativeTaskClient: wrap(engine.client), nativeTaskEnrollment: enrollment, nativeSearchAvailable: { true }, artifactPersistenceEnabled: false)
         let veto = earlier?.veto ?? CompanionTalkVeto()
-        store.instructionCheck = { said, about in await veto.answer(said, about) }
+        store.requestAuthorization = veto.transport
         if earlier != nil { store.conversations = try repository.listConversations() }
         store.loadDotProfile()
         if earlier == nil { store.skipDotSetup() }
@@ -1493,7 +1494,7 @@ enum CompanionWorkAsideFixture {
         let broker = NativeTaskGenerationBroker(repository: harness.repository, client: harness.engine.client,
             configuredBase: { NativeTaskLocalEngine.identity.base }, isProfileAvailable: { _ in true }, complete: { _, job in
                 if job.messages.first?.content == NativeCompanionShape.classifierPrompt { return .text("{\"keep\": false}") }
-                if job.messages.first?.content == NativeInstructionCheck.systemPrompt { return .text("{\"run\": false}") }
+                if job.messages.first?.content == NativeRequestAuthorizer.systemPrompt { return .text("{\"decision\": \"not_authorized\"}") }
                 await recorder.record(job)
                 let opening = job.messages.dropFirst().first?.content ?? ""
                 if opening.contains(changedWork) { return .text("The five libraries are compared.") }
@@ -1855,9 +1856,9 @@ enum CompanionWorkAsideFixture {
         }
         let all = Set(control.entries.map(\.referenceID))
         let replayedTools = harness.store.companionTalkTools(control, turn: replayed, typed: harness.store.typedWords(for: replayed),
-            capture: CompanionTalkCapture(known: all, decisions: [:]), answerer: { _, _ in true }, timeout: .seconds(1))
+            capture: CompanionTalkCapture(known: all, decisions: [:]), authorizer: CompanionTalkVeto.allowing, timeout: .seconds(1))
         let afterTools = harness.store.companionTalkTools(control, turn: turn, typed: harness.store.typedWords(for: turn),
-            capture: CompanionTalkCapture(known: [], decisions: [:]), answerer: { _, _ in true }, timeout: .seconds(1))
+            capture: CompanionTalkCapture(known: [], decisions: [:]), authorizer: CompanionTalkVeto.allowing, timeout: .seconds(1))
         for name in CompanionHoldTools.names.sorted() {
             let arguments: [String: NativeJSONValue] = name == CompanionHoldTools.changeName
                 ? ["item": .string(entry.handle), "work": .string(changedWork)] : ["item": .string(entry.handle)]

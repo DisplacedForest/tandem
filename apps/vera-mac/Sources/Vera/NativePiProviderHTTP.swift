@@ -33,7 +33,7 @@ final class PiProviderHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendabl
     }
     func send(_ request: URLRequest) async throws -> (Data, Int) {
         let limit = try Self.validate(request)
-        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        let session = OutboundGuard.session(configuration: configuration, delegate: self, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         return try await withTaskCancellationHandler {
             do {

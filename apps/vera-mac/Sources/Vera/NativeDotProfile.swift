@@ -194,7 +194,7 @@ struct NativeDotRemovalSummary: Equatable, Sendable {
         default: text = "This removes \(parts.dropLast().joined(separator: ", ")) and \(parts[parts.count - 1])."
         }
         if artifacts > 0 {
-            text += " " + (artifacts == 1 ? "Your 1 artifact stays in Artifacts." : "Your \(artifacts) artifacts stay in Artifacts.")
+            text += " Your Library is kept."
         }
         return text
     }

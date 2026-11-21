@@ -3,7 +3,7 @@ import SwiftUI
 @MainActor
 enum ConversationTopBarMetrics {
     static let fade: CGFloat = 84
-    static let top: CGFloat = CompanionProfileMetrics.top
+    static let top: CGFloat = WindowStripMetrics.controlTop
     static let edge: CGFloat = CompanionProfileMetrics.edge
     static let height: CGFloat = SidebarRoundButtonStyle.size
     static let iconSize: CGFloat = 18
@@ -98,6 +98,7 @@ struct ConversationTopBarTarget: Hashable, Identifiable, Sendable {
 
 struct ConversationSidebarControl {
     let collapsed: Bool
+    var fullScreen = false
     let toggle: @MainActor () -> Void
 }
 
@@ -113,8 +114,6 @@ extension EnvironmentValues {
 }
 
 enum ConversationTopBarModel {
-    static func showsRailToggle(section: AppSection) -> Bool { section != .chat && section != .vera }
-
     static func sidebarTitle(collapsed: Bool) -> String { collapsed ? "Show sidebar" : "Hide sidebar" }
 
     static func sidebarIcon(collapsed: Bool) -> InterfaceIcon { collapsed ? .sidebar : .sidebarShown }
@@ -192,8 +191,9 @@ struct ConversationTopBar: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
     @Environment(\.renderSafe) private var renderSafe
-    @Environment(\.conversationSidebar) private var sidebar
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.messageActions) private var messageActions
+    @Environment(\.conversationSidebar) private var sidebar
     var profile: Binding<CompanionProfileState>? = nil
     var fixed: CompanionOverviewModel? = nil
     var conversation: Conversation? = nil
@@ -218,9 +218,15 @@ struct ConversationTopBar: View {
                                                 companionThread: store.isVeraThread(conversation?.id))
     }
 
+    private var leadingClearance: CGFloat {
+        guard let sidebar else { return 0 }
+        return WindowStripMetrics.titleClearance(sidebarWide: !sidebar.collapsed, fullScreen: sidebar.fullScreen)
+    }
+
     var body: some View {
         HStack(spacing: ConversationTopBarMetrics.gap) {
-            slot { sidebarButton }
+            Color.clear.frame(width: max(ConversationTopBarMetrics.height, leadingClearance - ConversationTopBarMetrics.edge),
+                              height: ConversationTopBarMetrics.height)
             Spacer(minLength: 0)
             pill
             Spacer(minLength: 0)
@@ -237,6 +243,7 @@ struct ConversationTopBar: View {
                 .frame(height: ConversationTopBarMetrics.fade)
                 .allowsHitTesting(false)
         }
+        .opacity(messageActions?.open == nil ? 1 : 0)
         .alert("Rename chat", isPresented: $renaming, presenting: renameTarget) { target in
             TextField("Title", text: $renameText)
             Button("Rename") { target.rename(to: renameText, in: store) }
@@ -263,19 +270,6 @@ struct ConversationTopBar: View {
             .foregroundStyle(Theme.textPrimary)
             .frame(width: SidebarRoundButtonStyle.size, height: SidebarRoundButtonStyle.size)
             .background(Circle().fill(CompanionTileStyle.fill(selected: false, hovering: false, pressed: false)))
-    }
-
-    @ViewBuilder private var sidebarButton: some View {
-        if let sidebar {
-            let title = ConversationTopBarModel.sidebarTitle(collapsed: sidebar.collapsed)
-            if renderSafe {
-                staticRound(ConversationTopBarModel.sidebarIcon(collapsed: sidebar.collapsed)).accessibilityLabel(title)
-            } else {
-                Button { sidebar.toggle() } label: { roundIcon(ConversationTopBarModel.sidebarIcon(collapsed: sidebar.collapsed)) }
-                    .buttonStyle(SidebarRoundButtonStyle())
-                    .help(title).accessibilityLabel(title)
-            }
-        }
     }
 
     @ViewBuilder private var pill: some View {

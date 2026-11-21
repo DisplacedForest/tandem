@@ -6,6 +6,7 @@ enum RulesCopy {
     static let infoLabel = "What each choice means"
     static let floorSectionTitle = "Always left to you"
     static let imagesNote = "This also covers saving generated images."
+    static let permissionQuestionsFailing = "Your model hasn't been able to answer the permission questions, so you've been asked before every action. Check the model in Settings, Model."
 
     static func info(for action: NativeActionClass, choice: NativeRuleChoice) -> String {
         let detail = NativeRules.detail(for: action, choice: choice)
@@ -23,7 +24,8 @@ enum RulesCopy {
     }
 
     static func screenStrings(name: String?) -> [String] {
-        var strings = [CompanionSentence.plain(headerTemplate, name: name), CompanionSentence.plain(sectionTemplate, name: name), infoLabel, floorSectionTitle]
+        var strings = [CompanionSentence.plain(headerTemplate, name: name), CompanionSentence.plain(sectionTemplate, name: name), infoLabel, floorSectionTitle,
+                       permissionQuestionsFailing]
         for choice in NativeRuleChoice.allCases {
             strings.append(choice.title)
             strings.append(CompanionSentence.plain(explanationTemplate(choice), name: name))
@@ -47,6 +49,7 @@ enum RulesCopy {
 struct SharedFolderRowView: View {
     let row: SharedFolderRow
     var onStop: () -> Void
+    var onChoose: () -> Void = {}
     @Environment(\.companionName) private var name
 
     var body: some View {
@@ -58,6 +61,10 @@ struct SharedFolderRowView: View {
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if row.state.canChooseAgain {
+                Button(SharedFolderRows.chooseAgain, action: onChoose)
+                    .accessibilityLabel(row.chooseLabel(name: name))
+            }
             Button(SharedFolderRows.stop, action: onStop)
                 .accessibilityLabel(row.stopLabel(name: name))
         }
@@ -157,6 +164,16 @@ struct RulesSettingsTab: View {
 
     private func refresh() { rows = store.ruleRows() }
 
+    private func chooseAgain(_ row: SharedFolderRow) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = SharedFolderRows.choosePrompt
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.chooseAgain(row, url: url)
+    }
+
     private func infoShown(_ action: NativeActionClass) -> Binding<Bool> {
         Binding(get: { infoFor == action }, set: { infoFor = $0 ? action : nil })
     }
@@ -175,6 +192,10 @@ struct RulesSettingsTab: View {
         Form {
             Section {
                 if let notice = store.rulesNotice {
+                    Label(notice, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+                if let notice = store.permissionQuestionsNotice {
                     Label(notice, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
@@ -234,7 +255,7 @@ struct RulesSettingsTab: View {
             if !shared.isEmpty {
                 Section {
                     ForEach(shared) { row in
-                        SharedFolderRowView(row: row, onStop: { store.stopSharing(row) })
+                        SharedFolderRowView(row: row, onStop: { store.stopSharing(row) }, onChoose: { chooseAgain(row) })
                     }
                 } header: {
                     HStack {
@@ -267,7 +288,9 @@ struct RulesSettingsTab: View {
             if startsClosed { advanced.leave() }
             store.sweepRuleRecords()
             refresh()
+            store.checkSharedFolders()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.checkSharedFolders() }
         .onReceive(NotificationCenter.default.publisher(for: .ruleRecordsChanged).receive(on: RunLoop.main)) { _ in refresh() }
         .onChange(of: store.conversations.map(\.title)) { _, _ in refresh() }
         .onChange(of: config.nativeSettings.rules) { _, _ in refresh() }

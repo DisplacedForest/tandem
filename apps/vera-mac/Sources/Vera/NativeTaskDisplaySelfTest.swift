@@ -15,6 +15,13 @@ enum NativeTaskDisplaySelfTest {
                 .link(NativeDisplayLink(id: "reference", title: "Reference", url: "https://reference.example/report")),
                 .artifact(artifact),
             ])
+        try expect(NativeTaskCardView.repeatsStatus("Working on it.", status: "Working on it"),
+                   "A body line that repeats the top line is left out")
+        try expect(NativeTaskCardView.repeatsStatus("  working on it.  ", status: "Working on it"),
+                   "Case, spacing and a closing period still count as a repeat")
+        try expect(!NativeTaskCardView.repeatsStatus("Reading the planting calendar.", status: "Working on it"),
+                   "A different body line stays")
+        try expect(card.stopTitle == "Stop research", "A running research card's stop pill keeps its words")
         let encoded = try JSONEncoder().encode(envelope)
         let reopened = try JSONDecoder().decode(NativeMessageEnvelope.self, from: encoded)
         try expect(reopened == envelope, "Typed display blocks must survive persistence")

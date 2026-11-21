@@ -94,7 +94,7 @@ extension ChatStore {
                                edits: NativeRuleDecision = .act(.rule), trash: NativeRuleDecision = .ask,
                                live: @escaping @Sendable (NativeActionClass) -> NativeRuleDecision? = { _ in nil },
                                liveTargets: (@Sendable (NativeActionClass, [[NativeRuleTarget]]) -> NativeRuleVerdict?)? = nil,
-                               instruction: (@Sendable (NativeActionClass, [[NativeRuleTarget]], String) -> NativeInstructionPending?)? = nil,
+                               instruction: (@Sendable (NativeActionClass, [[NativeRuleTarget]], NativeProposedCall) -> NativeInstructionPending?)? = nil,
                                alwaysAvailable: Bool = false) -> [NativeToolDefinition] {
         let source = nativeGrantSource
         return NativeFolderTools.definitions(grants: { source.grants(for: conversationID) }, ledger: ledger,
@@ -119,10 +119,10 @@ extension ChatStore {
         return NativeCommandTools.definitions(grants: { source.grants(for: conversationID) }, decision: decision,
                                               reason: { reasons.reason(for: scope + $0) }, record: record,
                                               live: closures.live, liveTargets: closures.liveTargets,
-                                              instruction: { command, action, subjects, about in
+                                              instruction: { command, action, subjects, call in
                                                   Self.commandInstruction(rules, store: records, conversationID: conversationID, requestText: typed.said,
                                                                           typed: typed, uses: uses, command: command, action: action, subjects: subjects,
-                                                                          about: about)
+                                                                          call: call)
                                               },
                                               declined: { declines.contains($0, turn: turnID) },
                                               alwaysAvailable: alwaysAvailable)
@@ -133,7 +133,7 @@ extension ChatStore {
                                             subjects: [[NativeRuleTarget]]) -> NativeRuleResolver {
         var resolver = rules.resolver(for: conversationID, requestText: requestText, typed: typed).tool(NativeCommandTools.toolID, subjects: subjects)
         resolver.uses = uses
-        if action == .commands, NativeCommandPrefix.isSimple(command) { resolver.asked = NativeInstructionClaim(verbs: NativeCommandTools.verbs) }
+        if action == .commands, NativeCommandPrefix.isSimple(command) { resolver.asked = NativeInstructionClaim() }
         return resolver
     }
 
@@ -151,10 +151,10 @@ extension ChatStore {
     nonisolated static func commandInstruction(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                                requestText: String, typed: NativeTypedWords = .none, uses: NativeInstructionUses? = nil,
                                                command: String, action: NativeActionClass, subjects: [[NativeRuleTarget]],
-                                               about: String) -> NativeInstructionPending? {
+                                               call: NativeProposedCall) -> NativeInstructionPending? {
         let resolver = commandResolver(rules, conversationID: conversationID, requestText: requestText, typed: typed, uses: uses,
                                        command: command, action: action, subjects: subjects)
-        return pending(resolver, action: action, command: action == .commands ? command : nil, store: store, about: about)
+        return pending(resolver, action: action, command: action == .commands ? command : nil, store: store, call: call)
     }
 
     nonisolated static func commandLive(_ rules: NativeRuleSource, store: NativeRuleRecordStore?, conversationID: String, requestText: String,
@@ -193,10 +193,10 @@ extension ChatStore {
     nonisolated static func toolInstruction(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                             requestText: String, typed: NativeTypedWords = .none, uses: NativeInstructionUses? = nil,
                                             asked: NativeInstructionClaim? = nil, toolID: String, action: NativeActionClass,
-                                            subjects: [[NativeRuleTarget]], about: String) -> NativeInstructionPending? {
+                                            subjects: [[NativeRuleTarget]], call: NativeProposedCall) -> NativeInstructionPending? {
         pending(toolResolver(rules, conversationID: conversationID, requestText: requestText, typed: typed, uses: uses, asked: asked,
                              toolID: toolID, subjects: subjects),
-                action: action, store: store, about: about)
+                action: action, store: store, call: call)
     }
 
     nonisolated static func judged(_ resolver: NativeRuleResolver, action: NativeActionClass, command: String? = nil, store: NativeRuleRecordStore?)
@@ -209,9 +209,9 @@ extension ChatStore {
     }
 
     nonisolated static func pending(_ resolver: NativeRuleResolver, action: NativeActionClass, command: String? = nil,
-                                    store: NativeRuleRecordStore?, about: String) -> NativeInstructionPending? {
+                                    store: NativeRuleRecordStore?, call: NativeProposedCall) -> NativeInstructionPending? {
         guard let uses = resolver.uses, let signature = judged(resolver, action: action, command: command, store: store).spending else { return nil }
-        return NativeInstructionPending(signature: signature, about: about, refuse: { uses.take(signature) })
+        return NativeInstructionPending(action: NativeProposedAction(call, action: action, signature: signature), refuse: { uses.refuse(signature) })
     }
 
     nonisolated static func instructedVerdict(_ resolver: NativeRuleResolver, action: NativeActionClass, rules: NativeRuleSource,
@@ -230,9 +230,8 @@ extension ChatStore {
                                   uses: NativeInstructionUses? = nil) -> NativeToolDefinition {
         guard followsRules(definition) else { return definition }
         let original = definition
-        let claim: @Sendable ([String: NativeJSONValue]) -> NativeInstructionClaim? = { arguments in
-            original.verbs.isEmpty || original.demandsConfirmation ? nil
-                : NativeInstructionClaim(verbs: original.verbs, names: original.instructionNames?(arguments) ?? [], nothing: original.namesNothing)
+        let claim: @Sendable ([String: NativeJSONValue]) -> NativeInstructionClaim? = { _ in
+            original.authorizable && !original.demandsConfirmation ? NativeInstructionClaim() : nil
         }
         let decide: @Sendable ([String: NativeJSONValue]) -> (NativeActionClass, NativeRuleVerdict) = { arguments in
             let action = original.actionClass(for: arguments) ?? .otherChanges
@@ -261,12 +260,9 @@ extension ChatStore {
         wrapped.instructionFor = { arguments in
             guard original.proposesFor?(arguments) != true, !ownConfirmation(arguments) else { return nil }
             let action = original.actionClass(for: arguments) ?? .otherChanges
-            let asked = claim(arguments)
-            let subjects = original.ruleSubjects?(arguments) ?? []
             return toolInstruction(rules, store: store, conversationID: conversationID, requestText: requestText, typed: typed, uses: uses,
-                                   asked: asked, toolID: original.id, action: action, subjects: subjects,
-                                   about: NativeInstructionCheck.about(original, arguments: arguments, targets: subjects.flatMap { $0 },
-                                                                       names: asked?.names ?? []))
+                                   asked: claim(arguments), toolID: original.id, action: action, subjects: original.ruleSubjects?(arguments) ?? [],
+                                   call: NativeProposedCall(original, arguments: arguments))
         }
         wrapped.execute = { arguments in
             try original.preflight?(arguments)
@@ -283,31 +279,28 @@ extension ChatStore {
 
     nonisolated static func folderResolver(_ rules: NativeRuleSource, conversationID: String, requestText: String, typed: NativeTypedWords,
                                            uses: NativeInstructionUses?, action: NativeActionClass,
-                                           subjects: [[NativeRuleTarget]], roots: [String] = [],
-                                           listing: (String) throws -> [String] = NativeFolderTools.entries) -> NativeRuleResolver {
+                                           subjects: [[NativeRuleTarget]]) -> NativeRuleResolver {
         var resolver = rules.resolver(for: conversationID, requestText: requestText, typed: typed).tool(NativeFolderTools.toolID, subjects: subjects)
         resolver.uses = uses
-        resolver.asked = NativeFolderTools.instructionClaim(action, targets: subjects.flatMap { $0 }, roots: roots, listing: listing)
+        resolver.asked = NativeFolderTools.instructed.contains(action) ? NativeInstructionClaim() : nil
         return resolver
     }
 
     nonisolated static func folderDecision(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                            requestText: String, typed: NativeTypedWords = .none, uses: NativeInstructionUses? = nil,
-                                           action: NativeActionClass, subjects: [[NativeRuleTarget]], roots: [String] = [],
-                                           listing: (String) throws -> [String] = NativeFolderTools.entries) -> NativeRuleVerdict {
+                                           action: NativeActionClass, subjects: [[NativeRuleTarget]]) -> NativeRuleVerdict {
         instructedVerdict(folderResolver(rules, conversationID: conversationID, requestText: requestText, typed: typed, uses: uses,
-                                         action: action, subjects: subjects, roots: roots, listing: listing),
+                                         action: action, subjects: subjects),
                           action: action, rules: rules, store: store)
     }
 
     nonisolated static func folderInstruction(_ rules: NativeRuleSource, store: NativeRuleRecordStore? = nil, conversationID: String,
                                               requestText: String, typed: NativeTypedWords = .none, uses: NativeInstructionUses? = nil,
-                                              action: NativeActionClass, subjects: [[NativeRuleTarget]], about: String,
-                                              roots: [String] = [],
-                                              listing: (String) throws -> [String] = NativeFolderTools.entries) -> NativeInstructionPending? {
+                                              action: NativeActionClass, subjects: [[NativeRuleTarget]],
+                                              call: NativeProposedCall) -> NativeInstructionPending? {
         pending(folderResolver(rules, conversationID: conversationID, requestText: requestText, typed: typed, uses: uses,
-                               action: action, subjects: subjects, roots: roots, listing: listing),
-                action: action, store: store, about: about)
+                               action: action, subjects: subjects),
+                action: action, store: store, call: call)
     }
 
     nonisolated static func verdict(_ decision: NativeRuleDecision, authorizing: [String], resolver: NativeRuleResolver,
@@ -318,7 +311,8 @@ extension ChatStore {
             let revision = resolver.revision
             let durable = resolver.durable ? store : nil
             return NativeRuleVerdict(decision, why: why, confirm: {
-                guard NativeInstructionCheck.cleared == spending else { return false }
+                guard let cleared = NativeRequestAuthorizer.cleared, cleared.authorizes, cleared.signature == spending,
+                      let messageID = uses.messageID, cleared.messageID == messageID else { return false }
                 if let durable, (try? durable.confirm(revision: revision, authorizing: [])) != .authorized { return false }
                 return uses.take(spending)
             })
@@ -385,7 +379,7 @@ extension ChatStore {
         let created = (repository as? LocalChatRepository).map {
             NativeInstructionUses(store: NativeInstructionUseStore(database: $0.database), messageID: turn.userMessageID,
                                   conversationID: turn.conversationID, holder: nil)
-        } ?? NativeInstructionUses()
+        } ?? NativeInstructionUses(messageID: turn.userMessageID, conversationID: turn.conversationID)
         turnInstructionUseSources[key] = created
         return created
     }
@@ -477,7 +471,50 @@ extension ChatStore {
     }
 
     var sharedFolderRows: [SharedFolderRow] {
-        SharedFolderRows.rows(conversations: conversations, projects: projects, companionThreadID: veraThreadID, name: companionName)
+        let known = folderStates
+        return SharedFolderRows.rows(conversations: conversations, projects: projects, companionThreadID: veraThreadID, name: companionName,
+                                     availability: { known[Self.folderStateKey($0)] ?? .usable })
+    }
+
+    nonisolated static func folderStateKey(_ grant: FolderGrant) -> String {
+        let identity = grant.identity.map { "\($0.device)|\($0.inode)" } ?? ""
+        return grant.id + "|" + grant.path + "|" + identity
+    }
+
+    nonisolated static func folderStates(_ grants: [FolderGrant]) -> [String: FolderAvailability] {
+        var states: [String: FolderAvailability] = [:]
+        for grant in grants { states[folderStateKey(grant)] = grant.availability }
+        return states
+    }
+
+    var everySharedFolder: [FolderGrant] { conversations.flatMap(\.grants) + projects.flatMap(\.grants) }
+
+    func folderState(_ grant: FolderGrant) -> FolderAvailability { folderStates[Self.folderStateKey(grant)] ?? .usable }
+
+    func beginSharedFolderCheck() -> Int {
+        folderRefreshGeneration += 1
+        return folderRefreshGeneration
+    }
+
+    func applySharedFolderStates(_ next: [String: FolderAvailability], generation: Int) {
+        guard generation == folderRefreshGeneration else { return }
+        if next != folderStates { folderStates = next }
+    }
+
+    func checkSharedFoldersNow() {
+        let generation = beginSharedFolderCheck()
+        applySharedFolderStates(Self.folderStates(everySharedFolder), generation: generation)
+    }
+
+    func checkSharedFolders() {
+        let generation = beginSharedFolderCheck()
+        let grants = everySharedFolder
+        Task.detached(priority: .utility) { [weak self, grants, generation] in
+            let next = ChatStore.folderStates(grants)
+            await MainActor.run { [weak self] in
+                self?.applySharedFolderStates(next, generation: generation)
+            }
+        }
     }
 
     @discardableResult
@@ -495,6 +532,55 @@ extension ChatStore {
             grantError = chatLine
             projectError = projectLine
             rulesNotice = SharedFolderRows.failed
+        }
+        return saved
+    }
+
+    @discardableResult
+    func chooseAgain(_ row: SharedFolderRow, url: URL) -> Bool {
+        let chosen: FolderGrant
+        do { chosen = try FolderGrant.make(url: url) } catch {
+            rulesNotice = error.localizedDescription
+            return false
+        }
+        func placed(_ grants: [FolderGrant], _ grantID: String) -> [FolderGrant]? {
+            guard let index = grants.firstIndex(where: { $0.id == grantID }) else { return nil }
+            let others = grants.filter { $0.id != grantID }.flatMap { [$0.path] + ($0.current().map { [$0.path] } ?? []) }
+            guard !others.contains(where: { NativeFolderAccess.contains(root: $0, path: chosen.path) || NativeFolderAccess.contains(root: chosen.path, path: $0) }) else {
+                rulesNotice = SharedFolderRows.alreadyShared(chosen.name)
+                return nil
+            }
+            var next = grants
+            next[index] = FolderGrant(id: grantID, path: chosen.path, name: chosen.name, bookmark: chosen.bookmark, identity: chosen.identity,
+                                      readOnly: grants[index].readOnly)
+            return next
+        }
+        let saved: Bool
+        switch row.kind {
+        case .chat(let conversationID, let grantID):
+            guard let index = conversations.firstIndex(where: { $0.id == conversationID }),
+                  let next = placed(conversations[index].grants, grantID) else { return false }
+            let before = conversations[index]
+            let chatLine = grantError
+            conversations[index].grants = next
+            saved = persistGrants(index)
+            if !saved, let current = conversations.firstIndex(where: { $0.id == conversationID }) {
+                conversations[current].grants = before.grants
+                conversations[current].isPersisted = before.isPersisted
+                refreshConversationGrants(conversationID)
+                grantError = chatLine
+            }
+        case .project(let projectID, let grantID):
+            guard let record = project(projectID), let next = placed(record.grants, grantID) else { return false }
+            let projectLine = projectError
+            saved = replaceProjectFolders(projectID, grants: next)
+            if !saved { projectError = projectLine }
+        }
+        if saved {
+            checkSharedFolders()
+            if rulesNotice == SharedFolderRows.notMoved || rulesNotice == SharedFolderRows.failed { rulesNotice = nil }
+        } else {
+            rulesNotice = SharedFolderRows.notMoved
         }
         return saved
     }

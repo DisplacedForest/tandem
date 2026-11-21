@@ -11,6 +11,7 @@ final class NativeCompanionIntroductionTransport: NativeChatTransport, @unchecke
     func discoverModels() async throws -> [String] { ["local-model"] }
 
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.noRestrictions) }
         lock.withLock { captured.append(messages); capturedTools.append(tools) }
         let current = messages.last(where: { $0.role == "user" })?.content ?? ""
         var call: NativeChatToolCall?
@@ -68,9 +69,7 @@ extension SelfTest {
                               nativeEnabledToolIDs: ["apple-reminders"], artifactPersistenceEnabled: false)
         var persistedName = ""
         store.companionNameWriter = { persistedName = $0 }
-        let askSuite = "tandem-companion-name-ask-\(UUID().uuidString)"
-        guard let askDefaults = UserDefaults(suiteName: askSuite) else { throw NativeTaskFixture.Failure.assertion("Scratch defaults open") }
-        defer { askDefaults.removePersistentDomain(forName: askSuite) }
+        let askDefaults = AppLocations.scratchPreferences()
         store.companionDefaults = askDefaults
         store.asksForCompanionName = true
         try require(CompanionNameAsk.atLaunch(name: nil, settingUp: false, dismissed: false) && !CompanionNameAsk.atLaunch(name: nil, settingUp: true, dismissed: false)

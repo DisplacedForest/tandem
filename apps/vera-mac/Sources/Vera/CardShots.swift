@@ -117,7 +117,7 @@ enum CardShot {
             exit(1)
         }
         do {
-            try png.write(to: URL(fileURLWithPath: path))
+            try png.write(to: AppLocations.checkedOutput(path))
             print("wrote \(path)")
             exit(0)
         } catch {
@@ -272,7 +272,7 @@ enum CardShot {
             : NativeCardSubject(action: .networkSends, toolID: "booking-send", toolTitle: toolTitle, alwaysAsks: asks)
         let place = NativeCardPlace.task(taskID: "card-task", conversationID: threadID, scheduleID: nil)
         let offered = NativeCardChoices.offered(subject, place: place)
-        let details = command ? "make pdf\nin \(folder)" : NativeCompanionWorker.details(toolTitle, argumentsJSON: arguments)
+        let details = command ? "make pdf\nin \(folder)" : NativeCompanionWorker.shownDetails(toolTitle, argumentsJSON: arguments)
         let never = offered.first(where: { $0.kind == .never })?.title ?? ""
         let covers = NativeCardChoices.scope(subject) ?? ""
         let decision: [String: Any] = [
@@ -286,7 +286,7 @@ enum CardShot {
         display.card.choices = reference.snapshot?.decision?.choices.filter { NativeTaskCardPresentation.choiceTitle($0) != nil }
         store.nativeTaskEngine.set(engineURL)
         store.nativeTaskReferences = [reference]
-        var message = Message(role: .assistant, text: command ? "I'll rebuild the PDF in the background." : "I'll send the booking request in the background.")
+        var message = Message(role: .assistant, text: command ? "I'll rebuild the PDF now." : "I'll send the booking request.")
         message.displayBlocks = [.taskCard(display.card)]
         store.conversations[index].messages = [
             Message(role: .user, text: command ? "Rebuild the greenhouse PDF when you get a chance." : "Book the workshop inspection for Tuesday morning."),
@@ -335,7 +335,10 @@ enum CardShot {
             let short = "Send a message: The vents are fixed."
             step = try NativeCompanionWorker.report(checkpoint, assignment: title, text: "Stopped because you declined: \(short)." + effects, keep: false,
                                                     stop: NativeTaskStop(reason: NativeTaskStop.declined,
-                                                                         step: "Send a message\nMessage: The vents are fixed.\nTo: growers@example.com", earlier: earlier))
+                                                                         step: NativeCompanionWorker.stepLiteral(toolID: "message-send", toolTitle: "Send a message",
+                                                                                                                    argumentsJSON: "{\"message\":\"The vents are fixed.\",\"to\":\"growers@example.com\"}",
+                                                                                                                    title: short),
+                                                                         earlier: earlier))
         case "card-stop-unconfirmed":
             let short = "Run a command: rsync -a notes/ /Volumes/Backup/notes"
             step = try NativeCompanionWorker.report(checkpoint, assignment: title,
@@ -379,7 +382,7 @@ enum CardShot {
               let display = try? NativeTaskProjection.display(reference: reference, snapshot: reference.snapshot) else { return }
         store.nativeTaskEngine.set(engineURL)
         store.nativeTaskReferences = [reference]
-        var message = Message(role: .assistant, text: "I'll take care of it in the background.")
+        var message = Message(role: .assistant, text: "I'll take care of it.")
         message.displayBlocks = [.taskCard(display.card)] + (display.artifact.map { [NativeDisplayBlock.artifact($0)] } ?? [])
         store.conversations[index].messages = [Message(role: .user, text: ask), message]
     }
@@ -404,18 +407,18 @@ enum CardShot {
         guard let repository = store.repository as? LocalChatRepository,
               let origin = try? NativeTaskFixture.origin(repository),
               let request = try? NativeResearchTaskRequest(objective: "Check current lumber futures and note any move over two percent.",
-                                                           deliverables: ["A short summary"]),
+                                                           deliverables: ["A short summary"], workerType: "companion"),
               let engine = try? NativeTaskEngineIdentity(engineURL),
               let reference = try? repository.prepareTaskReference(origin: origin, engine: engine, request: request, profile: nil) else {
             NativeScheduleShotFixture.populate(store)
             return
         }
-        let prompt = "\(CompanionSentence.placeholder) wants to send a price alert."
+        let prompt = CompanionSavedText.marker + " wants to send a price alert."
         let remote = UUID().uuidString
         if let queued = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "queued"),
            let waiting = try? NativeTaskDisplayFixture.snapshot(reference, id: remote, state: "needs_decision", decision: [
                "id": "card-schedule", "prompt": prompt, "choices": ["decline", "never", "allow_always", "allow_here", "approve"],
-               "details": "Message: Lumber is up 2.4 percent since yesterday.\nTo: workshop@example.com",
+               "details": "To: workshop@example.com\nMessage: Lumber is up 2.4 percent since yesterday.",
                "covers": "This action every time", "never": "Never allow it for this",
            ]) {
             _ = try? repository.acknowledgeTaskReference(id: reference.id, snapshot: queued)
@@ -440,7 +443,7 @@ extension CompanionShotFixture {
             return
         }
         let all: [(String, String)] = [("Lumber prices this month", "research"), ("Workshop plan", "document"),
-                                       ("new Indy restaurants", "research")]
+                                       ("new Fernhollow restaurants", "research")]
         let work: [(String, String)]
         switch view {
         case "companion-working-three": work = all

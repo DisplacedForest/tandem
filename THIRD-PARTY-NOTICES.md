@@ -4,7 +4,7 @@ Tandem includes the following third-party material.
 
 ## Apps SDK UI icons
 
-The interface icons in the sidebar, the destination rail and the conversation top bar come from Apps SDK UI.
+The interface icons in the sidebar, the destination rail and the conversation views come from Apps SDK UI.
 
 - Project: Apps SDK UI
 - Source: https://github.com/openai/apps-sdk-ui

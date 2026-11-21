@@ -8,5 +8,5 @@
 1 apps/vera-mac/Sources/Vera/NativeTaskTransportTiming.swift
 1 apps/vera-mac/Sources/Vera/SafeAppReplacement.swift
 21 apps/vera-mac/Sources/Vera/SelfTest.swift
-2 apps/vera-mac/Sources/Vera/StoreRuleRecords.swift
+1 apps/vera-mac/Sources/Vera/StoreRuleRecords.swift
 1 prototypes/assistant-ui/Sources/VeraAssistantUI/SelfTest.swift

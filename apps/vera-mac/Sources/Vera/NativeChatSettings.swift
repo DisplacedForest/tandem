@@ -359,31 +359,31 @@ enum NativeChatToolCatalog {
             NativeChatToolDescriptor(
                 id: NativeWebTools.searchToolID,
                 name: "Web search",
-                summary: "Searches the web through your search server and answers with numbered sources.",
+                summary: "Searches the web and answers with sources.",
                 available: searchConfigured,
-                setup: "Set the search URL in the Search tab to enable web search."),
+                setup: "Add your search server to use this."),
             NativeChatToolDescriptor(
                 id: NativeWebTools.fetchToolID,
                 name: "Read web pages",
-                summary: "Reads the text of a public web page when a search snippet is not enough.",
+                summary: "Reads a public web page when a search result is not enough.",
                 available: true,
                 setup: "Enable this tool to let answers read pages you or a search point to."),
             NativeChatToolDescriptor(
                 id: NativeFolderTools.toolID,
                 name: "Files in shared folders",
-                summary: "Reads, searches, writes, edits and moves files inside folders you share with a chat, and can move them to the Trash under your rules. Nothing is deleted outright.",
+                summary: "Reads and edits files in folders you share with a chat. Nothing is deleted outright.",
                 available: true,
                 setup: "Share a folder from the message box to turn these on for that chat."),
             NativeChatToolDescriptor(
                 id: NativeCommandTools.toolID,
                 name: "Commands in shared folders",
-                summary: "Runs shell commands with a shared folder as the working directory. Your rules decide whether each command runs, asks first, or is handed to you.",
+                summary: "Runs commands inside a folder you shared. Your rules decide whether each one runs, asks first, or is left to you.",
                 available: true,
                 setup: "Share a folder from the message box to turn this on for that chat. Set what asks first in the Rules tab."),
             NativeChatToolDescriptor(
                 id: NativeWebTools.researchToolID,
                 name: "Research and documents",
-                summary: "Does research and document writing on its own while you keep chatting, reports on a card in the chat, and proposes schedules for recurring work that you confirm before they are saved.",
+                summary: "Researches and writes documents while you keep chatting.",
                 available: true,
                 setup: "Enable this tool to allow research and documents."),
             NativeImageTools.descriptor(configured: imageConfigured),
@@ -416,10 +416,10 @@ struct NativeKeychainOperations {
         return (SecKeychainGetUserInteractionAllowed(&allowed), allowed.boolValue)
     }
     var setInteraction: (Bool) -> OSStatus = { SecKeychainSetUserInteractionAllowed($0) }
-    var read: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { SecItemCopyMatching($0, $1) }
-    var update: (CFDictionary, CFDictionary) -> OSStatus = { SecItemUpdate($0, $1) }
-    var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { SecItemAdd($0, $1) }
-    var delete: (CFDictionary) -> OSStatus = { SecItemDelete($0) }
+    var read: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemCopyMatching($0, $1) }
+    var update: (CFDictionary, CFDictionary) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemUpdate($0, $1) }
+    var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemAdd($0, $1) }
+    var delete: (CFDictionary) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemDelete($0) }
 }
 
 protocol NativeCredentialStore {
@@ -437,8 +437,14 @@ extension NativeCredentialStore {
 
 struct KeychainNativeCredentialStore: NativeCredentialStore {
     var allowsInteraction = true
-    var operations = NativeKeychainOperations()
+    var operations: NativeKeychainOperations
     private let service = "org.displacedforest.vera.native-chat"
+
+    init(allowsInteraction: Bool = true, operations: NativeKeychainOperations? = nil) {
+        if operations == nil { AppLocations.refuseRealKeychain() }
+        self.allowsInteraction = allowsInteraction
+        self.operations = operations ?? NativeKeychainOperations()
+    }
 
     private func query(for profileID: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,

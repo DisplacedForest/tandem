@@ -25,6 +25,7 @@ final class NativeSessionFixtureTransport: NativeChatTransport, @unchecked Senda
 
     func discoverModels() async throws -> [String] { ["local-model"] }
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.noRestrictions) }
         lock.withLock { captured.append(messages); advertised.append(tools) }
         let query = messages.last(where: { $0.role == "user" })?.content ?? ""
         return AsyncThrowingStream { continuation in
@@ -44,7 +45,7 @@ enum NativeSessionFixture {
     static let config = NativeChatConfig(baseURL: URL(string: "http://127.0.0.1:1/v1")!, apiKey: nil,
                                         model: "local-model", chatTemplateKwargs: nil)
 
-    static func store(_ repository: LocalChatRepository, transport: NativeSessionFixtureTransport,
+    static func store(_ repository: any ChatRepository, transport: NativeSessionFixtureTransport,
                       gate: NativeSessionGate, confirmation: Bool = false) -> ChatStore {
         let definition = NativeToolDefinition(id: "hold", name: "hold", title: "Check the reference",
             description: "Read the synthetic reference", parameters: .object(["type": .string("object")]),
@@ -77,14 +78,15 @@ enum NativeSessionFixture {
             store.scheduleConversationTurns()
         }
         let previousMessages = store.conversations[index].messages
-        guard store.sendText(text), let accepted = try repository.conversationTurns().last else { return false }
+        guard store.sendText(text, fromComposer: true), let accepted = try repository.conversationTurns().last else { return false }
         let user = store.conversations[index].messages.first { $0.id == accepted.userMessageID }!
-        let legacy = NativeConversationTurn(id: accepted.id, conversationID: accepted.conversationID,
+        var legacy = NativeConversationTurn(id: accepted.id, conversationID: accepted.conversationID,
             userMessageID: accepted.userMessageID, assistantMessageID: accepted.assistantMessageID, mode: .continuous,
             profile: accepted.profile, enabledToolIDs: accepted.enabledToolIDs,
             persona: accepted.persona, userScope: accepted.userScope, instructions: accepted.instructions,
             grounding: accepted.grounding, memorySettings: accepted.memorySettings, createdAt: accepted.createdAt,
             history: NativeTurnHistoryMessage.snapshot(previousMessages, current: user, mode: .continuous))
+        legacy.preferenceEligible = accepted.preferenceEligible
         try repository.database.write { db in
             try LocalChatRepository.writeTurn(legacy, db: db)
             try db.execute(sql: "UPDATE native_conversation_turns SET mode='continuous' WHERE id=?",

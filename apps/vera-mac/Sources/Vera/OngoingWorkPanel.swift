@@ -125,25 +125,35 @@ extension ChatStore {
 struct OngoingWorkGlyph: View {
     let glyph: OngoingWorkItem.Glyph
 
+    static func icon(for glyph: OngoingWorkItem.Glyph) -> InterfaceIcon? {
+        switch glyph {
+        case .done: .tick
+        case .running: nil
+        case .waiting: .question
+        case .held: .pauseMark
+        case .problem: .failed
+        }
+    }
+
     var body: some View {
         ZStack {
             switch glyph {
             case .done:
                 Circle().fill(Theme.sage.opacity(0.18))
-                Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.sage)
+                InterfaceIconView(icon: Self.icon(for: glyph) ?? .tick, size: InterfaceIconSize.regular).foregroundStyle(Theme.sage)
             case .running:
                 Circle().stroke(Theme.cardStroke, lineWidth: 2).padding(4)
                 Circle().trim(from: 0, to: 0.3).stroke(Theme.sage, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90)).padding(4)
             case .waiting:
                 Circle().fill(Theme.warmTextSecondary.opacity(0.16))
-                Image(systemName: "clock").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
+                InterfaceIconView(icon: Self.icon(for: glyph) ?? .question, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextPrimary)
             case .held:
                 Circle().fill(Theme.warmTextSecondary.opacity(0.16))
-                Image(systemName: "pause.fill").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
+                InterfaceIconView(icon: Self.icon(for: glyph) ?? .pauseMark, size: InterfaceIconSize.regular).foregroundStyle(Theme.warmTextPrimary)
             case .problem:
                 Circle().fill(Theme.accent.opacity(0.18))
-                Image(systemName: "exclamationmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.accent)
+                InterfaceIconView(icon: Self.icon(for: glyph) ?? .failed, size: InterfaceIconSize.regular).foregroundStyle(Theme.accent)
             }
         }
         .frame(width: OngoingWorkMetrics.glyphSize, height: OngoingWorkMetrics.glyphSize)
@@ -171,8 +181,7 @@ struct OngoingWorkCard: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                InterfaceIconView(icon: .next, size: InterfaceIconSize.regular)
                     .foregroundStyle(Theme.warmTextSecondary)
                     .accessibilityHidden(true)
             }

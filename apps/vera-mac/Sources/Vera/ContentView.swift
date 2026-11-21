@@ -4,9 +4,11 @@ struct ContentView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
-    @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
+    @AppStorage("sidebarCollapsed", store: AppLocations.preferences) private var sidebarCollapsed = false
     @StateObject private var workflowEditor = WorkflowEditorStore()
     @State private var windowWidth: CGFloat = 0
+    @State private var fullScreen = false
+    @State private var history = WindowHistory()
     @State private var companionProfile = CompanionProfileState(launchedAt: Date())
 
     private func select(_ item: AppSection) {
@@ -19,10 +21,25 @@ struct ContentView: View {
         }
     }
 
+    private var currentStop: WindowHistory.Stop {
+        WindowHistory.Stop(section: store.section, conversationID: store.selectedID, pane: store.agenticPane)
+    }
+
+    private func step(forward: Bool) {
+        let conversations = Set(store.conversations.map(\.id))
+        guard let stop = history.step(forward: forward, exists: { $0.conversationID.map(conversations.contains) ?? true }) else { return }
+        if stop.section == .chat, let id = stop.conversationID {
+            store.select(id)
+        } else {
+            if let pane = stop.pane { store.agenticPane = pane }
+            select(stop.section)
+        }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             VeraSidebar(collapsed: $sidebarCollapsed, search: $search, workflowEditor: workflowEditor, onSelect: select)
-            Rectangle().fill(Theme.hairline).frame(width: 1)
+            Rectangle().fill(Theme.hairline).frame(width: 1).padding(.top, WindowStripMetrics.height)
             HStack(spacing: 0) {
                 Group {
                     switch store.section {
@@ -39,7 +56,8 @@ struct ContentView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: sidebarCollapsed) { sidebarCollapsed.toggle() })
+                .modifier(WindowStripPane(conversation: chatSection))
+                .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: !sidebarWide, fullScreen: fullScreen) { sidebarCollapsed.toggle() })
                 if store.showCanvas, chatSection {
                     Divider()
                     CanvasPanel().frame(width: 480)
@@ -52,6 +70,11 @@ struct ContentView: View {
             }
             .background(Theme.ink)
         }
+        .modifier(WindowStripChrome(sidebarWide: sidebarWide, collapsed: sidebarCollapsed, fullScreen: fullScreen,
+                                    canGoBack: history.canGoBack, canGoForward: history.canGoForward,
+                                    back: { step(forward: false) }, forward: { step(forward: true) }) { sidebarCollapsed.toggle() })
+        .onChange(of: currentStop, initial: true) { _, stop in history.visit(stop) }
+        .background(WindowButtonsPlacer(fullScreen: $fullScreen))
         .ignoresSafeArea(.container, edges: .top)
         .task { await store.connect() }
         .modifier(CompanionAttentionWindow())
@@ -86,6 +109,7 @@ struct ContentView: View {
     }
 
     private var chatSection: Bool { store.section == .chat || store.section == .vera }
+    private var sidebarWide: Bool { !sidebarCollapsed || (store.section == .agentic && store.agenticFlowID != nil) }
     private var companionThread: Bool {
         CompanionProfileState.available(section: store.section, companionThread: store.isVeraThread(store.selectedID))
     }
@@ -150,7 +174,7 @@ struct SidebarRow: View {
                     InterfaceIconView(icon: .more, size: InterfaceIconSize.small)
                         .foregroundStyle(Theme.textSecondary).frame(width: 22, height: 18).contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                 .help("Chat options").accessibilityLabel(Self.optionsLabel(convo.title))
             } else if convo.pinned {
                 InterfaceIconView(icon: .pin, size: InterfaceIconSize.mark)
@@ -187,6 +211,8 @@ struct ChatPane: View {
     @StateObject private var transcriptContinuity = CompanionTranscriptContinuity()
     @State private var followBox = TranscriptFollowBox()
     @State private var showsJump = false
+    @State private var unseenReplies = 0
+    @State private var firstUnseenReply: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func cancelTaskReveal() {
@@ -201,7 +227,164 @@ struct ChatPane: View {
         followBox.state.scope(conversationID, sends: store.composerSend.count)
         change(&followBox.state)
         if showsJump != followBox.state.showsJump { showsJump = followBox.state.showsJump }
+        let waiting = followBox.state.unseenReplies(followBox.replies)
+        if unseenReplies != waiting.count {
+            if unseenReplies == 0, !waiting.isEmpty {
+                AccessibilityNotification.Announcement(NewReplyMarker.title(waiting.count)).post()
+            }
+            unseenReplies = waiting.count
+        }
+        if firstUnseenReply != waiting.first { firstUnseenReply = waiting.first }
         return followBox.state
+    }
+
+    private func trackedTranscript(_ convo: Conversation, _ proxy: ScrollViewProxy) -> some View {
+        transcriptRows(convo)
+        .onScrollPhaseChange { _, phase in
+            transcriptContinuity.scrollPhaseChanged(phase)
+            follow(convo.id) { $0.scrollPhase(reader: phase == .tracking || phase == .interacting || phase == .decelerating) }
+        }
+        .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
+            TranscriptGeometry(offset: geometry.contentOffset.y, contentHeight: geometry.contentSize.height,
+                               containerHeight: geometry.containerSize.height)
+        } action: { _, next in
+            let before = follow(convo.id)
+            var catchUp = false
+            let after = follow(convo.id) { catchUp = $0.geometry(next) }
+            if store.isVeraThread(convo.id) {
+                if after.atLatest != before.atLatest {
+                    transcriptContinuity.observe(nearBottom: after.atLatest, conversationID: convo.id)
+                }
+                if after.following != before.following {
+                    transcriptContinuity.follows(after.following, conversationID: convo.id)
+                }
+            }
+            if catchUp {
+                let id = convo.id
+                Task { @MainActor in
+                    guard store.selectedID == id, follow(id).following else { return }
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+        }
+        .onScrollTargetVisibilityChange(idType: UUID.self, threshold: 0) { visible in
+            if store.isVeraThread(convo.id) {
+                transcriptContinuity.observe(visible: visible, ordered: convo.messages.map(\.id), conversationID: convo.id)
+            }
+        }
+    }
+
+    private func followedTranscript(_ convo: Conversation, _ proxy: ScrollViewProxy) -> some View {
+        trackedTranscript(convo, proxy)
+        .onChange(of: answeredReplies(convo)) { (_: [UUID], replies: [UUID]) in
+            noteReplies(convo.id, replies)
+        }
+        .onChange(of: convo.messages.last?.text ?? "") {
+            if follow(convo.id).following { proxy.scrollTo("bottom", anchor: .bottom) }
+        }
+        .onChange(of: convo.messages.count) {
+            followSend(convo.id)
+            guard follow(convo.id).following else { return }
+            if store.isVeraThread(convo.id) || reduceMotion {
+                proxy.scrollTo("bottom", anchor: .bottom)
+            } else {
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+        }
+        .onChange(of: store.composerSend) {
+            followSend(convo.id)
+            if store.composerSend.conversationID == convo.id { proxy.scrollTo("bottom", anchor: .bottom) }
+        }
+        .onChange(of: store.pendingHighlightMessageID) {
+            if store.pendingHighlightMessageID != nil { follow(convo.id) { $0.hold() } }
+            revealPendingSource(proxy)
+        }
+        .onChange(of: store.pendingTaskReveal) {
+            if store.pendingTaskReveal != nil { follow(convo.id) { $0.hold() } }
+            revealPendingTask(proxy)
+        }
+    }
+
+    private func transcriptRows(_ convo: Conversation) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 22) {
+                ForEach(convo.messages.filter(TranscriptVisibility.shows)) { msg in
+                    let confirmation = store.turnConfirmations[msg.id]
+                    let confirmationToken = store.turnConfirmationTokens[msg.id]
+                    MessageRow(message: msg, nativeActions: true,
+                               onAnswer: { id, sel, other in store.submitAsk(messageID: id, selections: sel, other: other) },
+                               onOpenArtifact: { store.openArtifact($0) },
+                               attachmentStore: store.attachmentStore,
+                               pendingConfirmation: confirmation,
+                               onToolDecision: { decision in
+                                   store.resolveTurnConfirmation(msg.id, decision: decision,
+                                       requestID: confirmation?.id, token: confirmationToken)
+                               },
+                               onRuleOffer: { blockID, answer in
+                                   store.answerRuleOffer(answer, messageID: msg.id, blockID: blockID, config: config)
+                               },
+                               companionThread: store.isVeraThread(convo.id))
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Theme.accent.opacity(highlightedMessageID == msg.id && highlightVisible ? 0.14 : 0))
+                                .padding(-8))
+                        .id(msg.id)
+                    if msg.role == .user, let marker = store.preferenceMarker(for: msg, in: convo.id) {
+                        TranscriptMarkerRow(marker: marker)
+                            .id("\(msg.id.uuidString)-marker")
+                    }
+                }
+                Color.clear.frame(height: 1).id("bottom")
+            }
+            .scrollTargetLayout()
+            .padding(.horizontal, 28)
+            .padding(.top, showsNotice ? 22 : ConversationTopBarMetrics.transcriptTop)
+            .padding(.bottom, 26)
+            .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private func transcriptControl(_ conversationID: String, _ proxy: ScrollViewProxy) -> some View {
+        if unseenReplies > 0, let target = firstUnseenReply {
+            NewReplyMarker(count: unseenReplies) { jumpToReply(conversationID, target, proxy) }
+                .padding(.bottom, 8)
+                .transition(reduceMotion ? .identity : .opacity)
+        } else if showsJump {
+            JumpToLatestButton { jumpToLatest(conversationID, proxy) }
+                .padding(.bottom, 8)
+                .transition(reduceMotion ? .identity : .opacity)
+        }
+    }
+
+    private func jumpToReply(_ conversationID: String, _ target: UUID, _ proxy: ScrollViewProxy) {
+        follow(conversationID) { $0.jumpToReply() }
+        if store.isVeraThread(conversationID) { transcriptContinuity.follows(true, conversationID: conversationID) }
+        if reduceMotion { proxy.scrollTo(target, anchor: .top) }
+        else { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(target, anchor: .top) } }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard store.selectedID == conversationID else { return }
+            follow(conversationID) { $0.settled() }
+        }
+    }
+
+    private func jumpToLatest(_ conversationID: String, _ proxy: ScrollViewProxy) {
+        follow(conversationID) { $0.jumpToLatest() }
+        if store.isVeraThread(conversationID) { transcriptContinuity.follows(true, conversationID: conversationID) }
+        if reduceMotion { proxy.scrollTo("bottom", anchor: .bottom) }
+        else { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } }
+    }
+
+    private func answeredReplies(_ convo: Conversation) -> [UUID] {
+        convo.messages.filter(NewReplyMarker.counts).map(\.id)
+    }
+
+    private func noteReplies(_ conversationID: String, _ replies: [UUID]) {
+        let rows = conversation?.messages.map(\.id) ?? []
+        followBox.replies = replies
+        follow(conversationID) { $0.replies(replies, rows: rows) }
     }
 
     private func followSend(_ conversationID: String) {
@@ -284,11 +467,11 @@ struct ChatPane: View {
         VStack(spacing: 0) {
             if let notice = store.pendingSourceNotice, notice.conversationID == conversation?.id {
                 HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "info.circle").foregroundStyle(Theme.textSecondary)
+                    InterfaceIconView(icon: .info, size: InterfaceIconSize.regular).foregroundStyle(Theme.textSecondary)
                     Text(notice.message).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
-                    Button { store.dismissSourceNotice() } label: { Image(systemName: "xmark") }
+                    Button { store.dismissSourceNotice() } label: { InterfaceIconView(icon: .close, size: InterfaceIconSize.regular) }
                         .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
                         .accessibilityLabel("Dismiss")
                 }
@@ -300,7 +483,7 @@ struct ChatPane: View {
             }
             if let convo = conversation, !convo.messages.isEmpty, store.isVeraThread(convo.id), let error = store.companionConfigurationError {
                 HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.textSecondary)
+                    InterfaceIconView(icon: .warning, size: InterfaceIconSize.regular).foregroundStyle(Theme.textSecondary)
                     CompanionLineText(line: error.line).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
                     Spacer(minLength: 8)
                 }
@@ -313,112 +496,10 @@ struct ChatPane: View {
             }
             if let convo = conversation, !convo.messages.isEmpty {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 22) {
-                            ForEach(convo.messages.filter(TranscriptVisibility.shows)) { msg in
-                                let confirmation = store.turnConfirmations[msg.id]
-                                let confirmationToken = store.turnConfirmationTokens[msg.id]
-                                MessageRow(message: msg, nativeActions: true,
-                                           onAnswer: { id, sel, other in store.submitAsk(messageID: id, selections: sel, other: other) },
-                                           onOpenArtifact: { store.openArtifact($0) },
-                                           attachmentStore: store.attachmentStore,
-                                           pendingConfirmation: confirmation,
-                                           onToolDecision: { decision in
-                                               store.resolveTurnConfirmation(msg.id, decision: decision,
-                                                   requestID: confirmation?.id, token: confirmationToken)
-                                           },
-                                           onRuleOffer: { blockID, answer in
-                                               store.answerRuleOffer(answer, messageID: msg.id, blockID: blockID, config: config)
-                                           },
-                                           companionThread: store.isVeraThread(convo.id))
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(Theme.accent.opacity(highlightedMessageID == msg.id && highlightVisible ? 0.14 : 0))
-                                            .padding(-8))
-                                    .id(msg.id)
-                                if msg.role == .user, let marker = store.preferenceMarker(for: msg, in: convo.id) {
-                                    TranscriptMarkerRow(marker: marker)
-                                        .id("\(msg.id.uuidString)-marker")
-                                }
-                            }
-                            Color.clear.frame(height: 1).id("bottom")
-                        }
-                        .scrollTargetLayout()
-                        .padding(.horizontal, 28)
-                        .padding(.top, showsNotice ? 22 : ConversationTopBarMetrics.transcriptTop)
-                        .padding(.bottom, 26)
-                        .frame(maxWidth: ConversationMetrics.columnWidth, alignment: .leading)
-                        .frame(maxWidth: .infinity)
-                    }
-                    .onScrollPhaseChange { _, phase in
-                        transcriptContinuity.scrollPhaseChanged(phase)
-                        follow(convo.id) { $0.scrollPhase(reader: phase == .tracking || phase == .interacting || phase == .decelerating) }
-                    }
-                    .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
-                        TranscriptGeometry(offset: geometry.contentOffset.y, contentHeight: geometry.contentSize.height,
-                                           containerHeight: geometry.containerSize.height)
-                    } action: { _, next in
-                        let before = follow(convo.id)
-                        var catchUp = false
-                        let after = follow(convo.id) { catchUp = $0.geometry(next) }
-                        if store.isVeraThread(convo.id) {
-                            if after.atLatest != before.atLatest {
-                                transcriptContinuity.observe(nearBottom: after.atLatest, conversationID: convo.id)
-                            }
-                            if after.following != before.following {
-                                transcriptContinuity.follows(after.following, conversationID: convo.id)
-                            }
-                        }
-                        if catchUp {
-                            let id = convo.id
-                            Task { @MainActor in
-                                guard store.selectedID == id, follow(id).following else { return }
-                                proxy.scrollTo("bottom", anchor: .bottom)
-                            }
-                        }
-                    }
-                    .onScrollTargetVisibilityChange(idType: UUID.self, threshold: 0) { visible in
-                        if store.isVeraThread(convo.id) {
-                            transcriptContinuity.observe(visible: visible, ordered: convo.messages.map(\.id), conversationID: convo.id)
-                        }
-                    }
-                    .onChange(of: convo.messages.last?.text ?? "") {
-                        if follow(convo.id).following { proxy.scrollTo("bottom", anchor: .bottom) }
-                    }
-                    .onChange(of: convo.messages.count) {
-                        followSend(convo.id)
-                        guard follow(convo.id).following else { return }
-                        if store.isVeraThread(convo.id) || reduceMotion {
-                            proxy.scrollTo("bottom", anchor: .bottom)
-                        } else {
-                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
-                        }
-                    }
-                    .onChange(of: store.composerSend) {
-                        followSend(convo.id)
-                        if store.composerSend.conversationID == convo.id { proxy.scrollTo("bottom", anchor: .bottom) }
-                    }
-                    .onChange(of: store.pendingHighlightMessageID) {
-                        if store.pendingHighlightMessageID != nil { follow(convo.id) { $0.hold() } }
-                        revealPendingSource(proxy)
-                    }
-                    .onChange(of: store.pendingTaskReveal) {
-                        if store.pendingTaskReveal != nil { follow(convo.id) { $0.hold() } }
-                        revealPendingTask(proxy)
-                    }
-                    .overlay(alignment: .bottom) {
-                        if showsJump {
-                            JumpToLatestButton {
-                                follow(convo.id) { $0.jumpToLatest() }
-                                if store.isVeraThread(convo.id) { transcriptContinuity.follows(true, conversationID: convo.id) }
-                                if reduceMotion { proxy.scrollTo("bottom", anchor: .bottom) }
-                                else { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } }
-                            }
-                            .padding(.bottom, 8)
-                            .transition(reduceMotion ? .identity : .opacity)
-                        }
-                    }
+                    followedTranscript(convo, proxy)
+                    .overlay(alignment: .bottom) { transcriptControl(convo.id, proxy) }
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsJump)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: unseenReplies)
                     .task(id: convo.id) {
                         store.refreshPreferenceMarkers(conversationID: convo.id)
                         let companion = store.isVeraThread(convo.id)
@@ -426,6 +507,7 @@ struct ChatPane: View {
                         follow(convo.id) {
                             if anchor != nil || store.pendingHighlightMessageID != nil || store.pendingTaskReveal != nil { $0.hold() }
                         }
+                        noteReplies(convo.id, answeredReplies(convo))
                         await Task.yield()
                         guard !Task.isCancelled else { return }
                         if let anchor { proxy.scrollTo(anchor, anchor: .top) }
@@ -533,7 +615,7 @@ struct EmptyChatView: View {
                 }
                 ComposerField()
                 if let error = store.isVeraThread(store.selectedID) ? store.chatConfigurationErrorLine : store.focusedChatConfigurationError.map(CompanionLine.literal) {
-                    Label { CompanionLineText(line: error) } icon: { Image(systemName: "exclamationmark.triangle") }
+                    Label { CompanionLineText(line: error) } icon: { InterfaceIconView(icon: .warning, size: InterfaceIconSize.small) }
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 } else if store.isLive && project == nil {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
@@ -546,7 +628,7 @@ struct EmptyChatView: View {
                                 Text("\(store.conversationAssistantLead) isn't connected. Set up the connection")
                             }
                         } icon: {
-                            Image(systemName: "bolt.horizontal")
+                            InterfaceIconView(icon: .connect, size: InterfaceIconSize.regular)
                         }
                             .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
                             .padding(.horizontal, 12).frame(height: 32)
@@ -626,7 +708,7 @@ struct ComposerMentionList: View {
                     let index = rows.firstIndex(of: item) ?? 0
                     Button { onPick(item) } label: {
                         HStack(spacing: SidebarMetrics.inset) {
-                            Image(systemName: item.icon).font(.system(size: SidebarMetrics.iconSize, weight: .medium))
+                            InterfaceIconView(icon: item.icon, size: InterfaceIconSize.row)
                                 .foregroundStyle(Theme.textSecondary)
                                 .frame(width: SidebarMetrics.iconSlot, height: SidebarMetrics.iconSlot)
                             Text(item.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
@@ -691,19 +773,27 @@ struct ComposerControlGlyph: View {
         }
     }
 
-    private var symbol: String {
+    private var iconSize: CGFloat {
         switch kind {
-        case .plus: "plus"
-        case .voice: "waveform"
-        case .dictate(let active): active ? "mic.fill" : "mic"
-        case .send: "arrow.up"
-        case .stop: "stop.fill"
+        case .plus: InterfaceIconSize.regular
+        case .voice, .dictate: InterfaceIconSize.row
+        case .send: InterfaceIconSize.rail
+        case .stop: InterfaceIconSize.small
+        }
+    }
+
+    var icon: InterfaceIcon {
+        switch kind {
+        case .plus: .add
+        case .voice: .voice
+        case .dictate(let active): active ? .dictating : .dictate
+        case .send: .send
+        case .stop: .stop
         }
     }
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: { if case .stop = kind { 12 } else { 15 } }(), weight: { if case .send = kind { .semibold } else { .medium } }()))
+        InterfaceIconView(icon: icon, size: iconSize)
             .foregroundStyle(tint)
             .frame(width: diameter, height: diameter)
             .background(Circle().fill(fill))
@@ -764,7 +854,6 @@ struct MessageRow: View {
                             connectedTaskIDs: store.connectedNativeTaskIDs,
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask,
                             onDecide: store.answerNativeTask,
-                            onSaveAnswer: store.saveNativeTaskAnswer,
                             highlightedTaskID: store.highlightedTaskID,
                             onRuleOffer: onRuleOffer)
                     }
@@ -777,10 +866,10 @@ struct MessageRow: View {
                         Text(status).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                     }
                     if nativeActions && message.state == .interrupted {
-                        Label(message.failure.map(SavedWording.current) ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
+                        Label { Text(message.failure.map(SavedWording.current) ?? "The response was interrupted") } icon: { InterfaceIconView(icon: .warning, size: InterfaceIconSize.small) }
                             .font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
                         Button("Retry answer") { store.retryAnswer(message.id) }
-                            .buttonStyle(.borderless).font(.system(size: 11))
+                            .buttonStyle(ConversationButtonStyle(kind: .secondary))
                     }
                     AssistantBody(message: message, section: .actions, companionThread: companionThread, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                 }
@@ -820,24 +909,27 @@ struct AttachmentRouteBadge: View {
     var missingImages: [String] = []
     @State private var showDisclosure = false
 
-    private var icon: String {
+    private var icon: InterfaceIcon {
         switch note.route {
-        case .direct: return missingImages.isEmpty ? "photo" : "exclamationmark.triangle"
-        case .bridged: return "arrow.triangle.branch"
-        case .withheld: return "eye.slash"
+        case .direct: return missingImages.isEmpty ? .image : .warning
+        case .bridged: return .bridged
+        case .withheld: return .withheld
         }
     }
 
-    private var label: String {
+    private var label: String { Self.label(note, missingImages: missingImages) }
+
+    static func label(_ note: MessageRouteNote, missingImages: [String]) -> String {
         switch note.route {
         case .direct where !missingImages.isEmpty:
-            return "\(missingImages.joined(separator: ", ")) could not be loaded and was not included in the model request"
+            let names = missingImages.joined(separator: ", ")
+            return missingImages.count == 1 ? "\(names) couldn't be loaded, so it wasn't sent" : "\(names) couldn't be loaded, so they weren't sent"
         case .direct:
-            return "Image included in the model request"
+            return "Image sent with your message"
         case .bridged where note.disclosure == nil:
-            return "Routing through the vision bridge\(note.bridgeModel.map { " (\($0))" } ?? "")"
+            return "Having the image described first"
         case .bridged:
-            return "Described by the vision bridge\(note.bridgeModel.map { " (\($0))" } ?? ""). The model did not receive the image."
+            return "Described by a second model first. The one answering didn't see the image itself."
         case .withheld:
             return "Sent without the attachment"
         }
@@ -845,7 +937,7 @@ struct AttachmentRouteBadge: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 10))
+            InterfaceIconView(icon: icon, size: InterfaceIconSize.mark)
             Text(label).font(.system(size: 11))
             if note.route == .bridged, note.disclosure != nil {
                 Button(showDisclosure ? "Hide description" : "Show description") {
@@ -893,16 +985,100 @@ struct NativeToolActivityChip: View {
 
     private var declined: Bool { Self.isDeclined(activity) }
 
-    private var icon: String {
-        if activity.why != nil { return "hand.raised" }
-        if declined { return "hand.raised.slash" }
+    static let shownKeys = ["worker_type": "kind"]
+    static let incomplete = "The request was incomplete, so nothing ran."
+    static let unavailable = "This isn't available in this chat."
+    static let cutShort = "The rest of this message was cut off."
+    static let errorExtras: Set<String> = NativeToolRepair.hidden.union(["truncated", "truncation_reason"])
+
+    static func fields(_ json: String) -> [String: NativeJSONValue]? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return nil }
+        return try? object.mapValues { try NativeJSONValue(any: $0) }
+    }
+
+    static func shownLabel(_ key: String) -> String {
+        let label = (shownKeys[key.lowercased()] ?? key).replacingOccurrences(of: "_", with: " ")
+        return label.prefix(1).uppercased() + label.dropFirst()
+    }
+
+    static func shownRequest(_ activity: NativeToolActivity) -> String {
+        var shown = activity
+        if activity.toolID == NativeScheduleTools.toolID, var values = fields(activity.request), values.removeValue(forKey: "worker_type") != nil,
+           let trimmed = try? NativeToolLoop.serializedResult(.object(values)) {
+            shown.request = trimmed
+        }
+        let asked = NativeToolConfirmationRequest(activity: shown)
+        if let specific = NativeToolConfirmationBar.specificLiteral(for: asked, now: .distantPast) { return specific }
+        guard let values = fields(activity.request) else { return activity.request }
+        var plain: [String: NativeJSONValue] = [:]
+        for (key, value) in values {
+            if activity.toolID == NativeScheduleTools.toolID, key.lowercased() == "worker_type" { continue }
+            let label = shownKeys[key.lowercased()] ?? key
+            if case .array(let items) = value {
+                let texts = items.compactMap { item -> String? in if case .string(let text) = item { text } else { nil } }
+                if texts.count == items.count { plain[label] = .string(texts.joined(separator: ", ")); continue }
+            }
+            plain[label] = value
+        }
+        return NativeCompanionWorker.shownDetails(activity.title, argumentsJSON: NativeEffectProposal.canonicalArguments(.object(plain)))
+    }
+
+    static func shownError(_ error: String, cut: Bool) -> String {
+        if error == NativeToolError.unavailable.errorDescription { return unavailable }
+        if error.hasPrefix(SavedWording.argumentsLead) { return incomplete }
+        return cut ? error + "\n" + cutShort : error
+    }
+
+    static func shownResult(_ result: String, toolID: String = "") -> String {
+        guard let values = fields(result) else { return result }
+        if toolID == NativeCommandTools.toolID {
+            var parts = ["stdout", "stderr"].compactMap { key -> String? in
+                guard case .string(let text)? = values[key] else { return nil }
+                let trimmed = text.trimmingCharacters(in: .newlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            if case .string(let error)? = values["error"], !error.isEmpty {
+                parts.insert(shownError(error, cut: values["truncated"] == .bool(true)), at: 0)
+            } else if case .number(let code)? = values["exit_code"], code != 0 {
+                parts.insert("The command failed with exit status \(Int(code)).", at: 0)
+            } else if case .number(let signal)? = values["signal"] {
+                parts.insert("The command was ended by signal \(Int(signal)).", at: 0)
+            }
+            return parts.joined(separator: "\n\n")
+        }
+        if case .string(let error)? = values["error"], Set(values.keys).subtracting(["error"]).isSubset(of: errorExtras) {
+            return shownError(error, cut: values["truncated"] == .bool(true))
+        }
+        var lines: [String] = []
+        for key in NativeCompanionWorker.shownOrder(Array(values.keys)) {
+            switch values[key] {
+            case .string(let text)?:
+                if !text.isEmpty { lines.append(shownLabel(key) + ": " + text.trimmingCharacters(in: .newlines)) }
+            case .bool(let flag)?: lines.append(shownLabel(key) + ": " + (flag ? "Yes" : "No"))
+            case .number(let number)?: lines.append(shownLabel(key) + ": " + NativeEffectProposal.canonicalArguments(.number(number)))
+            case .null?: continue
+            default: return result
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func showsSpinner(_ activity: NativeToolActivity, awaitingDecision: Bool) -> Bool {
+        activity.state == .pending && !awaitingDecision
+    }
+
+    static func icon(for activity: NativeToolActivity, awaitingDecision: Bool) -> InterfaceIcon {
+        if activity.why != nil { return .needsYou }
+        if isDeclined(activity) { return .declined }
         switch activity.state {
-        case .pending: return "clock"
-        case .succeeded: return "checkmark.circle.fill"
-        case .failed: return "xmark.circle.fill"
-        case .canceled: return "slash.circle"
+        case .pending: return awaitingDecision ? .needsYou : .scheduled
+        case .succeeded: return .done
+        case .failed: return .failed
+        case .canceled: return .stopped
         }
     }
+
+    private var icon: InterfaceIcon { Self.icon(for: activity, awaitingDecision: awaitingDecision) }
 
     private var status: String {
         if let why = activity.why { return RefusalCopy.label(why) }
@@ -941,17 +1117,19 @@ struct NativeToolActivityChip: View {
                     Text(reason.title).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                inspected("Request", activity.request)
-                if activity.why == nil, let result = activity.result { inspected("Result", result) }
+                let request = Self.shownRequest(activity)
+                if !request.isEmpty { inspected("Request", request) }
+                if activity.why == nil, let result = activity.result.map({ Self.shownResult($0, toolID: activity.toolID) }), !result.isEmpty { inspected("Result", result) }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 8)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                if activity.state == .pending {
+                if Self.showsSpinner(activity, awaitingDecision: awaitingDecision) {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Image(systemName: icon).foregroundStyle(iconColor)
+                    InterfaceIconView(icon: icon, size: InterfaceIconSize.regular).foregroundStyle(iconColor)
                 }
                 Text(activity.title).font(.system(size: 12, weight: .medium))
                 Text(status).font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
@@ -963,8 +1141,7 @@ struct NativeToolActivityChip: View {
                 }
                 if activity.state == .pending, let onCancel {
                     Button("Cancel", action: onCancel)
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 11))
+                        .buttonStyle(ConversationButtonStyle(kind: .secondary))
                         .accessibilityLabel("Cancel \(activity.title)")
                 }
             }
@@ -1030,15 +1207,22 @@ struct NativeToolConfirmationBar: View {
     }
 
     static func literal(for request: NativeToolConfirmationRequest, companionThread: Bool = false) -> String? {
+        if request.toolID == NativeScheduleTools.toolID { return specificLiteral(for: request, companionThread: companionThread) }
+        if let specific = specificLiteral(for: request) { return specific }
+        let lines = NativeCompanionWorker.shownDetails(request.title, argumentsJSON: request.request)
+        return lines.isEmpty ? nil : lines
+    }
+
+    static func specificLiteral(for request: NativeToolConfirmationRequest, now: Date = Date(), companionThread: Bool = false) -> String? {
         if request.toolID == NativeCommandTools.toolID, let command = NativeCommandTools.command(inRequest: request.request) {
             return NativeCommandTools.directory(inRequest: request.request).map { command + "\nin " + $0 } ?? command
         }
         if request.toolID == NativeFolderTools.toolID, let path = NativeFolderTools.pathArgument(inRequest: request.request) { return path }
-        if request.toolID == NativeScheduleTools.toolID {
-            return NativeScheduleTools.draft(inRequest: request.request, companionThread: companionThread).map { NativeScheduleTools.literal(for: $0) }
+        if request.toolID == NativeScheduleTools.toolID,
+           let draft = NativeScheduleTools.draft(inRequest: request.request, now: now, companionThread: companionThread) {
+            return NativeScheduleTools.literal(for: draft)
         }
-        let lines = NativeCompanionWorker.details(request.title, argumentsJSON: request.request)
-        return lines.isEmpty ? nil : lines
+        return nil
     }
 
     static func closing(for request: NativeToolConfirmationRequest, companionThread: Bool = false) -> String? {
@@ -1047,10 +1231,8 @@ struct NativeToolConfirmationBar: View {
         return NativeScheduleTools.destination(for: draft)
     }
 
-    private var answers: CardAnswers {
-        var built = onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
-        if request.subject == nil { built.allowTitle = "Approve" }
-        return built
+    var answers: CardAnswers {
+        onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
     }
 
     private var block: String? {
@@ -1064,8 +1246,7 @@ struct NativeToolConfirmationBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "hand.raised.fill")
-                    .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.sage)
+                InterfaceIconView(icon: .needsYou, size: InterfaceIconSize.row).foregroundStyle(Theme.sage)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.sage.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 6) {
@@ -1130,6 +1311,7 @@ private struct ConversationButtonBody: View {
             .padding(.horizontal, 14).frame(height: 28)
             .background(Capsule().fill(kind == .primary ? Theme.sage : Color.clear))
             .overlay(Capsule().stroke(kind == .primary ? Color.clear : Theme.cardStroke, lineWidth: 1))
+            .clipShape(Capsule())
             .contentShape(Capsule())
             .opacity(isEnabled ? (pressed ? 0.8 : 1) : 0.45)
     }
@@ -1175,8 +1357,7 @@ struct ConversationResultRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.warmTextSecondary)
+            InterfaceIconView(icon: .document, size: InterfaceIconSize.row).foregroundStyle(Theme.warmTextSecondary)
                 .frame(width: 22)
             Text(title)
                 .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.warmTextPrimary)
@@ -1257,19 +1438,19 @@ struct ComposerField: View {
             if let project {
                 HStack(spacing: 18) {
                     Button { editingProject = project } label: {
-                        Label(project.name, systemImage: "folder").lineLimit(1).truncationMode(.middle)
+                        Label { Text(project.name).lineLimit(1).truncationMode(.middle) } icon: { InterfaceIconView(icon: .projects, size: InterfaceIconSize.regular) }
                     }.accessibilityLabel("Edit project \(project.name)").help(project.name)
                     Menu {
                         Button("Add files to this chat", action: pickFiles)
                         Button("Work in a folder…", action: pickFolder)
                         Button("Manage project files") { managingProjectFiles = project }
                     } label: {
-                        Label("Files", systemImage: "doc.on.doc")
+                        Label { Text("Files") } icon: { InterfaceIconView(icon: .document, size: InterfaceIconSize.regular) }
                     }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                     .accessibilityLabel("Files for \(project.name)")
                     Button { store.section = .integrations } label: {
-                        Label("Plugins", systemImage: "puzzlepiece.extension")
+                        Label { Text("Plugins") } icon: { InterfaceIconView(icon: .plugins, size: InterfaceIconSize.regular) }
                     }
                     Spacer(minLength: 0)
                 }
@@ -1287,32 +1468,35 @@ struct ComposerField: View {
         VStack(alignment: .leading, spacing: 8) {
             if let error = store.attachmentError {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 11))
+                    InterfaceIconView(icon: .warning, size: InterfaceIconSize.small)
                     Text(error).font(.system(size: 11))
                     Button {
                         store.attachmentError = nil
                     } label: {
-                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                        InterfaceIconView(icon: .close, size: InterfaceIconSize.mark)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
                 }
                 .foregroundStyle(Theme.textSecondary)
             }
             if let error = store.grantError {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
+                    InterfaceIconView(icon: .warning, size: InterfaceIconSize.small)
                     Text(error).font(.system(size: 11))
                     Button { store.grantError = nil } label: {
-                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                        InterfaceIconView(icon: .close, size: InterfaceIconSize.mark)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
                 }
                 .foregroundStyle(Theme.textSecondary)
             }
             if !store.selectedGrants.isEmpty {
                 FolderGrantChips(grants: store.selectedGrants, unsupported: store.folderToolsUnsupportedReason,
-                                 onRemove: { store.revokeGrant($0) })
+                                 onRemove: { store.revokeGrant($0) }, availability: { store.folderState($0) })
+                    .task(id: store.selectedGrants) { store.checkSharedFolders() }
+                    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.checkSharedFolders() }
             }
             ComposerReplyBar()
             if !store.attachments.isEmpty {
@@ -1340,7 +1524,7 @@ struct ComposerField: View {
                 } label: {
                     ComposerControlGlyph(kind: .plus)
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
                 .frame(width: ComposerControlGlyph.sendSize, height: ComposerControlGlyph.sendSize)
                 .contentShape(Rectangle())
                 .help("Add files, share a folder, or insert a saved prompt")

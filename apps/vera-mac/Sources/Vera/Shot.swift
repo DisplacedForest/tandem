@@ -14,12 +14,20 @@ enum Shot {
             MessageActionsShot.render(view: view, to: path, appearance: appearance)
             return
         }
+        if NewReplyShot.views.contains(view) {
+            NewReplyShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view.hasPrefix("message-layout-") {
             ConversationShot.render(view: view, to: path, appearance: appearance)
             return
         }
         if NativeToolAccessShot.views[view] != nil {
             NativeToolAccessShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
+        if view.hasPrefix(SettingsTabShot.prefix) {
+            SettingsTabShot.render(view: view, to: path, appearance: appearance)
             return
         }
         if view == "rules" || view.hasPrefix("rules-") {
@@ -100,7 +108,7 @@ enum Shot {
             size = CGSize(width: 520, height: 300)
         } else if view == "companion-states" {
             size = CGSize(width: 900, height: 760)
-        } else if view == "companion-activity-detail" || ["companion-aside-detail", "companion-going-detail", "companion-changed-detail", "companion-newer-detail"].contains(view) {
+        } else if view == "companion-activity-detail" || ["companion-saved-detail", "companion-aside-detail", "companion-going-detail", "companion-changed-detail", "companion-newer-detail"].contains(view) {
             size = CGSize(width: CompanionProfileMetrics.width + 40, height: 700)
         } else if view == "result-two-at-once" {
             size = CGSize(width: 1180, height: 1380)
@@ -259,7 +267,7 @@ enum Shot {
                 return true
             }
             let sent = MessageAttachment(
-                name: "kitchen-shelf.png", ext: "PNG", isImage: true,
+                name: "bookshelf.png", ext: "PNG", isImage: true,
                 thumbnailData: swatch.pngData, fileName: "demo.png", mime: "image/png")
             let missing = MessageAttachment(
                 name: "missing.heic", ext: "HEIC", isImage: true, fileName: "gone.heic", mime: "image/heic")
@@ -516,6 +524,16 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "companion-saved-detail", let delivered = try? OngoingWorkFixture.deliveredDocumentStore() {
+            let model = CompanionOverviewModel(name: CompanionSubject(CompanionNameShot.name(environment: ProcessInfo.processInfo.environment)).leading, services: "", rules: "", paused: false,
+                                               activity: [delivered.item], outputs: [])
+            let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
+            content = AnyView(
+                CompanionThreadPanel(fixed: model, selectedID: delivered.item.id)
+                    .environment(\.renderSafe, true).environmentObject(delivered.store).environmentObject(config)
+                    .padding(20)
+                    .frame(width: size.width, height: size.height, alignment: .top).background(Theme.bg)
+            )
         } else if view == "companion-activity-detail" {
             let fixture = OngoingWorkFixture.store()
             let reference = fixture.nativeTaskReferences.last!
@@ -646,13 +664,13 @@ enum Shot {
                 section = .vera
                 store.ensureVeraThread()
                 store.openVeraThread()
-            case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-jump", "chats-folder", "chats-command", "chats-schedule",
+            case "chats", "chats-dictating", "chats-streaming", "chats-mentions", "chats-jump", "chats-folder", "chats-folder-missing", "chats-folder-offline", "chats-folder-denied", "chats-command", "chats-schedule",
                  "conversation-work", "conversation-narrow": section = .chat
             case "projects", "projects-empty": section = .projects
             case "artifacts", "artifacts-image", "artifacts-file-change", "artifacts-trashed", "artifacts-empty",
                  "artifacts-filter-images", "artifacts-no-results", "artifacts-saved", "artifacts-save-failed",
                  "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
-                 "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow": section = .artifacts
+                 "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow", "artifacts-collapsed": section = .artifacts
             case "scheduled", "scheduled-paused", "scheduled-caught-up", "scheduled-anything": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty", "integrations-changes": section = .integrations
             case "memory": section = .memory
@@ -674,10 +692,13 @@ enum Shot {
                          needsConnection: view == "companion-connection",
                          attachDemo: view == "attach",
                          streaming: view == "chats-streaming",
-                         folder: view == "chats-folder",
+                         folder: view.hasPrefix("chats-folder"),
+                         folderState: view == "chats-folder-missing" ? .missing : view == "chats-folder-offline" ? .offline("Notes")
+                             : view == "chats-folder-denied" ? .denied : .usable,
                          command: view == "chats-command",
                          schedule: view == "chats-schedule",
-                         collapsedSidebar: view == "sidebar-collapsed" || view == "chat-collapsed",
+                         collapsedSidebar: view == "sidebar-collapsed" || view == "chat-collapsed" || view == "artifacts-collapsed" || view == "chat-fullscreen",
+                         fullScreenShot: view == "chat-fullscreen",
                          mentions: view == "chats-mentions",
                          jumpToLatest: view == "chats-jump",
                          artifactSelection: artifactSeed?.selection,
@@ -713,7 +734,7 @@ enum Shot {
         }
         CompanionShotFixture.removeLeftovers()
         do {
-            try png.write(to: URL(fileURLWithPath: path))
+            try png.write(to: AppLocations.checkedOutput(path))
             print("wrote \(path)")
             exit(0)
         } catch {
@@ -730,18 +751,18 @@ private struct ShotPluginSheetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                PluginLogo(id: "grocy", size: 28)
-                Text("Add Grocy").font(.system(size: 16, weight: .semibold))
+                PluginLogo(id: "example_notes", size: 28)
+                Text("Add Example Notes").font(.system(size: 16, weight: .semibold))
             }
             .padding(16)
             Divider().overlay(Theme.hairline)
             VStack(alignment: .leading, spacing: 14) {
-                fieldBox("Base URL", value: "http://192.0.2.10:9283", secret: false)
+                fieldBox("Base URL", value: "http://192.0.2.10:8080", secret: false)
                 fieldBox("API key", value: "•••• (set, leave blank to keep)", secret: true)
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Color(red: 0.36, green: 0.78, blue: 0.5))
-                    Text("Grocy 4.6.0").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    Text("Example Notes 4.6.0").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
             }
             .padding(16)
@@ -1299,8 +1320,6 @@ struct NativeSettingsShotView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("TOOLS").font(.system(size: 10, weight: .semibold)).tracking(0.5)
                     .foregroundStyle(Theme.textSecondary)
-                Text("Only enabled tools that native chat can actually run are shared with the model.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark.square.fill").foregroundStyle(Theme.accent)
                     VStack(alignment: .leading, spacing: 2) {
@@ -1682,23 +1701,17 @@ private struct ShotCompanionStates: View {
 
 @MainActor
 enum CompanionShotFixture {
-    private static var leftovers: (suites: [String], folders: [URL]) = ([], [])
+    private static var leftovers: [URL] = []
 
     static func removeLeftovers() {
-        let preferences = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences", isDirectory: true)
-        for suite in leftovers.suites {
-            UserDefaults.standard.removePersistentDomain(forName: suite)
-            CFPreferencesAppSynchronize(suite as CFString)
-            try? FileManager.default.removeItem(at: preferences.appendingPathComponent(suite + ".plist"))
-        }
-        for folder in leftovers.folders { try? FileManager.default.removeItem(at: folder) }
-        leftovers = ([], [])
+        for folder in leftovers { try? FileManager.default.removeItem(at: folder) }
+        leftovers = []
     }
 
     static func store() -> ChatStore {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("tandem-companion-shot-\(UUID().uuidString.lowercased())", isDirectory: true)
-        leftovers.folders.append(root)
+        leftovers.append(root)
         let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
         try? FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
         guard let repository = try? LocalChatRepository(inMemory: true, artifactDirectory: artifacts) else { return ChatStore() }
@@ -1706,9 +1719,7 @@ enum CompanionShotFixture {
             nativeConfig: nil, nativeTransport: nil, repository: repository,
             attachmentStore: NativeAttachmentStore(directory: artifacts),
             artifactPersistenceEnabled: false)
-        let suite = "tandem-companion-shot-\(UUID().uuidString)"
-        leftovers.suites.append(suite)
-        store.companionDefaults = UserDefaults(suiteName: suite) ?? .standard
+        store.companionDefaults = AppLocations.scratchPreferences()
         store.ensureVeraThread()
         guard let id = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == id }) else { return store }
         let now = Date()

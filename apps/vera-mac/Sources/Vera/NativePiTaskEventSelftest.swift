@@ -115,7 +115,7 @@ enum NativePiTaskEventSelftest {
         var reset = false
         do { _ = try await collect(request) } catch AssistantTaskEventError.cursorReset { reset = true }
         try check(reset, "cursor reset was not typed")
-        let redirectSession = URLSession(configuration: .ephemeral)
+        let redirectSession = OutboundGuard.session(configuration: .ephemeral)
         let redirectTask = redirectSession.dataTask(with: request)
         let redirectResponse = HTTPURLResponse(url: request.url!, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: ["Location": "https://example.invalid/tasks/events"])!
         var redirectedRequest = request

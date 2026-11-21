@@ -64,11 +64,31 @@ enum ArtifactDateLabel {
             return ArtifactLibrarySelection.companionOriginLabel(name: CompanionSentence.savedName(companionName))
         }
         let title = record.originTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return title.isEmpty ? "No conversation" : title
+        return title
     }
 }
 
 struct ArtifactLibrarySelection: Equatable {
+    static func contentKept(kind: ArtifactKind, details: ArtifactDetails) -> Bool {
+        kind != .fileChange || details.contentAvailable
+    }
+
+    static let openTitle = "Open in conversation"
+    static let reviseTitle = "Revise"
+    static let saveTitle = "Save as…"
+    static let revealTitle = "Reveal in Finder"
+    static let copyTitle = "Copy"
+
+    static func actionTitles(conversationExists: Bool, contentKept: Bool, canReveal: Bool) -> [String] {
+        var titles: [String] = []
+        if conversationExists { titles.append(openTitle) }
+        if conversationExists, contentKept { titles.append(reviseTitle) }
+        if contentKept { titles.append(saveTitle) }
+        if canReveal { titles.append(revealTitle) }
+        if contentKept { titles.append(copyTitle) }
+        return titles
+    }
+
     var selectedID: String?
     var search = ""
     var filter: ArtifactKindFilter = .all
@@ -179,9 +199,15 @@ extension ChatStore {
         return exported == text ? result : .success(Data(exported.utf8))
     }
 
+    static let originSeparator = " · "
+
     func artifactOriginLine(_ record: ArtifactRecord, lead: String = "", tail: String = "") -> CompanionLine {
         let companion = isVeraThread(record.conversationID) || record.originTitle == CompanionSavedText.marker
-        guard companion, companionName != nil else { return .literal(lead + artifactOriginLabel(record) + tail) }
+        guard companion, companionName != nil else {
+            let label = artifactOriginLabel(record)
+            if label.isEmpty { return .literal(lead + (tail.hasPrefix(Self.originSeparator) ? String(tail.dropFirst(Self.originSeparator.count)) : tail)) }
+            return .literal(lead + label + tail)
+        }
         var parts: [CompanionLinePart] = []
         if !lead.isEmpty { parts.append(.text(lead)) }
         parts.append(.name)
@@ -590,26 +616,27 @@ private struct ArtifactDetail: View {
     }
 
     private func actionItems(version: ArtifactVersion) -> [ActionItem] {
-        var items: [ActionItem] = []
-        if store.artifactConversationExists(record) {
-            items.append(ActionItem(id: "Open in conversation", symbol: "bubble.left.and.text.bubble.right") {
-                store.openArtifactConversation(record)
-            })
-            items.append(ActionItem(id: "Revise", symbol: "pencil") { revising = true })
+        let reveal = revealURL(version)
+        let titles = ArtifactLibrarySelection.actionTitles(
+            conversationExists: store.artifactConversationExists(record),
+            contentKept: ArtifactLibrarySelection.contentKept(kind: record.kind, details: version.details),
+            canReveal: reveal != nil)
+        return titles.map { title in
+            switch title {
+            case ArtifactLibrarySelection.openTitle:
+                ActionItem(id: title, symbol: "bubble.left.and.text.bubble.right") { store.openArtifactConversation(record) }
+            case ArtifactLibrarySelection.reviseTitle:
+                ActionItem(id: title, symbol: "pencil") { revising = true }
+            case ArtifactLibrarySelection.saveTitle:
+                ActionItem(id: title, symbol: "square.and.arrow.down") { onSaveAs(record, version, suggestedName(version)) }
+            case ArtifactLibrarySelection.revealTitle:
+                ActionItem(id: title, symbol: "folder") {
+                    if let reveal { NSWorkspace.shared.activateFileViewerSelecting([reveal]) }
+                }
+            default:
+                ActionItem(id: title, symbol: "doc.on.doc") { copy(version) }
+            }
         }
-        let contentKept = record.kind != .fileChange || version.details.contentAvailable
-        if contentKept {
-            items.append(ActionItem(id: "Save as…", symbol: "square.and.arrow.down") { onSaveAs(record, version, suggestedName(version)) })
-        }
-        if let reveal = revealURL(version) {
-            items.append(ActionItem(id: "Reveal in Finder", symbol: "folder") {
-                NSWorkspace.shared.activateFileViewerSelecting([reveal])
-            })
-        }
-        if contentKept {
-            items.append(ActionItem(id: "Copy", symbol: "doc.on.doc") { copy(version) })
-        }
-        return items
     }
 
     private func actions(version: ArtifactVersion) -> some View {

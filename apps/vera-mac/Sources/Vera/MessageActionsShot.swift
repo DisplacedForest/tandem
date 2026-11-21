@@ -98,7 +98,7 @@ enum MessageActionsShot {
         guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { exit(1) }
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         guard let data = bitmap.representation(using: .png, properties: [:]) else { exit(1) }
-        do { try data.write(to: URL(fileURLWithPath: path)); print("wrote \(path)"); exit(0) }
+        do { try data.write(to: AppLocations.checkedOutput(path)); print("wrote \(path)"); exit(0) }
         catch { exit(1) }
     }
 
@@ -130,7 +130,7 @@ enum MessageActionsShot {
             exit(1)
         }
         do {
-            try png.write(to: URL(fileURLWithPath: path))
+            try png.write(to: AppLocations.checkedOutput(path))
             print("wrote \(path)")
             exit(0)
         } catch {

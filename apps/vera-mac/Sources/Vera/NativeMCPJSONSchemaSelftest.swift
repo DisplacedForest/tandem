@@ -203,7 +203,7 @@ enum NativeMCPJSONSchemaSelftest {
         var deepArgument: NativeJSONValue = .null
         for _ in 0..<50 { deepArgument = .array([deepArgument]) }
         try fails(.resourceLimit) { try permissive.validate(deepArgument) }
-        try fails(.resourceLimit) { try permissive.validate(.array(Array(repeating: .null, count: 8_192))) }
+        try fails(.resourceLimit) { try permissive.validate(.array(Array(repeating: .null, count: 32_768))) }
         try fails(.resourceLimit) { _ = try NativeMCPJSONSchema(.object(["description": .string(String(repeating: "a", count: 1_048_577))])) }
         try fails(.resourceLimit) { try permissive.validate(.string(String(repeating: "a", count: 1_048_577))) }
         try fails(.resourceLimit) { _ = try NativeMCPJSONSchema(.object(["minimum": .number(.infinity)])) }

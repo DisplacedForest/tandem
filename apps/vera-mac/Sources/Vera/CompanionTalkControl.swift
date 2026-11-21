@@ -234,27 +234,20 @@ enum CompanionTalkTools {
         return flat.count <= limit ? flat : String(flat.prefix(limit))
     }
 
-    static func about(stop entry: CompanionTalkEntry, among entries: [CompanionTalkEntry], earlier: String?) -> String {
+    static func about(stop entry: CompanionTalkEntry, among entries: [CompanionTalkEntry]) -> String {
         "Stop this one thing: " + quoted(NativeInstructionCheck.clean(entry.description)) + "."
-            + others(entry, entries) + " Answer true only if the message clearly means this one thing and asks to stop it."
-            + context(earlier)
+            + others(entry, entries) + " Answer authorized only if the message clearly means this one thing and asks to stop it."
     }
 
-    static func about(answer title: String, for entry: CompanionTalkEntry, among entries: [CompanionTalkEntry], earlier: String?) -> String {
+    static func about(answer title: String, for entry: CompanionTalkEntry, among entries: [CompanionTalkEntry]) -> String {
         "Answer the question " + quoted(NativeInstructionCheck.clean(entry.question ?? "")) + " about "
             + quoted(NativeInstructionCheck.clean(entry.description)) + " with " + quoted(NativeInstructionCheck.clean(title)) + "."
-            + others(entry, entries) + " Answer true only if the message clearly means this question and gives this answer."
-            + context(earlier)
+            + others(entry, entries) + " Answer authorized only if the message clearly means this question and gives this answer."
     }
 
     static func others(_ entry: CompanionTalkEntry, _ entries: [CompanionTalkEntry]) -> String {
         let rest = entries.filter { $0.handle != entry.handle }.map { quoted(NativeInstructionCheck.clean($0.description)) }
         return rest.isEmpty ? "" : " The other things listed are: " + rest.joined(separator: "; ") + "."
-    }
-
-    static func context(_ earlier: String?) -> String {
-        guard let earlier, !earlier.isEmpty else { return "" }
-        return " The reply just before the message, for context only: " + quoted(NativeInstructionCheck.clean(earlier)) + "."
     }
 }
 
@@ -265,8 +258,8 @@ enum CompanionTalkCopy {
     static let approvalNote = "Approving this needs the person to press its button."
     static let otherWork = "Other things you're doing may still be going; this message changes them only through stop_work, answer_question, set_work_aside, pick_work_up or change_work, and only when it asks for that."
 
-    static let stopDescription = "Stop one thing you are doing in this conversation. Use it only as the first call in your reply, only when the person's current message asks to stop it, and only for an item in this turn's list of your work. item is that entry's item code. If more than one item could be meant, ask which one instead of calling this."
-    static let answerDescription = "Give the person's answer to a question one of your items is waiting on. Use it only as the first call in your reply, only when the person's current message gives that answer, and only for an item in this turn's list of your work. item is that entry's item code, and answer is one of the answers listed for it, written exactly as listed. Approvals can't be given this way: the person presses the button."
+    static let stopDescription = "Stops one thing you are doing in this conversation, from the list of your work given with this reply. When to use: the person no longer wants one of those things to go on. When not to use: to pause it so it can carry on later, use set_work_aside; to change what it should do, use change_work; when more than one item could be meant, ask which one and call nothing. Effects: stops that one thing for good; anything it already did is not undone. Prerequisites: call it as the very first thing in your reply, with item set to that entry's item code; it works only for a message the person typed in this conversation, and the app checks that the message really asks for this. Returns result and changed, and may list already_done and may_have_happened; say in one line what you stopped and mention those plainly, never saying they were undone. If changed is false, follow the sentence in result."
+    static let answerDescription = "Gives the person's answer to a question that one thing you are doing is waiting on. When to use: an entry in the list of your work given with this reply has a question, and the person's message answers it with one of the answers listed for it. When not to use: approvals and saved rules, which the person gives only by pressing the button on the question, so tell them that; when it is unclear which item or answer is meant, ask instead and call nothing. Effects: sends that answer, and that thing carries on from there, or ends there when the answer was to stop. Prerequisites: call it as the very first thing in your reply; item is the entry's item code and answer is one of its listed answers, written as listed; it works only for a message the person typed in this conversation, and the app checks that the message really gives this answer. Returns result and changed; say in one line what happened. If changed is false, follow the sentence in result."
     static let stopTitle = "Stop work"
     static let answerTitle = "Answer a question"
 

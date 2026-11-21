@@ -7,9 +7,10 @@ struct InfoTip: View {
     let text: String
     var size: CGFloat = 11
     var body: some View {
-        Image(systemName: "info.circle")
-            .font(.system(size: size))
+        InterfaceIconView(icon: .info, size: size + 3)
             .foregroundStyle(Theme.textSecondary.opacity(0.7))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(text)
             .help(text)
     }
 }

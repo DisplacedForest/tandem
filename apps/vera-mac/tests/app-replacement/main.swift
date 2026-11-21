@@ -16,6 +16,10 @@ do {
         print(try receipt.state(at: url).rawValue)
     } else if args[0] == "rollback" {
         print(try SafeAppReplacement.rollback(receiptURL: URL(fileURLWithPath: args[1])).path)
+    } else if args[0] == "rollback-mock" {
+        var hooks = SafeAppReplacement.Hooks()
+        hooks.validateSignature = { _, _ in }
+        print(try SafeAppReplacement.rollback(receiptURL: URL(fileURLWithPath: args[1]), hooks: hooks).path)
     } else {
         let mode = args[0]
         var hooks = SafeAppReplacement.Hooks()

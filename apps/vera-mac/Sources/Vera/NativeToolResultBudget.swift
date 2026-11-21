@@ -14,12 +14,14 @@ enum NativeToolResultBudget {
         let bytes: Int
     }
 
+    static let errorCut = "Tool error exceeded 500 characters; trailing content was omitted."
+
     static func serializedError(_ description: String, maximumBytes: Int) throws -> String {
         let leading = String(description.prefix(500))
         var fields: [String: NativeJSONValue] = ["error": .string(leading)]
         if leading != description {
             fields["truncated"] = .bool(true)
-            fields["truncation_reason"] = .string("Tool error exceeded 500 characters; trailing content was omitted.")
+            fields["truncation_reason"] = .string(errorCut)
         }
         return try serialized(.object(fields), maximumBytes: maximumBytes)
     }

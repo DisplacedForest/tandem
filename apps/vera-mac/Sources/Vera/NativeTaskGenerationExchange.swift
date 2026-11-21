@@ -3,9 +3,9 @@ import Foundation
 struct NativeTaskExecutorUnavailable: Error, Sendable {}
 
 actor NativeTaskGenerationExchange {
-    static let failures: Set<String> = ["provider_unavailable", "provider_auth", "provider_quota", "provider_response",
+    static let failures = Set<String>(["provider_unavailable", "provider_auth", "provider_quota", "provider_response",
         "canceled", "request_timeout", "profile_changed", "credential_unavailable", "request_conflict",
-        "previous_request_uncertain", "request_limit", "input_limit"]
+        "previous_request_uncertain", "request_limit", "input_limit"]).union(NativeTaskWorkerFailures.replyCodes)
     static let presenceSeconds: Double = 3
     static let maximumPending = 200
 
@@ -129,7 +129,7 @@ actor NativeTaskGenerationExchange {
     func completeTurn(task: NativeTaskRecord, binding: NativeTaskAdmissionBinding, phase: String, attempt: String,
                       ordinal: Int, messages: [NativeTaskGenerationMessage],
                       tools: [NativeTaskGenerationTool]? = nil, toolChoice: String? = nil) async throws -> NativeTaskGenerationCompletion {
-        let budget = NativeTaskGenerationBudget.forWorker(task.workerType)
+        let budget = NativeTaskGenerationBudget.forWorker(task.workerType, binding: binding)
         guard NativeTaskGenerationJob.validShape(messages, tools: tools, toolChoice: toolChoice, budget: budget) else {
             throw NativeTaskGenerationFailure(code: "provider_response")
         }

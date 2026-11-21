@@ -22,6 +22,14 @@ struct NativeMCPDiscoveredTool: Sendable, Equatable {
     let description: String
     let inputSchema: NativeJSONValue
     var hints = NativeMCPToolHints()
+    var title: String? = nil
+    var outputSchema: NativeJSONValue? = nil
+    var declaresOutput = false
+}
+
+enum NativeMCPProtocolVersions {
+    static let accepted: Set<String> = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
+    static func accepts(_ version: String) -> Bool { accepted.contains(version) }
 }
 
 struct NativeMCPPage: Sendable, Equatable {
@@ -97,7 +105,7 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
         let validated = NativeMCPValidatingTransport(underlying: transport, boundary: guardrail) { await candidate.disconnect() }
         try await perform {
             let result = try await candidate.connect(transport: validated)
-            guard Version.supported.contains(result.protocolVersion), result.capabilities.tools != nil else {
+            guard NativeMCPProtocolVersions.accepts(result.protocolVersion), result.capabilities.tools != nil else {
                 throw NativeMCPTransportError.unsupportedProtocol
             }
             await transport.setProtocolVersion(result.protocolVersion)
@@ -111,7 +119,9 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
             return NativeMCPPage(tools: try page.tools.map {
                 NativeMCPDiscoveredTool(name: $0.name, description: $0.description ?? "", inputSchema: try Self.native($0.inputSchema),
                                         hints: NativeMCPToolHints(readOnly: $0.annotations.readOnlyHint, destructive: $0.annotations.destructiveHint,
-                                                                  idempotent: $0.annotations.idempotentHint, openWorld: $0.annotations.openWorldHint))
+                                                                  idempotent: $0.annotations.idempotentHint, openWorld: $0.annotations.openWorldHint),
+                                        title: $0.title ?? $0.annotations.title, outputSchema: try? $0.outputSchema.map(Self.native),
+                                        declaresOutput: $0.outputSchema != nil)
             }, nextCursor: page.nextCursor)
         }
     }
@@ -300,7 +310,7 @@ private final class NativeMCPBoundedURLProtocol: URLProtocol, URLSessionDataDele
         outgoing.setValue(nil, forHTTPHeaderField: "Authorization")
         outgoing.setValue(nil, forHTTPHeaderField: "Proxy-Authorization")
         outgoing.setValue(nil, forHTTPHeaderField: "Cookie")
-        let session = URLSession(configuration: NativeMCPNetworkBoundary.configuration(timeout: guardrail.timeout), delegate: self, delegateQueue: nil)
+        let session = OutboundGuard.session(configuration: NativeMCPNetworkBoundary.configuration(timeout: guardrail.timeout), delegate: self, delegateQueue: nil)
         self.session = session
         let start: (URLRequest) -> Void = { request in
             guard guardrail.add(session) else { self.finish(CancellationError()); return }

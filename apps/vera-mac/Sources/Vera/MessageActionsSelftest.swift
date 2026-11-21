@@ -26,6 +26,9 @@ enum MessageActionsSelftest {
         let ordinaryKeepsRow = AssistantBody.showsActionRow(companionThread: false)
         let companionDropsRow = !AssistantBody.showsActionRow(companionThread: true)
         try require(ordinaryKeepsRow && companionDropsRow, "An ordinary chat keeps its icon row and the companion's conversation does not")
+        try require(!AssistantBody.showsActionRow(companionThread: false, state: .streaming), "A reply still being written shows no copy or rating buttons")
+        try require(AssistantBody.showsActionRow(companionThread: false, state: .complete), "A finished reply shows its copy and rating buttons")
+        try require(AssistantBody.showsActionRow(companionThread: false, state: .interrupted), "An interrupted reply keeps its copy and rating buttons")
     }
 
     static func oldCopy(_ message: Message) -> String {
@@ -190,7 +193,7 @@ enum MessageActionsSelftest {
 
     static func copySweep() throws {
         let banned = ["vera", "background", "worker", "agent", "task", "he", "she", "him", "her", "his", "hers"]
-        for text in MessageActions.addedStrings + MessageMenuAction.offered.map(\.symbol) {
+        for text in MessageActions.addedStrings {
             let words = text.lowercased().split { !$0.isLetter }.map(String.init)
             let hit = banned.first { words.contains($0) }
             try require(hit == nil, "\"\(text)\" has no banned word")

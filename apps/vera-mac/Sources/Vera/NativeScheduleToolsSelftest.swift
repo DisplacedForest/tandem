@@ -86,64 +86,28 @@ extension SelfTest {
         try require(NativeScheduleTools.draft(inRequest: "{\"title\":\"x\"}", now: now, timeZone: zone) == nil, "An incomplete request does not parse")
 
         let research = NativeWebTools.researchToolID
-        let asksSchedule = NativeTurnToolAuthority("Every weekday at 7 research semiconductor export policy")
-        let asksResearch = NativeTurnToolAuthority("Research NASA")
-        let asksNeither = NativeTurnToolAuthority("Tell me about tea")
-        func composed(_ consented: Set<String>, _ authority: NativeTurnToolAuthority, mentions: Set<String> = [], hasStore: Bool = true) -> Set<String> {
+        let plain = NativeTurnToolAuthority()
+        func composed(_ consented: Set<String>, mentions: Set<String> = [], hasStore: Bool = true) -> Set<String> {
             let turnConsent = consented.union(mentions)
-            let snapshot = authority.filter(turnConsent)
-            var allowed = NativeScheduleTools.turnEnabledIDs(snapshot: snapshot, consented: turnConsent, authority: authority,
+            var allowed = NativeScheduleTools.turnEnabledIDs(snapshot: turnConsent, consented: turnConsent, authority: NativeTurnToolAuthority(mentions: mentions),
                                                              hasEngine: true, hasRepository: true, hasStore: hasStore)
             allowed.remove(research)
             return allowed
         }
-        try require(composed([research], asksSchedule) == [NativeScheduleTools.toolID], "The ticket's own example offers the schedule tool and nothing else")
-        try require(composed([research], asksResearch) == [NativeTaskTools.toolID], "A plain research request offers background work, never the schedule tool")
-        try require(composed([research], NativeTurnToolAuthority("Research daily trading volume")) == [NativeTaskTools.toolID],
-                    "A cadence word inside the subject offers background work only")
-        try require(composed([research], NativeTurnToolAuthority("Research news about NASA every weekday at 7")).isSuperset(of: [NativeScheduleTools.toolID]),
-                    "A recurring request with a subject word before the cadence still offers the schedule tool")
-        try require(composed([research], asksNeither).isEmpty, "An ordinary message offers neither")
-        for text in ["Please set up a printer", "Write a guide to set up a home server", "Set up the project folder", "Help me set up a standing desk", "Set up a regular expression for emails", "Schedule a meeting with the plumber", "What is on my schedule today", "Set up a Dailymotion account", "Please set up a Dailymotion account", "Dailymotion is a video site", "Research the Weeklys brand", "Check hourlyrate.example for me"] {
-            try require(!composed([research], NativeTurnToolAuthority(text)).contains(NativeScheduleTools.toolID),
-                        "A generic set up request does not offer the schedule tool: \(text)")
-        }
-        try require(composed([research], NativeTurnToolAuthority("Set up a weekly digest of my saved articles")) == [NativeScheduleTools.toolID],
-                    "Set up with a cadence offers the schedule tool")
-        try require(composed([], asksSchedule).isEmpty, "Nothing enables the tool without background work")
-        try require(composed([research], asksSchedule, hasStore: false).isEmpty, "No store, no tool")
-        try require(composed(["apple-reminders"], asksSchedule) == ["apple-reminders"], "Other tools do not enable it")
-        try require(composed([research], NativeTurnToolAuthority("Do not use tools. Every day research NASA")).isEmpty, "No tools means no schedule tool")
-        let mentionAuthority = NativeTurnToolAuthority("make it recurring", mentions: [NativeScheduleTools.toolID])
-        try require(composed([research], mentionAuthority, mentions: [NativeScheduleTools.toolID]) == [NativeScheduleTools.toolID],
-                    "A mention enables the tool when background work is consented")
-        try require(NativeScheduleTools.turnEnabledIDs(snapshot: asksSchedule.filter([research]), consented: [], authority: asksSchedule,
+        let both: Set<String> = [NativeTaskTools.toolID, NativeScheduleTools.toolID]
+        try require(composed([research]) == both, "With longer work switched on, both tools are offered")
+        try require(composed([], mentions: [research]) == both, "A research mention offers both tools for the turn")
+        try require(composed([]).isEmpty, "Nothing is offered when longer work is switched off")
+        try require(composed([research], hasStore: false) == [NativeTaskTools.toolID], "No store, no schedule tool")
+        try require(composed(["apple-reminders"]) == ["apple-reminders"], "Other tools do not enable it")
+        try require(NativeScheduleTools.turnEnabledIDs(snapshot: [research], consented: [], authority: plain,
                                                        hasEngine: true, hasRepository: true, hasStore: true).isEmpty,
                     "Consent revoked after the send drops the tool")
-
-        let allowed = ["Every weekday at 7 research semiconductor export policy", "Schedule a daily summary of my saved articles",
-                       "Each morning write me a short memo on overnight news", "Once a week check lumber prices",
-                       "Tomorrow at 9 research the weather outlook", "Can you research NASA every 6 hours",
-                       "Research news about NASA every weekday at 7", "Please set up a daily digest of my saved articles",
-                       "Check lumber prices every 6 hours and send me a summary", "Research the Mars mission every Monday at 9am, please",
-                       "every weekday at 7, research overnight chip export news"]
-        for text in allowed {
-            try require(NativeTurnToolAuthority(text).allowsSchedule, "Scheduling is allowed for: \(text)")
-        }
-        let refused = ["Research NASA", "Tell me about tea", "What did I ask?", "Do not schedule anything. Research NASA.",
-                       "Do not use tools. Every day research NASA", "What is a schedule?", "Research why people drink coffee every morning.",
-                       "Why do markets move every Monday?", "Explain how weekly sprints work", "Is the market open on Mondays?",
-                       "Write a memo about what happens every day at the plant", "Tell me how recurring billing works",
-                       "Research daily trading volume", "Summarize the weekly report I attached", "My schedule is full this week",
-                       "Research what people do every morning", "Please set up a printer", "Write a guide to set up a home server", "Help me set up a standing desk"]
-        for text in refused {
-            try require(!NativeTurnToolAuthority(text).allowsSchedule, "Scheduling is refused for: \(text)")
-        }
-        try require(NativeTurnToolAuthority("make it recurring", mentions: [NativeScheduleTools.toolID]).allowsSchedule, "A mention allows scheduling")
-        try require(NativeTurnToolAuthority("Tell me about tea").filter([NativeScheduleTools.toolID, "apple-reminders"]) == ["apple-reminders"],
-                    "The filter drops the tool without scheduling intent")
-        try require(NativeTurnToolAuthority("Every day research tea").filter([NativeScheduleTools.toolID, "apple-reminders"]).contains(NativeScheduleTools.toolID),
-                    "The filter keeps the tool with scheduling intent")
+        let described = NativeActionDescription.describe(NativeScheduleTools.definition(save: { _ in throw NativeToolError.failed("unused") }),
+                                                         arguments: ["repeat": .string("weekly"),
+                                                                     "title": .string("SECRET-TITLE"), "instruction": .string("SECRET-INSTRUCTION")])
+        try require(described == "Set up a schedule that runs a separate piece of work later, every week",
+                    "A proposed schedule is described plainly for the refusal check, without its free text: \(described)")
 
         let save: @Sendable (NativeScheduleDraft) async throws -> NativeSchedule = { draft in
             try NativeSchedule(owner: draft.owner, workerType: draft.workerType, title: draft.title,

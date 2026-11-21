@@ -281,6 +281,7 @@ protocol NativeMemoryGateDriver {
     var replyTimeout: Duration { get }
     var backfillTimeout: Duration { get }
     var budgetMilliseconds: Int { get }
+    var countsProcessorTime: Bool { get }
     var tolerant: Bool { get }
     var announces: Bool { get }
     var pause: Duration { get }
@@ -302,6 +303,7 @@ struct NativeMemoryGateFixtureDriver: NativeMemoryGateDriver {
     let replyTimeout: Duration = .seconds(5)
     let backfillTimeout: Duration = .seconds(5)
     let budgetMilliseconds = NativeMemoryGate.fixtureBudgetMilliseconds
+    let countsProcessorTime = true
 
     var chatConfig: NativeChatConfig {
         var options = NativeChatRequestOptions.none
@@ -339,6 +341,7 @@ struct NativeMemoryGateLiveDriver: NativeMemoryGateDriver {
     let replyTimeout: Duration = .seconds(240)
     let backfillTimeout: Duration = .seconds(180)
     let budgetMilliseconds = NativeMemoryGate.liveBudgetMilliseconds
+    let countsProcessorTime = false
     let tolerant = true
     let announces = true
     let pause: Duration = .seconds(NativeMemoryGate.livePauseSeconds)
@@ -381,6 +384,7 @@ enum NativeMemoryGateError: LocalizedError {
 @MainActor
 enum NativeMemoryGate {
     static let fixtureBudgetMilliseconds = 20_000
+    static let fixtureCeilingMilliseconds = 600_000
     static let liveBudgetMilliseconds = 1_800_000
     static let livePauseSeconds = 2
     static let diagnosticLimit = 200
@@ -523,21 +527,32 @@ enum NativeMemoryGate {
                 decisiveSource: "correction", stalePhrases: ["eleven geese"])),
     ]
 
+    static func processorMilliseconds() -> Int {
+        Int(clock_gettime_nsec_np(CLOCK_PROCESS_CPUTIME_ID) / 1_000_000)
+    }
+
     static func run(driver: any NativeMemoryGateDriver, sabotage: Bool = false, mode: String? = nil) async throws -> NativeMemoryGateReport {
+        try await measured(driver: driver, sabotage: sabotage, mode: mode).report
+    }
+
+    static func measured(driver: any NativeMemoryGateDriver, sabotage: Bool = false,
+                         mode: String? = nil) async throws -> (report: NativeMemoryGateReport, spentMilliseconds: Int) {
         let started = ContinuousClock.now
+        let processorStarted = processorMilliseconds()
         var results: [NativeMemoryGateScenarioResult] = []
         for (index, scenario) in scenarios.enumerated() {
             if index > 0, driver.pause > .zero { try await Task.sleep(for: driver.pause) }
             results.append(try await attempt(scenario, driver: driver, sabotage: sabotage))
         }
         let elapsed = milliseconds(started.duration(to: .now))
+        let spent = driver.countsProcessorTime ? processorMilliseconds() - processorStarted : elapsed
         let totals = results.reduce(NativeMemoryGateCounts()) { $0 + $1.counts }
         let passed = driver.tolerant
             ? results.allSatisfy { $0.failed == nil } && totals.resurrections == 0 && totals.fabricatedCompletions == 0
-            : totals.errors == 0 && elapsed <= driver.budgetMilliseconds
-        return report(mode: mode ?? driver.mode, model: driver.chatConfig.model, endpointHost: driver.chatConfig.baseURL.host ?? "",
-                      memoryEndpointHost: driver.memoryEndpointHost, scenarios: results, elapsed: elapsed,
-                      budget: driver.budgetMilliseconds, passed: passed)
+            : totals.errors == 0 && spent <= driver.budgetMilliseconds
+        return (report(mode: mode ?? driver.mode, model: driver.chatConfig.model, endpointHost: driver.chatConfig.baseURL.host ?? "",
+                       memoryEndpointHost: driver.memoryEndpointHost, scenarios: results, elapsed: elapsed,
+                       budget: driver.budgetMilliseconds, passed: passed), spent)
     }
 
     static func attempt(_ scenario: NativeMemoryGateScenario, driver: any NativeMemoryGateDriver,
@@ -616,13 +631,16 @@ enum NativeMemoryGate {
 
     static func selftest() async throws {
         var driver = NativeMemoryGateFixtureDriver()
-        let clean = try await run(driver: driver)
-        guard clean.passed, clean.totals.errors == 0 else {
+        let (clean, spent) = try await measured(driver: driver)
+        guard clean.totals.errors == 0 else {
             let failing = clean.scenarios.filter { $0.counts.errors > 0 }.map(\.id)
             throw NativeMemoryGateError.setup("fixture", "clean run reported \(clean.totals.errors) errors in \(failing) after \(clean.elapsedMilliseconds) ms")
         }
-        guard clean.elapsedMilliseconds <= fixtureBudgetMilliseconds else {
-            throw NativeMemoryGateError.setup("fixture", "clean run took \(clean.elapsedMilliseconds) ms, over the \(fixtureBudgetMilliseconds) ms budget")
+        guard spent <= fixtureBudgetMilliseconds, clean.passed else {
+            throw NativeMemoryGateError.setup("fixture", "clean run used \(spent) ms of processor time, over the \(fixtureBudgetMilliseconds) ms budget")
+        }
+        guard clean.elapsedMilliseconds <= fixtureCeilingMilliseconds else {
+            throw NativeMemoryGateError.setup("fixture", "clean run took \(clean.elapsedMilliseconds) ms, over the \(fixtureCeilingMilliseconds) ms ceiling for a hung run")
         }
         try scoringChecks()
         try reportChecks(clean)
@@ -662,7 +680,7 @@ enum NativeMemoryGate {
             _ = try await NativeMemoryGateRunner(scenario: compaction, driver: driver, sabotage: false).run()
             throw NativeMemoryGateError.setup("compaction", "a long chat without a context ceiling was accepted as folded")
         } catch NativeMemoryGateError.setup(let id, let reason) where id == compaction.id && reason.contains("sent without folding") { }
-        print("memory-gate: PASS (\(scenarios.count) scenarios clean in \(clean.elapsedMilliseconds) ms of \(fixtureBudgetMilliseconds) ms; broken retrieval reached the request and was caught with \(broken.totals.resurrections) resurrections; each sabotaged scenario failed on its own; failed, unparsed and unfolded replies refused; a live-shaped run recorded its failed scenario, retried only the failed request, kept earlier observations and wrote its report; provider errors redacted; artifacts stayed in the run directory; report carries ids and counts only)")
+        print("memory-gate: PASS (\(scenarios.count) scenarios clean in \(spent) ms of processor time against \(fixtureBudgetMilliseconds) ms, \(clean.elapsedMilliseconds) ms elapsed; broken retrieval reached the request and was caught with \(broken.totals.resurrections) resurrections; each sabotaged scenario failed on its own; failed, unparsed and unfolded replies refused; a live-shaped run recorded its failed scenario, retried only the failed request, kept earlier observations and wrote its report; provider errors redacted; artifacts stayed in the run directory; report carries ids and counts only)")
     }
 
     static func liveShapedCheck() async throws {

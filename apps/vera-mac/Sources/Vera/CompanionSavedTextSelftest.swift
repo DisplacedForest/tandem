@@ -361,7 +361,7 @@ extension SelfTest {
                     "A hand off writes the name-free report: \(handReport["report"] as? String ?? "")")
         reports["handoff"] = handReport
         try require(NativeCompanionWorker.handOffText(title: "Pay it", why: NativeRuleWhy(kind: .held, action: .payments, handsOff: true, item: .payments))
-                        .hasPrefix("Stopped before this step: Pay it. \"Pay or transfer money\" is always left to you"),
+                        == "Stopped before this step: Pay it. \"Pay or transfer money\" is left to you unless you turn it on under Advanced in Rules.",
                     "The floor hand off needs no name either")
 
         for (label, report) in reports {

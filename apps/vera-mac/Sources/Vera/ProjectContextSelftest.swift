@@ -426,7 +426,7 @@ enum ProjectContextSelftest {
         defer { wire.reset() }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [DomainExtractionWire.self]
-        let session = URLSession(configuration: configuration)
+        let session = OutboundGuard.session(configuration: configuration)
         defer { session.invalidateAndCancel() }
         let config = NativeChatConfig(baseURL: URL(string: "https://fixture.invalid/v1")!, apiKey: nil, model: "fixture",
                                       chatTemplateKwargs: nil, streaming: false)

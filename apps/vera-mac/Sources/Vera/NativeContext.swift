@@ -262,10 +262,10 @@ enum NativeContextAssembler {
         return ([unavailableHeading] + trimmed.map { "- " + $0 }).joined(separator: "\n")
     }
 
-    private static func toolsSection(_ tools: [NativeToolDefinition]) -> String {
+    static func toolsSection(_ tools: [NativeToolDefinition]) -> String {
         var lines = [toolsHeading, toolGuidance, toolNamingRule]
         for tool in tools {
-            var line = "- \(tool.name) (\"\(plainName(for: tool))\"): \(tool.description)"
+            var line = "- \(tool.name) (\"\(plainName(for: tool))\")"
             if tool.confirmation == .required {
                 line += " Requires in-app confirmation before it runs."
             }

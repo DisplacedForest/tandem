@@ -140,6 +140,7 @@ enum NativeDocumentArtifactSelftest {
     }
 
     private static func read(_ path: String) throws -> Data {
+        AppLocations.refuseRealFile(URL(fileURLWithPath: path))
         let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else { throw Failure.invalid }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
@@ -168,7 +169,7 @@ enum NativeDocumentArtifactSelftest {
         guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { throw Failure.invalid }
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         guard let png = bitmap.representation(using: .png, properties: [:]) else { throw Failure.invalid }
-        try png.write(to: URL(fileURLWithPath: path), options: .withoutOverwriting)
+        try png.write(to: AppLocations.checkedOutput(path), options: .withoutOverwriting)
     }
 
     static func run(_ arguments: [String]) async {

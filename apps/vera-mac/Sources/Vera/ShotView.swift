@@ -10,10 +10,12 @@ struct ShotView: View {
     var attachDemo: Bool = false
     var streaming: Bool = false
     var folder: Bool = false
+    var folderState: FolderAvailability = .usable
     var command: Bool = false
     var schedule: Bool = false
     var chrome: ShotChrome = .window
     var collapsedSidebar: Bool = false
+    var fullScreenShot: Bool = false
     var mentions: Bool = false
     var jumpToLatest: Bool = false
     var dotHeader: Bool = false
@@ -91,8 +93,11 @@ struct ShotView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
-            .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: collapsedSidebar) {})
+            .modifier(WindowStripPane(conversation: section == .vera || section == .chat))
+            .environment(\.conversationSidebar, ConversationSidebarControl(collapsed: collapsedSidebar, fullScreen: fullScreenShot) {})
         }
+        .modifier(WindowStripChrome(sidebarWide: !collapsedSidebar, collapsed: collapsedSidebar, fullScreen: fullScreenShot, standIns: true,
+                                    canGoBack: true, canGoForward: false, back: {}, forward: {}) {})
     }
 
     private var conversationColumn: some View {
@@ -255,7 +260,7 @@ struct ShotView: View {
                             .foregroundStyle(Theme.textSecondary)
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
-                            Text("Needs Grocy").font(.system(size: 12))
+                            Text("Needs Example Notes").font(.system(size: 12))
                             Text("Open Plugins").font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(Theme.accent)
                         }.foregroundStyle(.orange)
@@ -350,14 +355,14 @@ struct ShotView: View {
         if folder { return folderMessages }
         var m = store.selected?.messages ?? []
         m.append(Message(role: .assistant, text: """
-        <details type="tool_calls" done="true" name="kitchen_status"><summary>Tool Executed</summary>"low: spaghetti, chicken nuggets, pork sausage"</details>
-        You're low on a few **staples**:
+        <details type="tool_calls" done="true" name="notes_search"><summary>Tool Executed</summary>"3 notes: packing list, train times, hotel address"</details>
+        Three notes mention the **trip**:
 
-        - Spaghetti
-        - Chicken nuggets
-        - Pork sausage
+        - Packing list
+        - Train times
+        - Hotel address
 
-        With those back you could do a quick `Bolognese`. Want me to add them to the list?
+        The train times note has the `09:40` departure. Want me to pull them into one note?
         """))
         m.append(Message(role: .user, text: "What moves lumber prices the most?"))
         m.append(Message(role: .assistant, text: """
@@ -390,7 +395,7 @@ struct ShotView: View {
             Message(role: .assistant, text: "The checks pass. Two files were linted and nothing needs fixing.",
                     toolActivities: [ran],
                     displayBlocks: [
-                        .commandRun(NativeCommandRun(id: "shot-run", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
+                        .commandRun(NativeCommandRun(id: "shot:c1", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
                                                      exitCode: 0, stdout: "markdownlint plan.md watering-log.md\n2 files, 0 errors\n", durationMilliseconds: 1840)),
                     ]),
             Message(role: .user, text: "Now rebuild the PDF."),
@@ -447,7 +452,7 @@ struct ShotView: View {
                     toolActivities: [NativeToolActivity(id: "c1", toolID: NativeCommandTools.toolID, name: NativeCommandTools.runName, title: "Run a command", round: 1,
                                                         request: "{\"command\":\"make check\"}", result: "{\"exit_code\":0}", state: .succeeded, confirmationRequired: true)],
                     displayBlocks: [
-                        .commandRun(NativeCommandRun(id: "shot-run", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
+                        .commandRun(NativeCommandRun(id: "shot:c1", command: "make check", directory: "/Volumes/Notes/Greenhouse", outcome: .ran, reason: .userApproved,
                                                      exitCode: 0, stdout: "markdownlint plan.md watering-log.md\n2 files, 0 errors\n", durationMilliseconds: 1840)),
                     ]),
         ]
@@ -521,7 +526,7 @@ struct ShotView: View {
     private func shotFileCard(title: String, badge: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Text(badge).font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 6).padding(.vertical, 2).background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 4))
@@ -549,7 +554,7 @@ struct ShotView: View {
                         workflowEditor: WorkflowEditorStore(), onSelect: { _ in })
                 .environmentObject(store)
                 .environment(\.renderSafe, true)
-            Rectangle().fill(Theme.hairline).frame(width: 1)
+            Rectangle().fill(Theme.hairline).frame(width: 1).padding(.top, WindowStripMetrics.height)
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -587,7 +592,7 @@ struct ShotView: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 if folder || command || cardChat != nil {
-                    FolderGrantChips(grants: shotGrants, onRemove: { _ in })
+                    FolderGrantChips(grants: shotGrants, onRemove: { _ in }, availability: { _ in folderState })
                 }
                 if mentions {
                     ComposerMentionList(sections: shotMentionCatalog.sections(""), selection: 1, onHover: { _ in }, onPick: { _ in })

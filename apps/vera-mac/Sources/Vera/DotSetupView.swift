@@ -3,11 +3,10 @@ import SwiftUI
 enum DotProfileCopy {
     static let subtitle = "Choose what {name} can reach and set what asks first. You can change all of this later from the header."
 
-    static let startOver = "Removes the conversation, what {name} remembered from it and its schedules. Artifacts stay in Artifacts."
+    static let startOver = "Removes the conversation, what {name} remembered from it and its schedules. Your Library is kept."
 
     static let pausedNote = "While paused, scheduled work is skipped and nothing catches up later. Chat keeps working."
     static let servicesNote = "Turned off here means it stays off in this conversation, even when it is on in Settings."
-    static let noServices = "Nothing is turned on in Settings yet. Tools you turn on there show up here."
     static let rulesNote = "These can only ask more than your defaults in Settings, never less."
 
     @MainActor
@@ -56,28 +55,26 @@ struct DotProfileForm: View {
     var body: some View {
         Form {
             TextField("Name", text: $name, prompt: Text("Name"))
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Connected services")
-                if options.isEmpty {
-                    Text(DotProfileCopy.noServices).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                } else {
-                    Text(DotProfileCopy.servicesNote).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            if !options.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Connected services").help(DotProfileCopy.servicesNote)
                     ForEach(options) { option in
                         Toggle(isOn: Binding(
                             get: { selected.contains(option.id) },
                             set: { if $0 { selected.insert(option.id) } else { selected.remove(option.id) } })) {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(option.name).font(.system(size: 12))
-                                Text(option.detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                if !option.detail.isEmpty {
+                                    Text(option.detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                }
                             }
                         }
                     }
                 }
+                .padding(.top, 6)
             }
-            .padding(.top, 6)
             VStack(alignment: .leading, spacing: 8) {
-                Text("What asks first")
-                Text(DotProfileCopy.rulesNote).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                Text("What asks first").help(DotProfileCopy.rulesNote)
                 ConversationRulesEditor(conversationID: store.veraThreadID, embedded: true, draft: $rules, revokedPrefixes: $revokedPrefixes)
             }
             .padding(.top, 6)

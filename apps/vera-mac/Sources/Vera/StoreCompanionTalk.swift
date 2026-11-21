@@ -10,7 +10,7 @@ extension ChatStore {
     }
 
     func companionTalkControl(for turn: NativeConversationTurn, supportsTools: Bool, now: Date = Date()) -> CompanionTalkControl? {
-        guard companionTalkOffered(turn), supportsTools, turnToolAuthority(for: turn).0.allowsTools else { return nil }
+        guard companionTalkOffered(turn), supportsTools else { return nil }
         let entries = companionTalkEntries(now: now)
         guard !entries.isEmpty else { return nil }
         return CompanionTalkControl(entries: entries)
@@ -74,7 +74,7 @@ extension ChatStore {
         var decisionID: String?
         if phase == .waiting, let decision = snapshot?.decision {
             decisionID = decision.id
-            let shown = CompanionSavedText.plain(decision.prompt, name: companionName, appWritten: reference.createRequest.workerType == "companion")
+            let shown = CompanionSavedText.plain(SavedWording.question(decision.prompt, scheduled: reference.request.scheduleID != nil), name: companionName, appWritten: reference.createRequest.workerType == "companion")
             question = CompanionTalkTools.clipped(shown, CompanionTalkTools.questionLimit)
             for wire in decision.choices where !NativeTaskProjection.carryOnChoices.contains(wire) {
                 guard let choiceTitle = NativeTaskCardPresentation.choiceTitle(wire) else { continue }
@@ -132,7 +132,7 @@ extension ChatStore {
     }
 
     func companionTalkTools(_ control: CompanionTalkControl, turn: NativeConversationTurn, typed: NativeTypedWords, capture: CompanionTalkCapture?,
-                            answerer: @escaping NativeInstructionAnswerer, timeout: Duration) -> [NativeToolDefinition] {
+                            authorizer: NativeRequestAuthorizer, timeout: Duration) -> [NativeToolDefinition] {
         let typedHere = CompanionTalkTools.typed(turn, typed, captured: capture != nil)
         let known = capture?.known ?? []
         let decisionsAtSend = capture?.decisions ?? [:]
@@ -146,7 +146,8 @@ extension ChatStore {
             parameters: .object(["type": .string("object"), "additionalProperties": .bool(false),
                                  "required": .array([.string("item")]),
                                  "properties": .object(["item": .object(["type": .string("string"), "minLength": .number(1),
-                                                                         "maxLength": .number(Double(CompanionTalkTools.handleLimit))])])]),
+                                                                         "maxLength": .number(Double(CompanionTalkTools.handleLimit)),
+                                                                         "description": .string("The item code of the entry to stop, exactly as given in the list of your work.")])])]),
             confirmation: .none, timeout: toolTimeout, effect: .read, isAvailable: { true },
             execute: { [weak self] arguments in
                 guard Set(arguments.keys) == ["item"], let handle = CompanionTalkTools.text(arguments, "item", limit: CompanionTalkTools.handleLimit) else {
@@ -167,8 +168,8 @@ extension ChatStore {
                     return CompanionTalkTools.refusal(CompanionTalkTools.unstoppable(live.entry?.phase))
                 }
                 guard CompanionTalkTools.checkable(said) else { return CompanionTalkTools.refusal(CompanionTalkCopy.tooLong) }
-                let about = CompanionTalkTools.about(stop: entry, among: entries, earlier: earlier)
-                let cleared = await NativeInstructionCheck.bounded(timeout) { await answerer(said, about) }
+                let about = CompanionTalkTools.about(stop: entry, among: entries)
+                let cleared = try await authorizer.confirms(said: said, action: about, earlier: earlier)
                 try Task.checkCancellation()
                 guard cleared else { return CompanionTalkTools.refusal(CompanionTalkCopy.unclear) }
                 let after = await MainActor.run { () -> (owned: Bool, entry: CompanionTalkEntry?) in
@@ -188,9 +189,11 @@ extension ChatStore {
                                  "required": .array([.string("item"), .string("answer")]),
                                  "properties": .object([
                                     "item": .object(["type": .string("string"), "minLength": .number(1),
-                                                     "maxLength": .number(Double(CompanionTalkTools.handleLimit))]),
+                                                     "maxLength": .number(Double(CompanionTalkTools.handleLimit)),
+                                                     "description": .string("The item code of the entry whose question is being answered, exactly as given in the list of your work.")]),
                                     "answer": .object(["type": .string("string"), "minLength": .number(1),
-                                                       "maxLength": .number(Double(CompanionTalkTools.answerLimit))]),
+                                                       "maxLength": .number(Double(CompanionTalkTools.answerLimit)),
+                                                       "description": .string("One of the answers listed for that entry, written as listed.")]),
                                  ])]),
             confirmation: .none, timeout: toolTimeout, effect: .read, isAvailable: { true },
             execute: { [weak self] arguments in
@@ -218,8 +221,8 @@ extension ChatStore {
                     return CompanionTalkTools.refusal(CompanionTalkCopy.staleQuestion)
                 }
                 guard CompanionTalkTools.checkable(said) else { return CompanionTalkTools.refusal(CompanionTalkCopy.tooLong) }
-                let about = CompanionTalkTools.about(answer: picked.key, for: entry, among: entries, earlier: earlier)
-                let cleared = await NativeInstructionCheck.bounded(timeout) { await answerer(said, about) }
+                let about = CompanionTalkTools.about(answer: picked.key, for: entry, among: entries)
+                let cleared = try await authorizer.confirms(said: said, action: about, earlier: earlier)
                 try Task.checkCancellation()
                 guard cleared else { return CompanionTalkTools.refusal(CompanionTalkCopy.unclear) }
                 guard await MainActor.run(body: { self.turnOwned(turn) }) else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
@@ -228,7 +231,7 @@ extension ChatStore {
                 return outcome
             })
         let gate = CompanionHoldGate(control: control, turn: turn, typedHere: typedHere, known: known, said: said, earlier: earlier,
-                                     answerer: answerer, timeout: timeout, toolTimeout: toolTimeout, ledger: ledger)
+                                     authorizer: authorizer, toolTimeout: toolTimeout, ledger: ledger)
         return [stop, answer] + companionHoldTools(gate)
     }
 

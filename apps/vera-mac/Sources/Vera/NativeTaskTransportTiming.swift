@@ -8,7 +8,7 @@ struct NativeTaskTransportLimits: Sendable {
 
 struct NativeTaskTransportTiming: Codable, Sendable {
     enum Phase: String, Codable, Sendable {
-        case plan, review, synthesize, outline, draft, revise, work
+        case plan, review, synthesize, outline, draft, revise, work, condense, notes
 
         init?(jobPhase: String) {
             let name = jobPhase.split(separator: "-", maxSplits: 1).first.map(String.init) ?? jobPhase
@@ -18,6 +18,7 @@ struct NativeTaskTransportTiming: Codable, Sendable {
     enum Outcome: String, Codable, Sendable {
         case completed, connect_send_timeout, read_idle_timeout, overall_timeout, transport_timeout, canceled
         case provider_auth, provider_quota, provider_unavailable, provider_response
+        case response_cut_short, response_finish, response_tool_calls, response_empty, response_too_large, response_unreadable, provider_error
     }
     let phase: Phase
     let outcome: Outcome
@@ -61,6 +62,7 @@ final class NativeTaskTransportObserver: NSObject, URLSessionTaskDelegate, @unch
 
     var setupComplete: Bool { lock.withLock { setup != nil || terminal != nil } }
     var outcome: NativeTaskTransportTiming.Outcome? { lock.withLock { terminal } }
+    var httpStatus: Int? { lock.withLock { status } }
     private var elapsed: Double { nativeTaskSeconds(started.duration(to: .now)) }
 
     func received(_ response: HTTPURLResponse) {

@@ -65,6 +65,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     init(url: URL, artifactDirectory: URL = NativeAttachmentStore.standardDirectory,
          projectsDirectory: URL = LocalChatRepository.standardProjectsDirectory) throws {
+        AppLocations.refuseRealFile(url)
         for location in [url, artifactDirectory, projectsDirectory] { AppLocations.refuseRealData(location) }
         self.artifactDirectory = artifactDirectory
         self.projectsDirectory = projectsDirectory
@@ -284,6 +285,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration(MessageReactionStore.migration) { db in try MessageReactionStore.migrate(db) }
         migrator.registerMigration(NativeInstructionUseStore.migration) { db in try NativeInstructionUseStore.migrate(db) }
         migrator.registerMigration(NativeTaskStore.pauseMigration) { db in try NativeTaskStore.migratePause(db) }
+        migrator.registerMigration(Self.generationDetailMigration) { db in try Self.migrateGenerationDetail(db) }
         return migrator
     }
 

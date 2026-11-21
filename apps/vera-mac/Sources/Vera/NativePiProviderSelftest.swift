@@ -57,7 +57,7 @@ enum NativePiProviderSelftest {
             try piCheck(PiProviderFixtureProtocol.state.calls() == ["key"])
         }
         PiProviderFixtureProtocol.state.configure("normal")
-        let session = URLSession(configuration: .ephemeral)
+        let session = OutboundGuard.session(configuration: .ephemeral)
         defer { session.invalidateAndCancel() }
         let response = HTTPURLResponse(url: request.url!, statusCode: 302, httpVersion: nil, headerFields: [:])!
         try piCheck(await http.urlSession(session, task: session.dataTask(with: request), willPerformHTTPRedirection: response, newRequest: request) == nil)
@@ -157,7 +157,7 @@ enum NativePiProviderSelftest {
     static func expiredReplay(config: ConfigStore, binding: PiSelectedProfileBinding, http: PiProviderHTTP, root: URL) async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [PiProviderDelayedAdmission.self]
-        let admission = NativeInferenceAdmission(baseURL: URL(string: "https://admission.invalid")!, session: URLSession(configuration: configuration))
+        let admission = NativeInferenceAdmission(baseURL: URL(string: "https://admission.invalid")!, session: OutboundGuard.session(configuration: configuration))
         defer { admission.session.invalidateAndCancel() }
         let policy = try permit(binding, expires: Date().addingTimeInterval(0.5))
         PiProviderFixtureProtocol.state.configure("normal")

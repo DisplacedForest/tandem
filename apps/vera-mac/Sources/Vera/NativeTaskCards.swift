@@ -8,12 +8,11 @@ struct NativeTaskCardView: View {
     var onCancel: (() -> Void)? = nil
     var onRetry: (() -> Void)? = nil
     var onDecide: ((String) -> Void)? = nil
-    var onSaveAnswer: (() -> Void)? = nil
     var highlighted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(statusTitle ?? card.statusTitle, systemImage: card.statusSymbol)
+            Label { Text(statusTitle ?? card.statusTitle) } icon: { InterfaceIconView(icon: card.statusIcon, size: InterfaceIconSize.small) }
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
             Text(card.title)
@@ -24,7 +23,7 @@ struct NativeTaskCardView: View {
             if let stop = card.stoppedStep {
                 StoppedStepView(stop: stop, why: card.why)
             }
-            if !card.milestone.isEmpty, card.stoppedStep == nil {
+            if !card.milestone.isEmpty, card.stoppedStep == nil, !Self.repeatsStatus(card.milestone, status: statusTitle ?? card.statusTitle) {
                 CompanionLineText(line: card.milestoneLine)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
@@ -71,12 +70,6 @@ struct NativeTaskCardView: View {
                [.stopped, .needsInput, .failed].contains(card.status) || (card.status == .completed && !card.isCompanion) {
                 SourcesRow(sources: NativeResearchReportSafety.sources(card.sources), numbered: false)
             }
-            if let onSaveAnswer, card.answer != nil, card.status == .completed, card.stoppedStep == nil {
-                Button("Save as document") { onSaveAnswer() }
-                    .buttonStyle(.bordered)
-                    .font(.system(size: 12))
-                    .accessibilityLabel("Save as document, \(card.title)")
-            }
             if isApproval {
                 CardAnswerRow(answers: CardAnswers.task(choices: card.offeredChoices, covers: card.covers, neverTitle: card.neverTitle),
                               allowApprove: onDecide != nil, allowDecline: onDecide != nil,
@@ -91,11 +84,12 @@ struct NativeTaskCardView: View {
                                   onAllow: { answer(question.allow) }, onDecline: { answer(decline) }, onItem: { answer($0) })
                 } else {
                     Button(question.answers.allowTitle) { answer(question.allow) }
-                        .buttonStyle(.bordered).font(.system(size: 12))
+                        .buttonStyle(ConversationButtonStyle(kind: .secondary))
                         .accessibilityLabel("\(question.answers.allowTitle), answer for \(card.title)")
                 }
             } else if card.canCancel {
-                Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil).font(.system(size: 12))
+                Button(stopTitle ?? card.stopTitle) { onCancel?() }.disabled(onCancel == nil)
+                    .buttonStyle(ConversationButtonStyle(kind: .secondary))
             }
         }
         .padding(14)
@@ -105,6 +99,15 @@ struct NativeTaskCardView: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .stroke(highlighted ? Theme.sage : Theme.hairline, lineWidth: highlighted ? 2 : 1))
         .animation(.easeOut(duration: 0.3), value: highlighted)
+    }
+
+    static func repeatsStatus(_ line: String, status: String) -> Bool {
+        func plain(_ text: String) -> String {
+            var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.hasSuffix(".") { value.removeLast() }
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        return plain(line) == plain(status)
     }
 
     private var isApproval: Bool {
@@ -131,7 +134,6 @@ struct NativeDisplayBlocksView: View {
     var onCancel: ((String) -> Void)? = nil
     var onRetry: ((String) -> Void)? = nil
     var onDecide: ((String, String) -> Void)? = nil
-    var onSaveAnswer: ((String) -> Void)? = nil
     var highlightedTaskID: String? = nil
     var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
     @State private var openReport: NativeResearchArtifact?
@@ -146,12 +148,11 @@ struct NativeDisplayBlocksView: View {
                         onCancel: connected(card) ? onCancel.map { action in { action(card.id) } } : nil,
                         onRetry: connected(card) ? onRetry.map { action in { action(card.id) } } : nil,
                         onDecide: connected(card) ? onDecide.map { action in { action(card.id, $0) } } : nil,
-                        onSaveAnswer: saved(card) ? nil : onSaveAnswer.map { action in { action(card.id) } },
                         highlighted: highlightedTaskID == card.id)
                 case .link(let link):
                     if let destination = link.destination {
                         Link(destination: destination) {
-                            Label(link.title, systemImage: "link")
+                            Label { Text(link.title) } icon: { InterfaceIconView(icon: .link, size: InterfaceIconSize.regular) }
                                 .font(.system(size: 13, weight: .medium))
                                 .lineLimit(2)
                         }
@@ -174,12 +175,6 @@ struct NativeDisplayBlocksView: View {
             }
         }
         .sheet(item: $openReport) { NativeResearchReportView(artifact: $0) }
-    }
-
-    private func saved(_ card: NativeTaskCardPresentation) -> Bool { Self.answerSaved(card, in: blocks) }
-
-    static func answerSaved(_ card: NativeTaskCardPresentation, in blocks: [NativeDisplayBlock]) -> Bool {
-        blocks.contains { $0.id == "artifact:" + card.id }
     }
 
     private func connected(_ card: NativeTaskCardPresentation) -> Bool {

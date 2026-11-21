@@ -11,42 +11,44 @@ enum NativeScheduleTools {
     static func turnEnabledIDs(snapshot: Set<String>, consented: Set<String>, authority: NativeTurnToolAuthority,
                                hasEngine: Bool, hasRepository: Bool, hasStore: Bool) -> Set<String> {
         let current = snapshot.intersection(consented)
-        var allowed = NativeTaskTools.enabledIDs(authority.filter(current), hasEngine: hasEngine, hasRepository: hasRepository,
-                                                 general: authority.allowsGeneral)
-        if !authority.allowsBackground && !authority.allowsGeneral { allowed.remove(NativeTaskTools.toolID) }
-        return enabledIDs(allowed, consented: current, authority: authority, hasStore: hasStore)
+        let allowed = NativeTaskTools.enabledIDs(current, hasEngine: hasEngine, hasRepository: hasRepository, general: authority.allowsGeneral)
+        return enabledIDs(allowed, consented: current, hasStore: hasStore)
     }
 
-    static func enabledIDs(_ existing: Set<String>, consented: Set<String>, authority: NativeTurnToolAuthority, hasStore: Bool) -> Set<String> {
+    static func enabledIDs(_ existing: Set<String>, consented: Set<String>, hasStore: Bool) -> Set<String> {
         let base = existing.subtracting([toolID])
-        guard consented.contains(NativeWebTools.researchToolID), authority.allowsSchedule, hasStore else { return base }
+        guard consented.contains(NativeWebTools.researchToolID), hasStore else { return base }
         return base.union([toolID])
     }
 
-    static let description = "Propose a schedule only when the current user message explicitly asks for something to happen on a repeating basis or at a later time (every day, on weekdays, weekly, every few hours, or once at a set time). Nothing runs now and nothing is saved by this call alone: the user confirms the cadence and the work in the app first. Give a short title and the full instruction of what to do. Give time as 24-hour HH:MM in the user's local time. Use results_to assistant when the user wants results in the ongoing assistant thread, otherwise own_chat. Then acknowledge in one sentence. Do not claim the schedule exists until the tool result says it was saved, and do not expose internal identifiers."
+    static let description = "Proposes saving a schedule that has you do something later, either once at a set time or on a repeat. When to use: the person wants something done at a later time or regularly, such as every morning, on weekdays, weekly or every few hours. When not to use: work that should start now, which create_background_task handles when it is offered; something the person wants to be reminded of themselves, which apple_reminders_create handles when it is offered; a question you can answer now. Effects: nothing runs and nothing is saved until the person confirms the schedule in the app; once confirmed it is saved and listed in Scheduled. Inputs: a short title and the full instruction of what to do; repeat decides which timing fields apply: daily and weekdays need time, weekly needs weekday and time, every_hours needs hours, and once needs at, which must still be ahead. Returns message and saved; acknowledge in one sentence using the timing in message, do not say the schedule exists until saved is true, and never show identifiers. If it is refused over a timing field, retry once with that field corrected; if the person declines, leave it."
 
     static func definition(companionThread: Bool = false,
                            now: @escaping @Sendable () -> Date = { Date() },
                            timeZone: @escaping @Sendable () -> TimeZone = { .current },
                            save: @escaping @Sendable (NativeScheduleDraft) async throws -> NativeSchedule) -> NativeToolDefinition {
-        var definition = NativeToolDefinition(id: toolID, name: toolName, title: "Schedule work",
+        var built = NativeToolDefinition(id: toolID, name: toolName, title: "Schedule work",
             description: description,
             parameters: .object([
                 "type": .string("object"), "additionalProperties": .bool(false),
                 "required": .array([.string("title"), .string("instruction"), .string("repeat")]),
                 "properties": .object([
                     "title": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(120),
-                                      "description": .string("One-line name for the schedule")]),
+                                      "description": .string("A one-line name for the schedule, up to 120 characters.")]),
                     "instruction": .object(["type": .string("string"), "minLength": .number(1), "maxLength": .number(5000),
-                                            "description": .string("What to do")]),
-                    "results_to": .object(["type": .string("string"), "enum": .array([.string("assistant"), .string("own_chat")])]),
-                    "repeat": .object(["type": .string("string"), "enum": .array(repeatKinds.map { .string($0) })]),
-                    "time": .object(["type": .string("string"), "description": .string("HH:MM, 24-hour local time, for daily, weekdays and weekly")]),
-                    "weekday": .object(["type": .string("string"), "enum": .array(weekdayNames.map { .string($0) }),
-                                        "description": .string("For weekly")]),
+                                            "description": .string("What to do, written so it makes sense on its own each time it runs. Up to 5000 characters.")]),
+                    "results_to": .object(["type": .string("string"), "minLength": .number(1), "enum": .array([.string("assistant"), .string("own_chat")]),
+                                           "description": .string("Where results go: assistant for the companion's ongoing conversation, or own_chat for a chat of its own. Left out, a schedule asked for in the companion's conversation goes there and one asked for anywhere else gets its own chat.")]),
+                    "repeat": .object(["type": .string("string"), "minLength": .number(1), "enum": .array(repeatKinds.map { NativeJSONValue.string($0) }),
+                                       "description": .string("How often it runs: daily, weekdays, weekly, every_hours, or once.")]),
+                    "time": .object(["type": .string("string"), "minLength": .number(1),
+                                     "description": .string("Time of day as HH:MM on a 24-hour clock in the person's local time. Needed for daily, weekdays and weekly.")]),
+                    "weekday": .object(["type": .string("string"), "minLength": .number(1), "enum": .array(weekdayNames.map { NativeJSONValue.string($0) }),
+                                        "description": .string("Day of the week in lowercase. Needed for weekly.")]),
                     "hours": .object(["type": .string("integer"), "minimum": .number(1), "maximum": .number(Double(NativeScheduleCadence.maximumHours)),
-                                      "description": .string("For every_hours")]),
-                    "at": .object(["type": .string("string"), "description": .string("YYYY-MM-DDTHH:MM local time, for once")]),
+                                      "description": .string("Hours between runs, 1 to \(NativeScheduleCadence.maximumHours). Needed for every_hours.")]),
+                    "at": .object(["type": .string("string"), "minLength": .number(1),
+                                   "description": .string("Local date and time as YYYY-MM-DDTHH:MM, still ahead. Needed for once.")]),
                 ]),
             ]), confirmation: .required, timeout: .seconds(10), action: .otherChanges, isAvailable: { true }, execute: { arguments in
                 let draft = try draft(from: arguments, now: now(), timeZone: timeZone(), companionThread: companionThread)
@@ -59,10 +61,19 @@ enum NativeScheduleTools {
                     "saved": .bool(true),
                 ])
             }, wants: wants, marksEffect: true)
-        definition.refusesBeforeAsking = { arguments in
-            _ = try draft(from: arguments, now: now(), timeZone: timeZone(), companionThread: companionThread)
+        built.check = { arguments in
+            do {
+                _ = try draft(from: arguments, now: now(), timeZone: timeZone(), companionThread: companionThread)
+                return nil
+            } catch NativeToolError.invalidArguments(let detail) {
+                return detail
+            } catch let refusal as NativeScheduleError {
+                return refusal.localizedDescription
+            } catch {
+                return nil
+            }
         }
-        return definition
+        return built
     }
 
     static func draft(from arguments: [String: NativeJSONValue], now: Date, timeZone: TimeZone, companionThread: Bool = false) throws -> NativeScheduleDraft {

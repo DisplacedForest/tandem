@@ -116,15 +116,14 @@ struct SourcesRow: View {
                 withAnimation(.easeInOut(duration: 0.18)) { toggled.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    HStack(spacing: -6) {
+                    HStack(spacing: 2) {
                         ForEach(sources.filter { sourceIsLinked($0.url) }.prefix(5)) { Favicon(urlString: $0.url) }
                     }
                     Text("Sources").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
                     Text("\(sources.count)").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 6).padding(.vertical, 1).background(Theme.surface).clipShape(Capsule())
                     Spacer()
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    InterfaceIconView(icon: expanded ? .collapse : .expand, size: InterfaceIconSize.small).foregroundStyle(Theme.textSecondary)
                 }
                 .padding(.vertical, 12)
                 .contentShape(Rectangle())

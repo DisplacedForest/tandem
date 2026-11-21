@@ -54,7 +54,7 @@ private final class NativeMCPOAuthHTTPExchange: NSObject, URLSessionDataDelegate
             configuration.timeoutIntervalForRequest = request.timeout
             configuration.timeoutIntervalForResource = request.timeout
             configuration.httpMaximumConnectionsPerHost = 1
-            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+            let session = OutboundGuard.session(configuration: configuration, delegate: self, delegateQueue: nil)
             var wire = URLRequest(url: request.url)
             wire.httpMethod = request.body == nil ? "GET" : "POST"
             wire.httpBody = request.body

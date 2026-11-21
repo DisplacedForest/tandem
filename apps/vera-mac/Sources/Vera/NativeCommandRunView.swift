@@ -13,13 +13,13 @@ struct NativeCommandRunCard: View {
         _expanded = State(initialValue: run.hasOutput && lines <= 20)
     }
 
-    private var symbol: String {
+    var icon: InterfaceIcon {
         switch run.outcome {
-        case .ran: return run.exitCode == 0 ? "terminal" : "exclamationmark.triangle"
-        case .timedOut: return "clock.badge.exclamationmark"
-        case .canceled: return "stop.circle"
-        case .declined: return "hand.raised"
-        case .refused: return "nosign"
+        case .ran: return run.exitCode == 0 ? .terminal : .warning
+        case .timedOut: return .timedOut
+        case .canceled: return .stopped
+        case .declined: return .declined
+        case .refused: return .refused
         }
     }
 
@@ -35,7 +35,7 @@ struct NativeCommandRunCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: symbol).foregroundStyle(tint).frame(width: 18).padding(.top, 1)
+                InterfaceIconView(icon: icon, size: InterfaceIconSize.regular).foregroundStyle(tint).frame(width: 18).padding(.top, 1)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(run.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Text(run.command).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textPrimary)
@@ -137,7 +137,7 @@ struct ConversationRulesButton: View {
             open.toggle()
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "checklist").font(.system(size: 11, weight: .medium))
+                InterfaceIconView(icon: .rules, size: InterfaceIconSize.small)
                 Text(tightened ? "Rules for this chat" : "Rules").font(.system(size: 12, weight: .medium))
             }
             .padding(.horizontal, 9).padding(.vertical, 5)
@@ -153,6 +153,8 @@ struct ConversationRulesButton: View {
 }
 
 struct ConversationRulesEditor: View {
+    static let stricter = "A chat can be stricter than your settings, never looser. A specific thing you chose to always allow still runs."
+
     @EnvironmentObject private var store: ChatStore
     var conversationID: String? = nil
     var embedded = false
@@ -207,9 +209,10 @@ struct ConversationRulesEditor: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !embedded {
-                Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
-                Text("A chat can be stricter than your settings, never looser. A specific thing you chose to always allow still runs.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 6) {
+                    Text("Rules for this chat").font(.system(size: 13, weight: .semibold))
+                    InfoTip(text: Self.stricter)
+                }
             }
             ForEach(NativeActionClass.configurable, id: \.self) { action in
                 VStack(alignment: .leading, spacing: 3) {
@@ -222,7 +225,7 @@ struct ConversationRulesEditor: View {
                         HStack(spacing: 6) {
                             Text(binding(for: action).wrappedValue.title).font(.system(size: 12))
                             Spacer(minLength: 6)
-                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                            InterfaceIconView(icon: .choose, size: InterfaceIconSize.mark).foregroundStyle(Theme.textSecondary)
                         }
                         .padding(.horizontal, 9).padding(.vertical, 5)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -247,7 +250,7 @@ struct ConversationRulesEditor: View {
                         Button {
                             revoke(record)
                         } label: {
-                            Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                            InterfaceIconView(icon: .close, size: InterfaceIconSize.mark)
                         }
                         .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
                         .help("Ask again before commands that start with \(prefix)")

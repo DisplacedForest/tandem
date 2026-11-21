@@ -25,9 +25,14 @@ enum RulesShot {
         store.ensureVeraThread()
         store.prepareRuleRecords()
         if variant == "rules-saved" || variant == "rules-saved-kind" || showsMenu { seed(store, folder: directory.appendingPathComponent("Seedlings").path) }
+        if variant == "rules-questions-failing" { store.permissionCheckFailures = ChatStore.permissionFailuresBeforeNotice }
         if variant == "rules-saved-kind" { store.addRuleRecord(RuleOffer.record(.fileEdits, conversationID: "rules-greenhouse")) }
         if variant == "rules-saved-literal" { seedLiteral(store, root: directory.path) }
         if variant == "rules-shared" || showsSharingInfo { seedShared(store, root: directory.path) }
+        if variant == "rules-shared-states" {
+            seedStates(store, root: directory.path)
+            store.checkSharedFoldersNow()
+        }
         let opened = showsMenu ? store.ruleRows().first(where: { $0.widenQuestion != nil }) : nil
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
         var advanced = RulesAdvancedState()
@@ -129,7 +134,7 @@ enum RulesShot {
         guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { exit(1) }
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         guard let data = bitmap.representation(using: .png, properties: [:]) else { exit(1) }
-        do { try data.write(to: URL(fileURLWithPath: path)); print("wrote \(path)"); exit(0) }
+        do { try data.write(to: AppLocations.checkedOutput(path)); print("wrote \(path)"); exit(0) }
         catch { exit(1) }
     }
 
@@ -199,6 +204,24 @@ enum RulesShot {
         if let thread = store.veraThreadID, let index = store.conversations.firstIndex(where: { $0.id == thread }) {
             store.conversations[index].grants = [FolderGrant(path: folder("Journal"))]
         }
+    }
+
+    static func seedStates(_ store: ChatStore, root: String) {
+        func folder(_ name: String, mode: Int? = nil, made: Bool = true) -> String {
+            let path = (root as NSString).appendingPathComponent(name)
+            if made { try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true) }
+            if let mode { try? FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: path) }
+            return path
+        }
+        var greenhouse = Conversation(id: "rules-states-greenhouse", title: "Greenhouse notes", messages: [], updatedAt: Date())
+        greenhouse.grants = [FolderGrant(path: folder("Seedlings"))]
+        var orders = Conversation(id: "rules-states-orders", title: "Seed orders", messages: [], updatedAt: Date())
+        orders.grants = [FolderGrant(path: folder("Invoices", made: false))]
+        var archive = Conversation(id: "rules-states-archive", title: "Old plans", messages: [], updatedAt: Date())
+        archive.grants = [FolderGrant(path: "/Volumes/Garden archive \(UUID().uuidString.prefix(4))/Plans", name: "Plans")]
+        var receipts = Conversation(id: "rules-states-receipts", title: "Receipts", messages: [], updatedAt: Date())
+        receipts.grants = [FolderGrant(path: folder("Receipts", mode: 0))]
+        store.conversations.insert(contentsOf: [greenhouse, orders, archive, receipts], at: 0)
     }
 
     static func seedLiteral(_ store: ChatStore, root: String) {

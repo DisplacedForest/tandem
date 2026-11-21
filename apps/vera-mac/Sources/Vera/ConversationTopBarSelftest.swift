@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 enum ConversationTopBarShot {
-    static let titledViews: Set<String> = ["chat", "chat-collapsed"]
+    static let titledViews: Set<String> = ["chat", "chat-collapsed", "chat-fullscreen"]
     static let chatTitle = "Planning the spring garden beds"
 
     static func project(_ id: String, _ name: String) -> ProjectRecord {
@@ -89,6 +89,63 @@ extension SelfTest {
         .update: IconGeometry(bytes: 592, hash: 12592026924203043116),
         .clear: IconGeometry(bytes: 263, hash: 5878221935624466636),
         .pin: IconGeometry(bytes: 1107, hash: 17874464801791710818),
+        .close: IconGeometry(bytes: 196, hash: 8390395120732435969),
+        .info: IconGeometry(bytes: 533, hash: 7047778675819240951),
+        .warning: IconGeometry(bytes: 1021, hash: 6844464036137675511),
+        .connect: IconGeometry(bytes: 1370, hash: 16386569431639055677),
+        .attach: IconGeometry(bytes: 444, hash: 14785805475343738788),
+        .folder: IconGeometry(bytes: 2454, hash: 10116636564115222591),
+        .research: IconGeometry(bytes: 1670, hash: 10270706448582035180),
+        .document: IconGeometry(bytes: 2657, hash: 1140187331660743019),
+        .image: IconGeometry(bytes: 1233, hash: 15084281777000784573),
+        .reminders: IconGeometry(bytes: 914, hash: 13406093435795975882),
+        .rules: IconGeometry(bytes: 810, hash: 4931027334619142328),
+        .tool: IconGeometry(bytes: 438, hash: 17366720933809361075),
+        .voice: IconGeometry(bytes: 519, hash: 13330080550912626834),
+        .dictate: IconGeometry(bytes: 850, hash: 11489530479510735273),
+        .dictating: IconGeometry(bytes: 874, hash: 14410899516536224187),
+        .send: IconGeometry(bytes: 129, hash: 11744404674765987333),
+        .stop: IconGeometry(bytes: 119, hash: 12254759145195972880),
+        .done: IconGeometry(bytes: 586, hash: 5194145164676587557),
+        .stopped: IconGeometry(bytes: 180, hash: 12453720026567839284),
+        .paused: IconGeometry(bytes: 259, hash: 10722450644395476547),
+        .question: IconGeometry(bytes: 869, hash: 5192175480380517568),
+        .failed: IconGeometry(bytes: 499, hash: 7718356855032257294),
+        .needsYou: IconGeometry(bytes: 514, hash: 5578166281573923529),
+        .declined: IconGeometry(bytes: 146, hash: 14236215097802300827),
+        .refused: IconGeometry(bytes: 300, hash: 14939144681513251688),
+        .timedOut: IconGeometry(bytes: 1134, hash: 12966522723310919404),
+        .terminal: IconGeometry(bytes: 2266, hash: 14743431999374310603),
+        .edit: IconGeometry(bytes: 706, hash: 3004767787539017732),
+        .fileAdded: IconGeometry(bytes: 1044, hash: 3221957271757878965),
+        .moved: IconGeometry(bytes: 419, hash: 14713047368757306162),
+        .folderAdded: IconGeometry(bytes: 2520, hash: 16392791367150624517, side: 18),
+        .trash: IconGeometry(bytes: 936, hash: 9336008833375516873),
+        .link: IconGeometry(bytes: 1159, hash: 15524316508204179840),
+        .copy: IconGeometry(bytes: 3221, hash: 146665332394702837),
+        .reply: IconGeometry(bytes: 429, hash: 5208448157472655625),
+        .selectText: IconGeometry(bytes: 1525, hash: 9022037510570118882),
+        .addReaction: IconGeometry(bytes: 1328, hash: 11034650447187561382),
+        .good: IconGeometry(bytes: 2455, hash: 12031135414672809284),
+        .goodChosen: IconGeometry(bytes: 464, hash: 6455414001273910115),
+        .bad: IconGeometry(bytes: 2429, hash: 5454773189447699107),
+        .badChosen: IconGeometry(bytes: 559, hash: 5260672730238567873),
+        .expand: IconGeometry(bytes: 121, hash: 1897763155044169926),
+        .collapse: IconGeometry(bytes: 115, hash: 7228592855516792996),
+        .next: IconGeometry(bytes: 120, hash: 12069323854929476458),
+        .back: IconGeometry(bytes: 120, hash: 6253633672018244088),
+        .goBack: IconGeometry(bytes: 129, hash: 8227909724223668882),
+        .goForward: IconGeometry(bytes: 131, hash: 10027564804366374425),
+        .choose: IconGeometry(bytes: 628, hash: 2182408223912166480),
+        .latest: IconGeometry(bytes: 131, hash: 3304619820672566877),
+        .bridged: IconGeometry(bytes: 1069, hash: 9936219808698129602),
+        .withheld: IconGeometry(bytes: 1603, hash: 3848292242780143714),
+        .checkboxOn: IconGeometry(bytes: 1325, hash: 15286044549133111796),
+        .checkboxOff: IconGeometry(bytes: 1825, hash: 5472626730620543207),
+        .radioOn: IconGeometry(bytes: 226, hash: 17340246410702786588),
+        .radioOff: IconGeometry(bytes: 224, hash: 10803538240702399099),
+        .pauseMark: IconGeometry(bytes: 349, hash: 17827940385213216514),
+        .tick: IconGeometry(bytes: 137, hash: 13913715157627685232),
     ]
 
     private static func checkIconFile(_ name: String, url: URL?, image: NSImage?, geometry: IconGeometry?) throws {
@@ -147,13 +204,118 @@ extension SelfTest {
         try require(SidebarDestination.chats.glyph == .home && SidebarDestination.library.glyph == AppSection.artifacts.glyph
                     && SidebarDestination.workflows.glyph == AppSection.agentic.glyph, "The rail and the screens agree on icons")
         try require(SidebarRow.optionsLabel("Compost ratios") == "Options for Compost ratios", "A chat row's options button is named for its chat")
+        try require(MessageMenuAction.copy.icon == .copy && MessageMenuAction.reply.icon == MessageReplyCopy.icon,
+                    "Copy and reply show their own icons in the message menu and the reply bar")
+        try require(MessageReplyCopy.cancelIcon == .close, "Cancelling a reply shows the close icon")
+        try require(ComposerControlGlyph(kind: .send(active: true, generating: false)).icon == .send
+                    && ComposerControlGlyph(kind: .stop(enabled: true)).icon == .stop
+                    && ComposerControlGlyph(kind: .dictate(active: true)).icon == .dictating
+                    && ComposerControlGlyph(kind: .dictate(active: false)).icon == .dictate
+                    && ComposerControlGlyph(kind: .plus).icon == .add, "The composer buttons show send, stop, dictation and add")
+        let failedRun = NativeCommandRun(id: "icons", command: "make check", directory: "", outcome: .ran, reason: .userApproved,
+                                         exitCode: 2, stdout: "", durationMilliseconds: 1)
+        try require(NativeCommandRunCard(run: failedRun).icon == .warning, "A command that failed shows the warning icon")
+        try require(NativeTaskCardPresentation.Status.completed.icon == .done && TranscriptMarker.preferenceSaved.icon == .done
+                    && NativeTaskCardPresentation.Status.failed.icon == .failed
+                    && NativeTaskCardPresentation.Status.working.icon(document: true) == .edit
+                    && NativeTaskCardPresentation.Status.working.icon(document: false) == .research, "Work status icons follow their meaning")
+        try require(ComposerMentionCatalog.filesItem.icon == .attach && ComposerMentionCatalog.folderItem.icon == .folder,
+                    "Adding files and working in a folder keep their own icons")
+        try require(VeraAskCard.optionIcon(on: true, multiSelect: true) == .checkboxOn && VeraAskCard.optionIcon(on: false, multiSelect: false) == .radioOff,
+                    "Question options show a box for several answers and a circle for one")
+        try require(MessageReaction.addIcon == .addReaction, "Adding a reaction shows its own icon")
         try require(VeraResources.url("interface-icons-NOTICE", ext: "txt") != nil, "The icon notice ships inside the app")
 
-        for section in AppSection.allCases {
-            let shows = ConversationTopBarModel.showsRailToggle(section: section)
-            try require(shows == !(section == .chat || section == .vera),
-                        "Only one sidebar control shows for \(section.rawValue)")
+        let strip = WindowStripMetrics.self
+        for index in 0..<3 {
+            let origin = strip.buttonOrigin(index: index)
+            try require(abs(origin.y + strip.buttonSize / 2 - strip.centre) < 0.5, "Each window button is centred in the strip")
         }
+        try require(abs(strip.glyphTop + strip.glyphSlot / 2 - strip.centre) < 0.5,
+                    "Back, forward and the sidebar toggle share the window buttons' centre line")
+        try require(strip.height == 44 && abs(strip.buttonOrigin(index: 0).x + strip.buttonSize / 2 - 23.5) < 0.01
+                    && abs(strip.buttonOrigin(index: 2).x + strip.buttonSize / 2 - 67.5) < 0.01,
+                    "The strip and the window buttons sit at the reference's measurements")
+        try require((0..<3).map { strip.glyphLeading($0, fullScreen: false) + strip.glyphSlot / 2 } == [99, 131, 164]
+                    && strip.glyphLeading(0, fullScreen: false) >= strip.buttonsTrailing() + 8,
+                    "Back, forward and the toggle sit at the reference's centres and clear the window buttons")
+        try require(strip.dividerLeading(sidebarWide: true, fullScreen: false) == VeraSidebar.expandedWidth,
+                    "With the sidebar shown the strip's short divider sits where the sidebar ends")
+        try require(strip.dividerLeading(sidebarWide: false, fullScreen: false) > strip.glyphLeading(2, fullScreen: false) + strip.glyphSlot
+                    && strip.dividerLeading(sidebarWide: false, fullScreen: false) > VeraSidebar.collapsedWidth,
+                    "With the sidebar hidden the divider comes after the toggle")
+        try require(strip.glyphLeading(0, fullScreen: true) == strip.fullScreenLeading && strip.fullScreenLeading < strip.buttonsTrailing(),
+                    "In full screen the glyphs take the window buttons' place and leave no gap")
+        try require(VeraSidebar.topInset == strip.height && VeraSidebar.railGap > 0,
+                    "The rail's first button and the sidebar start below the strip")
+        try require(strip.control == SidebarRoundButtonStyle.size && abs(strip.controlTop + strip.control / 2 - strip.centre) < 0.5
+                    && ConversationTopBarMetrics.top == strip.controlTop,
+                    "The conversation's title and its round button sit on the strip's centre line")
+        let real = strip.buttonOrigin(index: 2, size: CGSize(width: 16, height: 16), pitch: 23, containerHeight: strip.height)
+        try require(abs(real.y + 8 - strip.centre) < 0.5 && abs(real.x + 8 - (strip.firstButtonCentre + 46)) < 0.01,
+                    "Window buttons of another size are still centred and evenly spaced")
+        try require(WindowStripControls.backTitle == "Back" && WindowStripControls.forwardTitle == "Forward",
+                    "The strip's new labels are plain words")
+
+        var history = WindowHistory()
+        let all: (WindowHistory.Stop) -> Bool = { _ in true }
+        try require(!history.canGoBack && !history.canGoForward && history.step(forward: false, exists: all) == nil,
+                    "With nothing visited there's nowhere to go")
+        let home = WindowHistory.Stop(section: .vera, conversationID: "companion")
+        let chatA = WindowHistory.Stop(section: .chat, conversationID: "a")
+        let chatB = WindowHistory.Stop(section: .chat, conversationID: "b")
+        let chatC = WindowHistory.Stop(section: .chat, conversationID: "c")
+        let library = WindowHistory.Stop(section: .artifacts, conversationID: "a")
+        let workflows = WindowHistory.Stop(section: .agentic, conversationID: nil, pane: .canvas)
+        let activity = WindowHistory.Stop(section: .agentic, conversationID: nil, pane: .activity)
+        try require(home.conversationID == nil && library.conversationID == nil && chatA.conversationID == "a" && library.pane == nil,
+                    "Only an ordinary chat is remembered by its own id")
+        for stop in [home, chatA, chatA, library] { history.visit(stop) }
+        try require(history.stops == [home, chatA, library] && history.canGoBack && !history.canGoForward,
+                    "Visiting the same place twice in a row is remembered once")
+        try require(history.step(forward: false, exists: all) == chatA && history.step(forward: false, exists: all) == home
+                    && !history.canGoBack && history.canGoForward,
+                    "Back steps through what was open and stops at the start")
+        history.visit(home)
+        try require(history.stops.count == 3 && history.step(forward: true, exists: all) == chatA,
+                    "Arriving where back already put you changes nothing")
+        history.visit(chatB)
+        try require(history.stops == [home, chatA, chatB] && !history.canGoForward, "Going somewhere new drops what was ahead")
+
+        var deleted = WindowHistory()
+        for stop in [chatA, chatB, chatC] { deleted.visit(stop) }
+        _ = deleted.step(forward: false, exists: all)
+        _ = deleted.step(forward: false, exists: all)
+        let withoutB: (WindowHistory.Stop) -> Bool = { $0.conversationID != "b" }
+        try require(deleted.current == chatA && deleted.step(forward: true, exists: withoutB) == chatC
+                    && deleted.stops == [chatA, chatC] && deleted.current == chatC && deleted.canGoBack && !deleted.canGoForward,
+                    "Forward skips a deleted chat and lands on the next one that's still there")
+        var behind = WindowHistory()
+        for stop in [chatA, chatB, chatC] { behind.visit(stop) }
+        try require(behind.step(forward: false, exists: withoutB) == chatA && behind.stops == [chatA, chatC]
+                    && behind.current == chatA && behind.canGoForward && behind.step(forward: true, exists: withoutB) == chatC,
+                    "Back skips a deleted chat in one press and forward still returns")
+        var folded = WindowHistory()
+        for stop in [chatA, chatB, chatA, chatC] { folded.visit(stop) }
+        _ = folded.step(forward: false, exists: all)
+        try require(folded.current == chatA && folded.step(forward: false, exists: withoutB) == nil && folded.stops == [chatA, chatC]
+                    && folded.current == chatA && !folded.canGoBack,
+                    "When a deleted chat sat between two visits to the same place, the two fold into one")
+
+        var panes = WindowHistory()
+        for stop in [library, workflows, activity] { panes.visit(stop) }
+        try require(workflows != activity && panes.stops == [library, workflows, activity]
+                    && panes.step(forward: false, exists: all) == workflows && panes.current?.pane == .canvas,
+                    "Workflows and Activity are two places, and back from Activity is Workflows")
+
+        var capped = WindowHistory()
+        for number in 0..<(WindowHistory.cap + 10) { capped.visit(WindowHistory.Stop(section: .chat, conversationID: "c\(number)")) }
+        try require(capped.stops.count == WindowHistory.cap && capped.current?.conversationID == "c\(WindowHistory.cap + 9)",
+                    "The list is capped and keeps the newest")
+        try require(strip.titleClearance(sidebarWide: true, fullScreen: false) == 0
+                    && strip.titleClearance(sidebarWide: false, fullScreen: false) + VeraSidebar.collapsedWidth + 1
+                        > strip.dividerLeading(sidebarWide: false, fullScreen: false),
+                    "With the sidebar hidden the conversation's title keeps clear of the strip's glyphs and divider")
         try require(ConversationTopBarModel.sidebarTitle(collapsed: false) == "Hide sidebar"
                     && ConversationTopBarModel.sidebarTitle(collapsed: true) == "Show sidebar", "The sidebar button says what it will do")
         try require(ConversationTopBarModel.sidebarIcon(collapsed: false) == .sidebarShown

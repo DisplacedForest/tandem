@@ -19,6 +19,8 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
     var checkpointFailGate: DispatchSemaphore?
     var checkpointHold: TimeInterval = 0
     let checkpointLanded = NativeTurnCurrencyFlag()
+    var dispatchGate: DispatchSemaphore?
+    let dispatchWaiting = NativeTurnCurrencyFlag()
     init(_ base: LocalChatRepository) { self.base = base }
     func listConversations() throws -> [Conversation] { try base.listConversations() }
     func messages(conversationID: String) throws -> [Message] {
@@ -67,7 +69,20 @@ final class NativeSessionReadFailureRepository: ChatRepository, NativeConversati
         if failing { throw NativeToolError.failed("synthetic currency read failure") }
         return try base.turnIsCurrent(id, attempt: attempt)
     }
-    func markTurnDispatch(_ id: UUID, attempt: UUID, activity: NativeToolActivity) throws { try base.markTurnDispatch(id, attempt: attempt, activity: activity) }
+    func markTurnDispatch(_ id: UUID, attempt: UUID, activity: NativeToolActivity) throws {
+        let gate = lock.withLock { () -> DispatchSemaphore? in
+            let taken = dispatchGate
+            dispatchGate = nil
+            return taken
+        }
+        if let gate {
+            dispatchWaiting.raise()
+            guard gate.wait(timeout: .now() + .seconds(NativeTurnCurrencyHold.ceilingSeconds)) == .success else {
+                throw NativeToolError.failed("synthetic dispatch marker was never released")
+            }
+        }
+        try base.markTurnDispatch(id, attempt: attempt, activity: activity)
+    }
     func checkpointTurn(_ turn: NativeConversationTurn, message: Message, ordinal: Int) throws {
         let gate = lock.withLock { () -> DispatchSemaphore? in
             let taken = checkpointFailGate

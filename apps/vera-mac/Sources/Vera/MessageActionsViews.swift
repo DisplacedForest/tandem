@@ -209,17 +209,8 @@ private struct MessageReactionAddButton: View {
 
     var body: some View {
         Button(action: go) {
-            Image(systemName: MessageReaction.addSymbol)
-                .font(.system(size: 19))
+            InterfaceIconView(icon: MessageReaction.addIcon, size: InterfaceIconSize.rail)
                 .foregroundStyle(Theme.textSecondary)
-                .overlay(alignment: .topTrailing) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Theme.textSecondary)
-                        .padding(1.5)
-                        .background(Circle().fill(Theme.surface))
-                        .offset(x: 4, y: -4)
-                }
                 .frame(width: MessageActionsMetrics.itemSize, height: MessageActionsMetrics.itemSize)
                 .background(Circle().fill(hovering ? Theme.surfaceHover : Color.clear))
                 .contentShape(Circle())
@@ -239,8 +230,7 @@ private struct MessageActionsMenuRow: View {
     var body: some View {
         Button(action: go) {
             HStack(spacing: 12) {
-                Image(systemName: action.symbol)
-                    .font(.system(size: 14))
+                InterfaceIconView(icon: action.icon, size: InterfaceIconSize.regular)
                     .frame(width: 20)
                 Text(action.label)
                     .font(.system(size: 14))

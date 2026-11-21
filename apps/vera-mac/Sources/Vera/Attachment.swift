@@ -55,6 +55,7 @@ enum ImageEncoder {
     /// Downscale to `maxDim` on the long edge and return a JPEG data URL (small enough for the
     /// vision pipeline, lossy is fine for Qwen3-VL). Returns nil on failure.
     static func dataURL(from url: URL, maxDim: CGFloat = 1568, quality: CGFloat = 0.85) -> (dataURL: String, thumb: NSImage)? {
+        AppLocations.refuseRealFile(url)
         guard let img = NSImage(contentsOf: url) else { return nil }
         let scaled = downscale(img, maxDim: maxDim)
         guard let tiff = scaled.tiffRepresentation,

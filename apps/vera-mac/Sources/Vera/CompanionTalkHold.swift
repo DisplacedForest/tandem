@@ -7,8 +7,7 @@ struct CompanionHoldGate: Sendable {
     let known: Set<UUID>
     let said: String
     let earlier: String?
-    let answerer: NativeInstructionAnswerer
-    let timeout: Duration
+    let authorizer: NativeRequestAuthorizer
     let toolTimeout: Duration
     let ledger: CompanionTalkLedger
 }
@@ -22,10 +21,9 @@ enum CompanionHoldTools {
     static let changeIndex = 900
     static let promptChecks = 20
 
-    static func about(_ ask: String, _ entry: CompanionTalkEntry, among entries: [CompanionTalkEntry], earlier: String?, only: String) -> String {
+    static func about(_ ask: String, _ entry: CompanionTalkEntry, among entries: [CompanionTalkEntry], only: String) -> String {
         ask + CompanionTalkTools.quoted(NativeInstructionCheck.clean(entry.description)) + "."
-            + CompanionTalkTools.others(entry, entries) + " Answer true only if the message clearly means this one thing and " + only
-            + CompanionTalkTools.context(earlier)
+            + CompanionTalkTools.others(entry, entries) + " Answer authorized only if the message clearly means this one thing and " + only
     }
 
     static func setAside(_ entry: CompanionTalkEntry?) -> String? {
@@ -86,9 +84,9 @@ enum CompanionHoldTools {
 enum CompanionHoldCopy {
     static let guide = "To put one thing aside until the person asks for it again, call set_work_aside. To carry on with something that is put aside, call pick_work_up. To change what one thing should do, call change_work with the whole job as it now stands. Each works only as the very first thing in your reply, only when the person's current message asks for it, and only for one item. If more than one item could be what they mean, ask which one and call nothing. Putting something aside has no time on it and is not a reminder, so never say you'll come back to it by yourself. Afterwards say in one line what you did, in the first person, for example: I've put the library comparison aside."
 
-    static let setAsideDescription = "Put one thing you are doing in this conversation aside until the person asks you to pick it back up. Use it only as the first call in your reply, only when the person's current message asks to pause it, hold it, put it aside or leave it for later without naming a time, and only for an item in this turn's list of your work. item is that entry's item code. If more than one item could be meant, ask which one instead of calling this."
-    static let pickUpDescription = "Carry on with one thing that is put aside. Use it only as the first call in your reply, only when the person's current message asks you to pick it back up, resume it or carry on with it, and only for an item in this turn's list of your work whose state is put aside. item is that entry's item code. If more than one item could be meant, ask which one instead of calling this."
-    static let changeDescription = "Change what one thing you are doing in this conversation should do. Use it only as the first call in your reply, only when the person's current message changes what they want from it, and only for an item in this turn's list of your work. item is that entry's item code. work is the whole job as it now stands after the change, written so it makes sense by itself. What you had already found is carried over. If more than one item could be meant, ask which one instead of calling this."
+    static let setAsideDescription = "Puts one thing you are doing in this conversation aside, so it rests where it got to until the person wants it picked back up. When to use: the person wants one of the things in the list of your work given with this reply paused for now, with no time named. When not to use: to end it for good, use stop_work; to have it carry on at a set time, which this cannot do, say so, because putting aside is not a reminder; when more than one item could be meant, ask which one and call nothing. Effects: holds that one thing; anything already under way finishes, and nothing more happens until it is picked back up. Prerequisites: call it as the very first thing in your reply, with item set to that entry's item code; it works only for a message the person typed in this conversation, and the app checks that the message really asks for this. Returns result and changed; say in one line what you put aside, and never promise to come back to it by yourself. If changed is false, follow the sentence in result."
+    static let pickUpDescription = "Carries on with one thing that was put aside. When to use: the person wants an entry whose state is put aside, in the list of your work given with this reply, to continue. When not to use: for something that finished, stopped or could not finish, which cannot be picked up, so offer to start it again as something new; when more than one item could be meant, ask which one and call nothing. Effects: that one thing carries on from where it got to. Prerequisites: call it as the very first thing in your reply, with item set to that entry's item code; it works only for a message the person typed in this conversation, and the app checks that the message really asks for this. Returns result and changed; say in one line what you picked back up. If changed is false, follow the sentence in result."
+    static let changeDescription = "Changes what one thing you are doing in this conversation should do. When to use: the person wants different or extra results from one of the things in the list of your work given with this reply, while it is still going or put aside. When not to use: to end it, use stop_work; for something that already ended, offer to start it again as something new; when more than one item could be meant, ask which one and call nothing. Effects: stops the current run of that thing and starts it again on the changed job, carrying over what was already found; anything it already did is not undone, and nothing can change while you are paused. Prerequisites: call it as the very first thing in your reply; item is the entry's item code and work is the whole job as it now stands after the change, written so it makes sense by itself, up to \(CompanionHoldTools.workLimit) characters; it works only for a message the person typed in this conversation, and the app checks that the message really asks for this change. Returns result and changed, and may list already_done and may_have_happened; say in one line what changed and mention those plainly. If changed is false, follow the sentence in result."
     static let setAsideTitle = "Put work aside"
     static let pickUpTitle = "Pick work back up"
     static let changeTitle = "Change work"
@@ -135,9 +133,7 @@ extension ChatStore {
         guard live.0 else { return no(CompanionTalkCopy.notCurrent) }
         if let sentence = eligible(live.1) { return no(sentence) }
         let question = about(entry)
-        let said = gate.said
-        let answerer = gate.answerer
-        let cleared = await NativeInstructionCheck.bounded(gate.timeout) { await answerer(said, question) }
+        let cleared = try await gate.authorizer.confirms(said: gate.said, action: question, earlier: gate.earlier)
         try Task.checkCancellation()
         guard cleared else { return no(CompanionTalkCopy.unclear) }
         let after = await MainActor.run { (self.turnOwned(turn), self.companionTalkLive(entry.referenceID)) }
@@ -149,7 +145,8 @@ extension ChatStore {
     func companionHoldTools(_ gate: CompanionHoldGate) -> [NativeToolDefinition] {
         let entries = gate.control.entries
         let item: NativeJSONValue = .object(["type": .string("string"), "minLength": .number(1),
-                                             "maxLength": .number(Double(CompanionTalkTools.handleLimit))])
+                                             "maxLength": .number(Double(CompanionTalkTools.handleLimit)),
+                                             "description": .string("The item code of the entry, exactly as given in the list of your work.")])
         let single: NativeJSONValue = .object(["type": .string("object"), "additionalProperties": .bool(false),
                                                "required": .array([.string("item")]), "properties": .object(["item": item])])
         let ledger = gate.ledger
@@ -168,7 +165,7 @@ extension ChatStore {
                 if let earlierResult = gate.ledger.recall(key) { return earlierResult }
                 guard let self else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
                 let cleared = try await self.companionHoldCleared(gate, handle: handle, eligible: CompanionHoldTools.setAside) { entry in
-                    CompanionHoldTools.about("Put this one thing aside for now: ", entry, among: entries, earlier: gate.earlier,
+                    CompanionHoldTools.about("Put this one thing aside for now: ", entry, among: entries,
                                              only: "asks to pause it, hold it or put it aside, with no time named.")
                 }
                 guard let entry = cleared.entry else { return cleared.refusal ?? CompanionTalkTools.refusal(CompanionHoldCopy.couldNotSetAside) }
@@ -185,7 +182,7 @@ extension ChatStore {
                 if let earlierResult = gate.ledger.recall(key) { return earlierResult }
                 guard let self else { return CompanionTalkTools.refusal(CompanionTalkCopy.notCurrent) }
                 let cleared = try await self.companionHoldCleared(gate, handle: handle, eligible: CompanionHoldTools.pickUpRefusal) { entry in
-                    CompanionHoldTools.about("Carry on with this one thing that was put aside: ", entry, among: entries, earlier: gate.earlier,
+                    CompanionHoldTools.about("Carry on with this one thing that was put aside: ", entry, among: entries,
                                              only: "asks to pick it back up, resume it or carry on with it.")
                 }
                 guard let entry = cleared.entry else { return cleared.refusal ?? CompanionTalkTools.refusal(CompanionHoldCopy.couldNotPickUp) }
@@ -197,7 +194,8 @@ extension ChatStore {
                                  "required": .array([.string("item"), .string("work")]),
                                  "properties": .object(["item": item,
                                                         "work": .object(["type": .string("string"), "minLength": .number(1),
-                                                                         "maxLength": .number(Double(CompanionHoldTools.workLimit))])])]),
+                                                                         "maxLength": .number(Double(CompanionHoldTools.workLimit)),
+                                                                         "description": .string("The whole job as it now stands after the change, written so it makes sense by itself.")])])]),
             confirmation: .none, timeout: gate.toolTimeout, effect: .read, isAvailable: { true },
             execute: { [weak self] arguments in
                 guard Set(arguments.keys) == ["item", "work"],
@@ -212,7 +210,7 @@ extension ChatStore {
                 let cleared = try await self.companionHoldCleared(gate, handle: handle, eligible: CompanionHoldTools.change) { entry in
                     CompanionHoldTools.about("Change what this one thing should do, so that the job becomes "
                                              + CompanionTalkTools.quoted(NativeInstructionCheck.clean(work)) + ". The thing: ",
-                                             entry, among: entries, earlier: gate.earlier, only: "asks for this change to it.")
+                                             entry, among: entries, only: "asks for this change to it.")
                 }
                 guard let entry = cleared.entry else { return cleared.refusal ?? CompanionTalkTools.refusal(CompanionHoldCopy.couldNotChange) }
                 return kept(key, await self.companionTalkChange(entry.referenceID, work: work, gate: gate))

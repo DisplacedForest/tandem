@@ -78,7 +78,7 @@ extension ChatStore {
 
     func scheduleRunNote(_ run: NativeScheduleRun) -> CompanionLine {
         let companionWork = scheduleRunIsCompanionWork(run)
-        let detail = NativeScheduler.shownNote(run.detail)
+        let detail = run.outcome == .waiting ? SavedWording.question(run.detail, scheduled: true) : SavedWording.scheduled(NativeScheduler.shownNote(run.detail))
         return CompanionSavedText.line(detail, appWritten: run.noteIsAppWritten(companionWork: companionWork)
                                            || detail.hasPrefix(CompanionSavedText.marker))
     }
@@ -107,7 +107,7 @@ extension ChatStore {
             let conversationID = schedule.isCompanionWork ? (veraThreadID ?? runConversationID) : runConversationID
             guard let display = try? NativeTaskProjection.display(reference: reference, snapshot: snapshot) else { continue }
             var message = Message(role: .assistant,
-                                  text: schedule.checkInSentence(CompanionSavedText.plain(decision.prompt, name: companionName, appWritten: reference.request.workerType == "companion")),
+                                  text: schedule.checkInSentence(CompanionSavedText.plain(SavedWording.question(decision.prompt, scheduled: true), name: companionName, appWritten: reference.request.workerType == "companion")),
                                   state: .complete)
             message.displayBlocks = [.taskCard(display.card)]
             guard (try? local.postScheduleCheckIn(message, conversationID: conversationID, runID: run.id, key: key, referenceID: uuid,
@@ -154,7 +154,7 @@ extension ChatStore {
             case .failed: status = .failed
             case .canceled: status = .stopped
             case .needsDecision:
-                let prompt = snapshot?.decision?.prompt ?? NativeScheduler.waitingNote
+                let prompt = snapshot?.decision.map { SavedWording.question($0.prompt) } ?? NativeScheduler.waitingNote
                 status = .waiting(reference.request.workerType == "companion" ? prompt : CompanionSavedText.sanitized(prompt))
             case .blocked: status = .blocked(NativeScheduler.blockedNote)
             default: status = .active
@@ -322,6 +322,7 @@ extension ChatStore {
             return .failed("Scheduled runs aren't available right now.")
         }
         guard let nativeConfig = currentNativeConfig else { return .failed("No model is set up. Add one in Settings.") }
+        await prepareModelContext()
         let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
         if nativeTaskConfiguration != nil && profile == nil { return .failed("The model profile couldn't be prepared.") }
         if schedule.workerType == "research" && !nativeSearchAvailable() { return .failed("Search isn't set up. Add a search URL in Settings.") }

@@ -221,7 +221,7 @@ enum NativeProviderSmoke {
             configuration.httpCookieStorage = nil
             configuration.urlCredentialStorage = nil
             configuration.urlCache = nil
-            let session = URLSession(configuration: configuration, delegate: ProviderSmokeRedirectGuard(), delegateQueue: nil)
+            let session = OutboundGuard.session(configuration: configuration, delegate: ProviderSmokeRedirectGuard(), delegateQueue: nil)
             defer { session.invalidateAndCancel() }
             let root = URL(string: profile.baseURL)!
             if arguments.contains("--access-status") {

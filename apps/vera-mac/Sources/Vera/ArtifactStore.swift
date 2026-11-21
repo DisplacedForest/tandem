@@ -99,6 +99,7 @@ protocol ArtifactRepository: Sendable {
     func artifact(_ id: String) throws -> ArtifactRecord?
     func artifactVersions(_ artifactID: String) throws -> [ArtifactVersion]
     func artifactVersion(sourceKey: String) throws -> ArtifactVersion?
+    func artifactIDs(sourceKeyPrefix: String) throws -> [String: String]
     func recordArtifact(_ draft: ArtifactDraft, revising artifactID: String?) throws -> ArtifactVersion
     func artifactIDs(conversationID: String) throws -> [String]
     func resolveArtifacts(conversationID: String, choice: ArtifactConversationDeletion) throws -> [String]
@@ -173,6 +174,21 @@ extension LocalChatRepository: ArtifactRepository {
 
     func artifactVersion(sourceKey: String) throws -> ArtifactVersion? {
         try database.read { db in try Self.fetchArtifactVersion(db, sourceKey: sourceKey) }
+    }
+
+    func artifactIDs(sourceKeyPrefix: String) throws -> [String: String] {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db, sql: "SELECT source_key, artifact_id FROM artifact_versions WHERE substr(source_key, 1, ?) = ? ORDER BY ordinal ASC, created_at ASC",
+                arguments: [sourceKeyPrefix.count, sourceKeyPrefix])
+            var found: [String: String] = [:]
+            for row in rows {
+                let key: String = row["source_key"]
+                let id: String = row["artifact_id"]
+                found[key] = id
+            }
+            return found
+        }
     }
 
     func recordArtifact(_ draft: ArtifactDraft, revising artifactID: String?) throws -> ArtifactVersion {

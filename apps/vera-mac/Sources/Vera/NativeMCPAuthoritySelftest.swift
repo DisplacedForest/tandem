@@ -32,6 +32,7 @@ final class NativeMCPChatFixture: NativeChatTransport, @unchecked Sendable {
     init(name: String, arguments: String = "{\"query\":{\"tags\":[\"safe\"],\"count\":1}}", beforeDispatch: @escaping @Sendable () async -> Void = {}) { self.name = name; self.arguments = arguments; self.beforeDispatch = beforeDispatch }
     func discoverModels() async throws -> [String] { ["fixture"] }
     func stream(messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        if NativeRequestAuthorizer.asksRestrictions(messages) { return NativeRequestAuthorizer.answered(NativeRequestAuthorizer.noRestrictions) }
         lock.withLock { catalogs.append(tools) }
         return AsyncThrowingStream { continuation in
             let calls = messages.last?.role == "user" ? [NativeChatToolCall(id: UUID().uuidString, name: name, arguments: arguments) ] : []
@@ -154,6 +155,8 @@ enum NativeMCPAuthoritySelftest {
         store.sendText("Read the failing synthetic service")
         try await NativeSessionFixture.eventually("Remote error was not recorded") { !store.generating && (store.conversations.first(where: { $0.id == errorConversation })?.messages.flatMap(\.toolActivities).count ?? 0) > priorActivities }
         try check(store.conversations.first(where: { $0.id == errorConversation })?.messages.flatMap(\.toolActivities).last?.state == .failed, "Remote MCP error displayed as success")
+        let reported = store.conversations.first(where: { $0.id == errorConversation })?.messages.flatMap(\.toolActivities).last?.result ?? ""
+        try check(reported.contains("Service-provided error text (untrusted): Synthetic remote failure"), "The service's own error did not reach the model with its label")
         try check(authority.access.snapshot()[0].connected, "Tool error closed a healthy connection")
         await fixture.configure()
         let staleTransport = NativeMCPChatFixture(name: name, beforeDispatch: {

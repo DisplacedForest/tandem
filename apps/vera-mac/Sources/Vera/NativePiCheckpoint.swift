@@ -39,6 +39,7 @@ final class PiCheckpointCredentials: NativeCredentialStore {
             var query = dictionary as! [String: Any]
             guard let context = query[kSecUseAuthenticationContext as String] as? LAContext, context.interactionNotAllowed else { readStatus = errSecInteractionNotAllowed; return errSecInteractionNotAllowed }
             query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+            AppLocations.refuseRealKeychain()
             let status = SecItemCopyMatching(query as CFDictionary, result)
             readStatus = status
             return status

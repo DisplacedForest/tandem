@@ -16,12 +16,13 @@ extension SelfTest {
         try await scheduleWithoutKindsWords(require)
         try scheduleWithoutKindsPanels(require)
         try scheduleWithoutKindsRunWords(require)
+        try scheduleWithoutKindsOldRoutineWords(require)
         try await scheduleWithoutKindsProfileAside(require)
         try scheduleWithoutKindsLibrary(require)
         try scheduleWithoutKindsDelivered(require)
         try scheduleWithoutKindsCurrentLine(require)
         try await scheduleWithoutKindsDeletedChat(require)
-        print("  schedule without kinds OK (new schedules are the companion's with either destination, reload, edit keeps kind, old research and document load, fire and edit as before, own chat and companion runs start in the chosen chat without search, pause skips and notes both, profile and companion lists, start over counts and removes both and keeps the chat, tool has no kind field, results default per conversation, real loop allow decline and unreadable in both conversations, own chat question posts and is answered in the companion's conversation and the result lands in its own chat, old research question stays in its chat, no search line and reasons, the loaded question card updates where it was answered, card lines, words, profile and work panels, runs of older schedules read as plain work while chat work reads as before, old saved cards decode, own chat run in the profile with put aside and pick back up, the companion's documents in the Library and profile and not the next companion's after start over, delivered results open plainly, the current work line, a deleted own chat takes its question card with it)")
+        print("  schedule without kinds OK (new schedules are the companion's with either destination, reload, edit keeps kind, old research and document load, fire and edit as before, own chat and companion runs start in the chosen chat without search, pause skips and notes both, profile and companion lists, start over counts and removes both and keeps the chat, tool has no kind field, results default per conversation, real loop allow decline and unreadable in both conversations, own chat question posts and is answered in the companion's conversation and the result lands in its own chat, old research question stays in its chat, no search line and reasons, the loaded question card updates where it was answered, card lines, words, profile and work panels, runs of older schedules read as plain work while chat work reads as before, every question, failure and step line the older routines write reads plainly on a scheduled run and as before from a chat, old saved cards decode, own chat run in the profile with put aside and pick back up, the companion's documents in the Library and profile and not the next companion's after start over, delivered results open plainly, the current work line, a deleted own chat takes its question card with it)")
     }
 
     private static func scheduleWithoutKindsStore(_ require: (Bool, String) throws -> Void) async throws {
@@ -158,7 +159,8 @@ extension SelfTest {
                                                  "repeat": .string("weekdays"), "time": .string("07:00")]
         var withKind = values
         withKind["worker_type"] = .string("research")
-        try require((try? definition.refusesBeforeAsking?(withKind)) == nil, "A call carrying a kind is refused before asking")
+        try require(definition.check?(withKind) != nil && (try? definition.validatedArguments(try NativeToolLoop.serializedResult(.object(withKind)))) == nil,
+                    "A call carrying a kind is refused before asking")
         for companionThread in [false, true] {
             let unset = try NativeScheduleTools.draft(from: values, now: now, timeZone: zone, companionThread: companionThread)
             try require(unset.owner == (companionThread ? .dot : .conversation) && unset.workerType == NativeSchedule.companionWorkerType,
@@ -577,6 +579,88 @@ extension SelfTest {
         saved["scheduled"] = nil
         let decoded = try JSONDecoder().decode(NativeTaskCardPresentation.self, from: JSONSerialization.data(withJSONObject: saved))
         try require(decoded.scheduled == nil && decoded.statusTitle == "Researching", "A card saved before this still decodes and reads as it did")
+    }
+
+    private static func scheduleWithoutKindsOldRoutineWords(_ require: (Bool, String) throws -> Void) throws {
+        let kindWords: Set<String> = ["research", "researching", "document", "documents", "writing", "write", "written", "report", "reports"]
+        let banned = Set(CompanionTalkControlFixture.banned + CompanionTalkControlFixture.pronouns)
+        func words(_ text: String) -> [String] {
+            text.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
+        }
+        func plain(_ text: String) -> Bool { !words(text).contains { kindWords.contains($0) || banned.contains($0) } }
+        let failures = NativeTaskWorkerFailures.self
+        let codes = ["response_cut_short", "response_empty", "response_finish", "response_tool_calls", "response_unreadable", "provider_error",
+                     "response_too_large", "request_timeout", "provider_auth", "provider_quota", "credential_unavailable", "previous_request_uncertain", "other"]
+        var prompts = [NativeResearchWorker.explicitRetryMessage, NativeResearchWorker.unusableReportMessage, NativeResearchWorker.uncitedReportMessage,
+                       NativeResearchWorker.condenseStuckMessage, NativeResearchWorker.unmatchedNotesMessage,
+                       "No usable sources were gathered.", "The condensed notes came back empty.", "The notes for part of the sources came back empty.",
+                       NativeDocumentWorker.explicitRetryMessage, NativeDocumentWorker.invalidOutlineMessage, NativeDocumentWorker.longOutlineMessage,
+                       NativeDocumentWorker.invalidSectionMessage, NativeDocumentWorker.bulletCountMessage, NativeDocumentWorker.condenseStuckMessage,
+                       "The model did not return usable notes for the material."]
+        prompts += failures.replySentences
+        prompts += codes.flatMap { [failures.pauseMessage($0), failures.pauseMessage($0, sections: true)] }
+        let decisionPrompts = Array(Set(prompts.map(failures.retryPrompt))).sorted()
+        let failureLines = [failures.modelChangedMessage, NativeDocumentWorker.progressTooLargeMessage,
+                            NativeResourcePolicy.planTooLarge(needed: 182_000, room: 120_000),
+                            NativeResourcePolicy.tooLarge(182_000, limit: 120_000, document: true),
+                            NativeResourcePolicy.tooLarge(182_000, limit: 120_000, document: false)]
+        let savedLines = SavedWording.earlier.map(\.1)
+        for line in decisionPrompts + failureLines + savedLines {
+            let shown = SavedWording.scheduled(line)
+            try require(plain(shown), "A scheduled run shows this line without a kind of work: \(line) became \(shown)")
+            try require(SavedWording.question(line) == SavedWording.question(line, scheduled: false), "Work from a chat keeps the line as written: \(line)")
+        }
+        try require(SavedWording.scheduled(SavedWording.scheduled(NativeDocumentWorker.progressTooLargeMessage)) == SavedWording.scheduled(NativeDocumentWorker.progressTooLargeMessage),
+                    "Rewording a line twice changes nothing")
+
+        for workerType in ["research", "document"] {
+            for scheduled in [true, false] {
+                let repository = try LocalChatRepository(inMemory: true)
+                let engine = try NativeTaskEngineIdentity(CardShot.engineURL)
+                let origin = try NativeTaskFixture.origin(repository)
+                let request = try NativeResearchTaskRequest(objective: "Check the frost forecast", deliverables: ["A short summary"], workerType: workerType,
+                                                            scheduleID: scheduled ? UUID().uuidString.lowercased() : nil)
+                let prepared = try repository.prepareTaskReference(origin: origin, engine: engine, request: request, profile: nil)
+                let remote = UUID().uuidString
+                _ = try repository.acknowledgeTaskReference(id: prepared.id, snapshot: try scheduleWithoutKindsSnapshot(prepared, remote: remote, workerType: workerType, state: "queued"))
+                guard let reference = try repository.taskReference(id: prepared.id) else { throw NativeTaskFixture.Failure.assertion("The reference binds") }
+                func shown(_ state: String, checkpoint: [String: Any], decision: [String: Any]? = nil) throws -> String {
+                    var object = (try JSONSerialization.jsonObject(with: NativeTaskFixture.snapshot(reference, id: remote, state: state))) as? [String: Any] ?? [:]
+                    object["worker_type"] = workerType
+                    object["checkpoint"] = checkpoint
+                    if let decision { object["decision"] = decision }
+                    let snapshot = try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical(object))
+                    return try NativeTaskProjection.display(reference: reference, snapshot: snapshot).card.milestone
+                }
+                for prompt in decisionPrompts {
+                    let milestone = try shown("needs_decision", checkpoint: [:], decision: ["id": "retry", "prompt": prompt, "choices": ["retry"]])
+                    if scheduled {
+                        try require(plain(milestone), "A scheduled \(workerType) question reads without a kind of work: \(milestone)")
+                    } else {
+                        try require(milestone == SavedWording.question(prompt), "A \(workerType) question from a chat reads as written: \(milestone)")
+                    }
+                }
+                var failed: [[String: Any]] = [["failure_reason": "progress_too_large"], ["failure_reason": "plan_too_large"],
+                                               ["failure_reason": "plan_too_large", "oversize": [182_000, 120_000]],
+                                               ["failure_reason": "result_too_large", "oversize": [182_000, 120_000]],
+                                               ["failure_reason": "input_limit"], ["failure_reason": "request_conflict"], [:]]
+                if workerType == "document" { failed.append(["failure_reason": "profile_changed"]) }
+                for checkpoint in failed {
+                    let milestone = try shown("failed", checkpoint: checkpoint)
+                    try require(!scheduled || plain(milestone), "A scheduled \(workerType) failure reads without a kind of work: \(milestone)")
+                }
+                let steps: [[String: Any]] = workerType == "document"
+                    ? [["phase": "condense"], ["phase": "outline"], ["phase": "assemble"]]
+                    : [["phase": "synthesize", "sources": [["n": 1, "title": "Saved forecast", "url": "local"]]], ["phase": "gather"], ["phase": "plan"]]
+                for checkpoint in steps {
+                    let milestone = try shown("running", checkpoint: checkpoint)
+                    try require(!scheduled || plain(milestone), "A scheduled \(workerType) step reads without a kind of work: \(milestone)")
+                    if !scheduled, workerType == "research", checkpoint["phase"] as? String == "synthesize" {
+                        try require(milestone == "Preparing the report from 1 source.", "Research from a chat still names its report: \(milestone)")
+                    }
+                }
+            }
+        }
     }
 
     private static func scheduleWithoutKindsProfileAside(_ require: (Bool, String) throws -> Void) async throws {

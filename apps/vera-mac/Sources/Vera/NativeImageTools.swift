@@ -131,12 +131,15 @@ enum NativeImageTools {
                 id: toolID,
                 name: toolName,
                 title: title,
-                description: "Generate an image from a text description. The finished image is shown to the user on this turn, so describe what was made in a sentence instead of linking to it. Write the prompt as a full description of the finished picture: subject, setting, style, lighting, and any exact text to render in quotes.",
+                description: "Makes one new image from a written description and shows it to the person in this reply. When to use: the person wants a picture, illustration or other image created. When not to use: to find an existing image on the web, use web_search; changing an image the person already has is not possible with this tool, so say so. Effects: generates an image and saves it as an attachment in this conversation; the app may ask the person first, and it can take a few minutes. Returns image, the saved picture, with its width, height and seed. The image is already on screen, so describe what was made in one sentence instead of linking to it; the same prompt and seed reproduce a result. If it fails, say plainly that the image could not be made, and retry once only when the error points at the size or seed.",
                 parameters: objectSchema(
                     properties: [
-                        "prompt": .object(["type": .string("string"), "description": .string("A complete description of the image to make")]),
-                        "size": .object(["type": .string("string"), "description": .string("Optional width x height in pixels such as 1024x1024 (default), 1536x1024 or 2048x2048. Each side 256 to 2048.")]),
-                        "seed": .object(["type": .string("integer"), "description": .string("Optional seed for a repeatable result")]),
+                        "prompt": .object(["type": .string("string"), "minLength": .number(1),
+                                           "description": .string("A full description of the finished picture: subject, setting, style, lighting and composition, with any exact text to show written in quotes.")]),
+                        "size": .object(["type": .string("string"), "minLength": .number(1),
+                                         "description": .string("Width and height in pixels written as WIDTHxHEIGHT, for example 1536x1024. Each side must be \(NativeImageSize.minimumSide) to \(NativeImageSize.maximumSide) and is rounded to a multiple of \(NativeImageSize.step). Default \(NativeImageSize.standard.label).")]),
+                        "seed": .object(["type": .string("integer"), "minimum": .number(0), "maximum": .number(Double(maximumSeed)),
+                                         "description": .string("A whole number from 0 to \(maximumSeed) that makes the result repeatable. Omit for a random seed.")]),
                     ], required: ["prompt"]),
                 confirmation: .none,
                 timeout: timeout,
@@ -187,9 +190,9 @@ enum NativeImageTools {
         NativeChatToolDescriptor(
             id: toolID,
             name: "Image generation",
-            summary: "Makes images on your ComfyUI server from a description.",
+            summary: "Makes images from a description.",
             available: configured,
-            setup: "Set the ComfyUI URL in the Image tab to enable image generation.")
+            setup: "Add your image server to use this.")
     }
 
     static func attachment(from activity: NativeToolActivity) -> MessageAttachment? {

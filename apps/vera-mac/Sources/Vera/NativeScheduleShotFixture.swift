@@ -24,7 +24,8 @@ enum NativeScheduleShotFixture {
                                                cadence: .weekly(weekday: 2, minuteOfDay: 9 * 60), timeZone: zone,
                                                nextRunAt: calendar.nextDate(after: now, matching: DateComponents(hour: 9, minute: 0, weekday: 2), matchingPolicy: .nextTime),
                                                lastRunAt: calendar.date(byAdding: .day, value: -3, to: today7), lastOutcome: .missed),
-              let prices = try? NativeSchedule(id: "shot-prices", owner: .conversation, workerType: "research", title: "Lumber price watch",
+              let prices = try? NativeSchedule(id: "shot-prices", owner: waiting == nil ? .conversation : .dot,
+                                               workerType: waiting == nil ? "research" : "companion", title: "Lumber price watch",
                                                instruction: "Check current lumber futures and note any move over two percent.",
                                                cadence: .everyHours(6), timeZone: zone, nextRunAt: today6.addingTimeInterval(6 * 3600),
                                                lastRunAt: today6, lastOutcome: .waiting) else { return }
