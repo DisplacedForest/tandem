@@ -439,6 +439,7 @@ enum SelfTest {
         do { try await runNativeScheduler() } catch { print("SELFTEST ERROR: native scheduler \(error)"); exit(1) }
         do { try runSettingsSections() } catch { print("SELFTEST ERROR: settings sections \(error)"); exit(1) }
         do { try runTranscriptFollow() } catch { print("SELFTEST ERROR: transcript follow \(error)"); exit(1) }
+        do { try runTypingDots() } catch { print("SELFTEST ERROR: typing dots \(error)"); exit(1) }
         do { try await runTandemMotion() } catch { print("SELFTEST ERROR: tandem motion \(error)"); exit(1) }
         do { try runCompanionAttention() } catch { print("SELFTEST ERROR: companion attention \(error)"); exit(1) }
         do { try await runCompanionPresence() } catch { print("SELFTEST ERROR: companion presence \(error)"); exit(1) }

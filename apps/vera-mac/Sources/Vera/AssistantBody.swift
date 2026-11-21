@@ -94,12 +94,11 @@ struct AssistantBody: View {
             .modifier(MessageActionsBubble(message: message, companionThread: companionThread, fill: Theme.assistantBubble,
                                            trailing: false, selectableText: Self.shownText(message)))
         } else if message.state == .streaming && message.toolActivities.isEmpty && message.ask == nil {
-            ProgressView().controlSize(.small)
+            TypingDots()
                 .padding(.horizontal, companionThread ? ConversationMetrics.bubblePaddingH : 0)
                 .padding(.vertical, companionThread ? ConversationMetrics.bubblePaddingV : 0)
                 .background(companionThread ? Theme.assistantBubble : .clear)
                 .clipShape(RoundedRectangle(cornerRadius: companionThread ? ConversationMetrics.bubbleRadius : 0, style: .continuous))
-                .accessibilityLabel("Working on your answer")
         }
     }
 

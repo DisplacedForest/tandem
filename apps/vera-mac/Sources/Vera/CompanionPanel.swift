@@ -462,12 +462,7 @@ private struct CompanionMessageRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else if message.state == .streaming && message.text.isEmpty {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
-                Text("Thinking")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
-            }
+            TypingDots(size: 6)
         } else {
             Text(message.text)
                 .font(.system(size: 13))

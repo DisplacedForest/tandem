@@ -118,10 +118,8 @@ struct CompanionThreadPanel: View {
             if renderSafe {
                 content
             } else {
-                ViewThatFits(in: .vertical) {
-                    content
-                    ScrollView { content }
-                }
+                ScrollView { content }
+                    .scrollBounceBehavior(.basedOnSize)
             }
         }
         .frame(width: width)
