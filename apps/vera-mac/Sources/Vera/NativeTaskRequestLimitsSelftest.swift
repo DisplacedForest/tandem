@@ -24,7 +24,9 @@ final class TaskLimitsWire: @unchecked Sendable {
         self.contentType = contentType
         self.pieces = pieces
         self.closes = closes
-        listener = try NWListener(using: .tcp, on: .any)
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
         let ready = listener
         let gate = NativePiReadyGate()
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
@@ -352,6 +354,15 @@ extension SelfTest {
             TaskLimitsWire.Piece(at: Double(index) * 0.02, bytes: TaskLimitsWire.event(["reasoning_content": String(repeating: "r", count: 100_000)]))
         }
         try await tooLarge(thinking + [.init(at: 0.3, bytes: TaskLimitsWire.event(["content": "ok"]))], "Reasoning over the cap")
+        let named = (0..<2).map { index in
+            TaskLimitsWire.Piece(at: Double(index) * 0.02, bytes: TaskLimitsWire.event(["tool_calls": [
+                ["index": index, "id": String(repeating: "i", count: 600_000), "function": ["name": "lookup", "arguments": "{}"]]]]))
+        }
+        try await tooLarge(named, "Call identifiers over the cap")
+        let many = TaskLimitsWire.event(["tool_calls": (0...NativeTaskReplyReader.maximumCalls).map { index in
+            ["index": index, "id": "call-\(index)", "function": ["name": "lookup", "arguments": "{}"]] as [String: Any]
+        }])
+        try await tooLarge([.init(at: 0, bytes: many)], "More calls than a reply may carry")
 
         let word = "abcdefghi "
         let batch = (0..<1000).reduce(into: Data()) { data, _ in data.append(TaskLimitsWire.event(["content": word])) }

@@ -183,6 +183,7 @@ struct NativeTaskProvider {
 
 struct NativeTaskReplyReader {
     static let maximumBytes = 1048576
+    static let maximumCalls = 64
 
     private enum Mode { case undecided, body, events }
 
@@ -243,8 +244,10 @@ struct NativeTaskReplyReader {
             }
             if let reason = latest.finishReason { finishReason = reason }
             let size = reasoningBytes + latest.content.utf8.count
-                + latest.toolCalls.reduce(0) { $0 + $1.arguments.utf8.count + $1.name.utf8.count }
-            guard size <= Self.maximumBytes else { throw NativeTaskGenerationFailure(code: "response_too_large") }
+                + latest.toolCalls.reduce(0) { $0 + $1.id.utf8.count + $1.name.utf8.count + $1.arguments.utf8.count }
+            guard size <= Self.maximumBytes, latest.toolCalls.count <= Self.maximumCalls else {
+                throw NativeTaskGenerationFailure(code: "response_too_large")
+            }
         }
         return replied
     }
