@@ -638,8 +638,9 @@ enum NativeChatHistoryBuilder {
                         toolCallID: activity.id))
                 }
             }
-            if !message.text.isEmpty {
-                history.append(NativeChatMessage(role: "assistant", content: message.text))
+            let spoken = VeraAsk.modelText(message.text, ask: message.ask)
+            if !spoken.isEmpty {
+                history.append(NativeChatMessage(role: "assistant", content: spoken))
             }
         }
         if let capabilities, capabilities.acceptsImages {

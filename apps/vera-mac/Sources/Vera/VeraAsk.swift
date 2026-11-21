@@ -46,6 +46,23 @@ struct VeraAsk: Hashable, Codable {
         return (text, nil)
     }
 
+    var fencedBlock: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        func quoted(_ value: String) -> String {
+            (try? encoder.encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+        }
+        let options = options.map { "{\"label\":" + quoted($0.label) + ",\"description\":" + quoted($0.description) + "}" }
+        let json = "{\"question\":" + quoted(question) + ",\"multiSelect\":" + (multiSelect ? "true" : "false")
+            + ",\"options\":[" + options.joined(separator: ",") + "]}"
+        return "```vera:ask\n" + json + "\n```"
+    }
+
+    static func modelText(_ text: String, ask: VeraAsk?) -> String {
+        guard let ask else { return text }
+        return text.isEmpty ? ask.fencedBlock : text + "\n\n" + ask.fencedBlock
+    }
+
     static func mock() -> VeraAsk {
         VeraAsk(
             question: "Which Spanish white should we plan next?",

@@ -180,7 +180,7 @@ extension ChatStore {
                     continue
                 }
                 let live = Dictionary(uniqueKeysWithValues: conversations[index].messages.map { ($0.id, $0) })
-                conversations[index].messages = try repository.messages(conversationID: id).map { stored in
+                conversations[index].messages = LocalChatRepository.markingAnsweredAsks(try repository.messages(conversationID: id).map { stored in
                     if ownedMessages.contains(stored.id), var current = live[stored.id] {
                         current.displayBlocks = stored.displayBlocks
                         return current
@@ -191,7 +191,7 @@ extension ChatStore {
                         value.answerText = live[stored.id]?.answerText
                     }
                     return value
-                }
+                })
                 refreshPreferenceMarkers(conversationID: id)
                 dirtyTurnConversations.remove(id)
             }
@@ -502,8 +502,16 @@ extension ChatStore {
             try turnRepository?.retryTurn(turn.id, profile: turnProfile(for: turn.history.last?.routeNote))
             conversations[location.conversation].messages[location.reply].state = .streaming
             conversations[location.conversation].messages[location.reply].failure = nil
+            markAnsweredAsk(conversation: location.conversation, reply: location.reply)
             scheduleConversationTurns()
         } catch { chatConfigurationError = error.localizedDescription }
+    }
+
+    func markAnsweredAsk(conversation: Int, reply: Int) {
+        let later = conversations[conversation].messages[(reply + 1)...].first { $0.role == .user }
+        let asked = conversations[conversation].messages[reply].ask != nil
+        conversations[conversation].messages[reply].answered = asked && later != nil
+        conversations[conversation].messages[reply].answerText = asked ? later?.text : nil
     }
 
     func answerStatus(_ messageID: UUID) -> String? {

@@ -2281,7 +2281,7 @@ final class ChatStore: ObservableObject {
             if let pendingReply { recordReply(pendingReply, messageID: user.id, conversationID: id, saved: answered != nil && turnRepository is LocalChatRepository) }
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])
             let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
-            conversation.messages = stored.map { live[$0.id] ?? $0 }
+            conversation.messages = LocalChatRepository.markingAnsweredAsks(stored.map { live[$0.id] ?? $0 })
             conversations[index] = conversation
             if !conversationTurns.contains(where: { $0.id == turn.id }) {
                 conversationTurns.append(turn)
@@ -2323,6 +2323,7 @@ final class ChatStore: ObservableObject {
             try turnRepository?.enrollLegacyTurn(turn)
             conversations[ci].messages[ri].state = .streaming
             conversations[ci].messages[ri].failure = nil
+            markAnsweredAsk(conversation: ci, reply: ri)
             scheduleConversationTurns()
             return true
         } catch {
@@ -2791,6 +2792,7 @@ final class ChatStore: ObservableObject {
                             let (clean, ask) = VeraAsk.parse(afterArt)
                             conversations[i].messages[replyIndex].text = clean
                             conversations[i].messages[replyIndex].ask = ask
+                            markAnsweredAsk(conversation: i, reply: replyIndex)
                             conversations[i].messages[replyIndex].artifacts = arts
                             conversations[i].messages[replyIndex].toolActivities = snapshot.activities
                             for activity in snapshot.activities {

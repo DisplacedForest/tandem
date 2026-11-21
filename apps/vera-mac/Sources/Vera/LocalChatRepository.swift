@@ -403,7 +403,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
                 """, arguments: [conversationID])
-            return Self.markingScheduledResults(Self.decodeMessages(rows), db)
+            return Self.markingAnsweredAsks(Self.markingScheduledResults(Self.decodeMessages(rows), db))
         }
     }
 
@@ -425,7 +425,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 )
                 ORDER BY ordinal ASC
                 """, arguments: [conversationID, limit])
-            return Self.markingScheduledResults(Self.decodeMessages(rows), db)
+            return Self.markingAnsweredAsks(Self.markingScheduledResults(Self.decodeMessages(rows), db))
         }
     }
 
@@ -1006,6 +1006,20 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     }
 
+    static func markingAnsweredAsks(_ messages: [Message]) -> [Message] {
+        var marked = messages
+        var reply: String?
+        for index in marked.indices.reversed() {
+            if marked[index].role == .user {
+                reply = marked[index].text
+            } else if marked[index].ask != nil, let reply {
+                marked[index].answered = true
+                marked[index].answerText = reply
+            }
+        }
+        return marked
+    }
+
     static func markingScheduledResults(_ messages: [Message], _ db: Database) -> [Message] {
         messages.map { message in
             guard message.displayBlocks.contains(where: { if case .artifact(let artifact) = $0 { artifact.scheduled == nil } else { false } }),
@@ -1057,6 +1071,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                let raw: String = row["metadata_json"] {
                 message.delivery = try? JSONDecoder().decode(NativeDeliveredMessage.self, from: Data(raw.utf8))
             }
+            if role == .assistant, contentType == .text,
+               let raw: String = row["metadata_json"],
+               let saved = try? JSONDecoder().decode(SavedAsk.self, from: Data(raw.utf8)) {
+                message.ask = saved.ask
+            }
             return message
         }
     }
@@ -1065,8 +1084,17 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         if let delivery = message.delivery, message.contentType == .deliveredResult || message.contentType == .deliveredLine {
             return (try? nativeTaskEncoded(delivery)).map { String(decoding: $0, as: UTF8.self) }
         }
-        guard message.contentType == .pulseCard, let card = message.pulse else { return nil }
-        return PulseCardSnapshot(card: card, capturedAt: message.createdAt).encodedJSON()
+        if message.contentType == .pulseCard {
+            guard let card = message.pulse else { return nil }
+            return PulseCardSnapshot(card: card, capturedAt: message.createdAt).encodedJSON()
+        }
+        guard message.role == .assistant, message.contentType == .text,
+              let ask = message.ask else { return nil }
+        return try? encode(SavedAsk(ask: ask))
+    }
+
+    private struct SavedAsk: Codable {
+        let ask: VeraAsk
     }
 
     private static func attachmentsJSON(for message: Message) -> String? {
