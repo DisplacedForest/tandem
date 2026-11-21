@@ -17,6 +17,7 @@ struct NativeTurnHistoryMessage: Codable, Sendable {
     let attachments: [MessageAttachment]
     var routeNote: MessageRouteNote?
     let activities: [NativeToolActivity]
+    var ask: VeraAsk?
 
     init(_ message: Message) {
         id = message.id
@@ -25,10 +26,11 @@ struct NativeTurnHistoryMessage: Codable, Sendable {
         attachments = message.attachments
         routeNote = message.routeNote
         activities = message.toolActivities
+        ask = message.role == .assistant ? message.ask : nil
     }
 
     var message: Message {
-        Message(id: id, role: Message.Role(rawValue: role) ?? .user, text: text,
+        Message(id: id, role: Message.Role(rawValue: role) ?? .user, text: text, ask: ask,
                 attachments: attachments, toolActivities: activities, routeNote: routeNote)
     }
 

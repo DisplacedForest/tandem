@@ -475,6 +475,14 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
+    func saveAskAnswer(_ message: Message) throws {
+        guard message.ask != nil, let metadata = Self.metadataJSON(for: message) else { return }
+        try database.write { db in
+            try db.execute(sql: "UPDATE messages SET metadata_json = ? WHERE id = ? AND role = 'assistant' AND content_type = ?",
+                           arguments: [metadata, message.id.uuidString, MessageContentType.text.rawValue])
+        }
+    }
+
     func postScheduleCheckIn(_ message: Message, conversationID: String, runID: String, key: String, referenceID: UUID, decisionID: String) throws -> Bool {
         try database.write { db in
             guard let snapshot = try Self.readTaskProjection(db, id: referenceID)?.snapshot,
@@ -1057,6 +1065,13 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                let raw: String = row["metadata_json"] {
                 message.delivery = try? JSONDecoder().decode(NativeDeliveredMessage.self, from: Data(raw.utf8))
             }
+            if role == .assistant, contentType == .text,
+               let raw: String = row["metadata_json"],
+               let saved = try? JSONDecoder().decode(SavedAsk.self, from: Data(raw.utf8)) {
+                message.ask = saved.ask
+                message.answered = saved.answered ?? false
+                message.answerText = saved.answerText
+            }
             return message
         }
     }
@@ -1065,8 +1080,20 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         if let delivery = message.delivery, message.contentType == .deliveredResult || message.contentType == .deliveredLine {
             return (try? nativeTaskEncoded(delivery)).map { String(decoding: $0, as: UTF8.self) }
         }
-        guard message.contentType == .pulseCard, let card = message.pulse else { return nil }
-        return PulseCardSnapshot(card: card, capturedAt: message.createdAt).encodedJSON()
+        if message.contentType == .pulseCard {
+            guard let card = message.pulse else { return nil }
+            return PulseCardSnapshot(card: card, capturedAt: message.createdAt).encodedJSON()
+        }
+        guard message.role == .assistant, message.contentType == .text,
+              let ask = message.ask else { return nil }
+        let saved = SavedAsk(ask: ask, answered: message.answered ? true : nil, answerText: message.answered ? message.answerText : nil)
+        return try? encode(saved)
+    }
+
+    private struct SavedAsk: Codable {
+        let ask: VeraAsk
+        var answered: Bool?
+        var answerText: String?
     }
 
     private static func attachmentsJSON(for message: Message) -> String? {

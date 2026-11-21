@@ -2232,6 +2232,7 @@ final class ChatStore: ObservableObject {
         if sendText(answer) {
             conversations[ci].messages[mi].answered = true
             conversations[ci].messages[mi].answerText = answer
+            try? (repository as? LocalChatRepository)?.saveAskAnswer(conversations[ci].messages[mi])
         }
     }
 
