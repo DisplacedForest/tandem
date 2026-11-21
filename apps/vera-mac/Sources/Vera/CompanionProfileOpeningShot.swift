@@ -35,7 +35,6 @@ enum CompanionProfileOpeningShot {
         let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.appearance = NSApplication.shared.appearance
         window.contentView = hosting
-        window.orderFrontRegardless()
         RunLoop.main.run(until: Date().addingTimeInterval(0.4))
         if view == "companion-profile-closing" {
             state.profile.open()
