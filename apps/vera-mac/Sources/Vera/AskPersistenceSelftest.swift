@@ -56,6 +56,7 @@ enum AskPersistenceSelftest {
         try roundTrip(require)
         try staleSaves(require)
         try await retried(require)
+        try await retriedAfterReply(require)
         try history(require)
         try await endToEnd(require)
         print("ASK PERSISTENCE SELFTEST OK")
@@ -184,9 +185,58 @@ enum AskPersistenceSelftest {
         }
         let shown = store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == replyID }
         try require(shown?.answered == false && shown?.answerText == nil, "A retry that brings back a different question can be answered")
-        let saved = try repository.messages(conversationID: conversationID).first { $0.id == replyID }
-        try require(saved?.ask?.question == "Which day first?" && saved?.answered == false,
-                    "The retried question loads answerable")
+        try await NativeSessionFixture.eventually("The retried question loads answerable") {
+            let saved = try? repository.messages(conversationID: conversationID).first { $0.id == replyID }
+            return saved?.ask?.question == "Which day first?" && saved?.answered == false
+        }
+    }
+
+    static func retriedAfterReply(_ require: (Bool, String) throws -> Void) async throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let transport = AskPersistenceTransport()
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: repository,
+                              artifactPersistenceEnabled: false)
+        store.newConversation()
+        try require(store.sendText(AskPersistenceTransport.asking), "The chat accepts the message")
+        try await NativeSessionFixture.eventually("The reply with a question completes") {
+            store.selected?.messages.last?.role == .assistant && store.selected?.messages.last?.state == .complete
+        }
+        try await NativeSessionFixture.eventually("The finished turn settles") { store.conversationTurns.allSatisfy { $0.state != .pending && $0.state != .running } }
+        guard let conversationID = store.selectedID, let ci = store.conversations.firstIndex(where: { $0.id == conversationID }),
+              let ri = store.conversations[ci].messages.lastIndex(where: { $0.role == .assistant }),
+              let turnID = store.conversationTurns.first(where: { $0.assistantMessageID == store.conversations[ci].messages[ri].id })?.id else {
+            throw NativeTaskFixture.Failure.assertion("The reply is shown")
+        }
+        let replyID = store.conversations[ci].messages[ri].id
+        let answer = Message(role: .user, text: "Short lists")
+        store.conversations[ci].messages.append(answer)
+        try repository.saveMessage(answer, conversationID: conversationID, ordinal: store.conversations[ci].messages.count - 1)
+        try await repository.database.write { db in
+            guard var turn = try LocalChatRepository.readTurn(turnID, db: db) else { return }
+            turn.state = .interrupted
+            try LocalChatRepository.writeTurn(turn, db: db)
+        }
+        store.conversations[ci].messages[ri].state = .interrupted
+        store.conversations[ci].messages[ri].answered = false
+        store.conversations[ci].messages[ri].answerText = nil
+        transport.nextAsk = AskPersistenceTransport.otherBlock
+        store.retryAnswer(replyID)
+        let retrying = store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == replyID }
+        try require(retrying?.answered == true && retrying?.answerText == "Short lists",
+                    "A retried card with a reply below it stays answered as soon as the retry starts")
+        try await NativeSessionFixture.eventually("The retried reply streams its new question") {
+            store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == replyID }?.ask?.question == "Which day first?"
+        }
+        let streamed = store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == replyID }
+        try require(streamed?.answered == true && streamed?.answerText == "Short lists",
+                    "A retried card with a reply below it can't be answered again while it streams")
+        try await NativeSessionFixture.eventually("The retried reply completes") {
+            store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == replyID }?.state == .complete
+        }
+        try await NativeSessionFixture.eventually("It loads answered with the first reply below it") {
+            let saved = try? repository.messages(conversationID: conversationID).first { $0.id == replyID }
+            return saved?.ask?.question == "Which day first?" && saved?.answered == true && saved?.answerText == "Short lists"
+        }
     }
 
     static func history(_ require: (Bool, String) throws -> Void) throws {

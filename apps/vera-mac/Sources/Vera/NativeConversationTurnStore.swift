@@ -502,10 +502,16 @@ extension ChatStore {
             try turnRepository?.retryTurn(turn.id, profile: turnProfile(for: turn.history.last?.routeNote))
             conversations[location.conversation].messages[location.reply].state = .streaming
             conversations[location.conversation].messages[location.reply].failure = nil
-            conversations[location.conversation].messages[location.reply].answered = false
-            conversations[location.conversation].messages[location.reply].answerText = nil
+            markAnsweredAsk(conversation: location.conversation, reply: location.reply)
             scheduleConversationTurns()
         } catch { chatConfigurationError = error.localizedDescription }
+    }
+
+    func markAnsweredAsk(conversation: Int, reply: Int) {
+        let later = conversations[conversation].messages[(reply + 1)...].first { $0.role == .user }
+        let asked = conversations[conversation].messages[reply].ask != nil
+        conversations[conversation].messages[reply].answered = asked && later != nil
+        conversations[conversation].messages[reply].answerText = asked ? later?.text : nil
     }
 
     func answerStatus(_ messageID: UUID) -> String? {

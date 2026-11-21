@@ -2323,8 +2323,7 @@ final class ChatStore: ObservableObject {
             try turnRepository?.enrollLegacyTurn(turn)
             conversations[ci].messages[ri].state = .streaming
             conversations[ci].messages[ri].failure = nil
-            conversations[ci].messages[ri].answered = false
-            conversations[ci].messages[ri].answerText = nil
+            markAnsweredAsk(conversation: ci, reply: ri)
             scheduleConversationTurns()
             return true
         } catch {
@@ -2792,11 +2791,8 @@ final class ChatStore: ObservableObject {
                             let (afterArt, arts) = Artifact.parse(snapshot.content)
                             let (clean, ask) = VeraAsk.parse(afterArt)
                             conversations[i].messages[replyIndex].text = clean
-                            if conversations[i].messages[replyIndex].ask != ask {
-                                conversations[i].messages[replyIndex].answered = false
-                                conversations[i].messages[replyIndex].answerText = nil
-                            }
                             conversations[i].messages[replyIndex].ask = ask
+                            markAnsweredAsk(conversation: i, reply: replyIndex)
                             conversations[i].messages[replyIndex].artifacts = arts
                             conversations[i].messages[replyIndex].toolActivities = snapshot.activities
                             for activity in snapshot.activities {
