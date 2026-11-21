@@ -4,6 +4,8 @@ import AppKit
 struct PromptLibraryView: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
+    var reveal: (String) -> Void = { _ in }
+    var onEditPreferences: () -> Void = {}
 
     var body: some View {
         if let repository = store.promptLibrary {
@@ -16,7 +18,9 @@ struct PromptLibraryView: View {
                     config.nativeSettings = updated
                     store.adoptPersona(id)
                     try? config.save()
-                })
+                },
+                reveal: reveal,
+                onEditPreferences: onEditPreferences)
         } else {
             Label("Local storage is unavailable, so prompts cannot be edited.", systemImage: "exclamationmark.triangle")
                 .font(.system(size: 12)).foregroundStyle(.orange)
@@ -34,7 +38,10 @@ struct PromptLibraryArea: View {
     let repository: any NativePromptLibraryRepository
     let activePersonaID: String?
     let onSelectActive: (String) -> Void
-    var previewTimestamp: Date = Date()
+    var reveal: (String) -> Void = { _ in }
+    var onEditPreferences: () -> Void = {}
+
+    static let editorID = "prompt-editor"
 
     @State private var profiles: [PromptProfile] = []
     @State private var reusable: [ReusablePrompt] = []
@@ -43,7 +50,8 @@ struct PromptLibraryArea: View {
     @State private var editorContent = ""
     @State private var feedback: String?
     @State private var feedbackIsError = false
-    @State private var showPreview = false
+    @State private var showFullPrompt = false
+    @State private var pendingEdit: NativeSystemPromptPart.Destination?
     @State private var showHistory = false
     @State private var revisions: [PromptRevision] = []
 
@@ -53,8 +61,6 @@ struct PromptLibraryArea: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Personas, user context, and reusable prompts are stored in Tandem's local database with revision history.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Menu {
                     Button("New persona") { create(scope: .persona) }
@@ -66,6 +72,7 @@ struct PromptLibraryArea: View {
                     Label("Add", systemImage: "plus")
                 }
                 .menuStyle(.borderlessButton).fixedSize()
+                Button("View full prompt") { showFullPrompt = true }
             }
             scopeGroup(
                 title: "Personas", explanation: PromptScope.persona.explanation,
@@ -77,14 +84,23 @@ struct PromptLibraryArea: View {
                 title: "Reusable prompts",
                 explanation: "Named snippets you insert into a message on demand. They are sent as your message text, never as system text.",
                 entries: reusable.map { reusableRow(for: $0) })
-            if selection != nil { editor }
+            if selection != nil { editor.id(Self.editorID) }
             if let feedback {
                 Text(feedback).font(.system(size: 11))
                     .foregroundStyle(feedbackIsError ? .orange : Theme.textSecondary)
             }
         }
         .onAppear(perform: reload)
-        .sheet(isPresented: $showPreview) { preview }
+        .sheet(isPresented: $showFullPrompt, onDismiss: openPendingEdit) {
+            FullPromptSheet(
+                preview: { store.fullPromptPreview(companion: $0) },
+                companionLabel: store.companionDisplayName ?? "Companion",
+                onEdit: { destination in
+                    pendingEdit = destination
+                    showFullPrompt = false
+                },
+                onDone: { showFullPrompt = false })
+        }
         .sheet(isPresented: $showHistory) { history }
     }
 
@@ -158,7 +174,6 @@ struct PromptLibraryArea: View {
             HStack(spacing: 10) {
                 Button("Save", action: save)
                 Button("Duplicate", action: duplicate)
-                Button("Preview") { showPreview = true }
                 Button("History") { loadHistory() }
                 Button("Export", action: exportDocument)
                 Spacer()
@@ -170,18 +185,24 @@ struct PromptLibraryArea: View {
         .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var preview: some View {
-        let composed = PromptPreviewComposer.compose(
-            profiles: profiles,
-            activePersonaID: activePersonaID,
-            selection: selection,
-            draft: editorContent)
-        let assembled = NativeContextAssembler.assemble(NativeContextInput(
-            persona: composed.persona, userScope: composed.userScope,
-            timestamp: previewTimestamp, timeZone: .current, contracts: []))
-        return PromptPreviewPane(sections: assembled.sections, onDone: { showPreview = false },
-                                 memoryTrace: store.selectedID.flatMap { store.memoryRetrievalTraces[$0] })
-            .frame(width: 560, height: 520)
+    private func openPendingEdit() {
+        guard let destination = pendingEdit else { return }
+        pendingEdit = nil
+        reload()
+        switch destination {
+        case .persona:
+            guard let target = personas.first(where: { $0.id == activePersonaID }) ?? personas.first else {
+                create(scope: .persona)
+                break
+            }
+            select(.profile(target.id))
+        case .userContext:
+            if let first = userProfiles.first { select(.profile(first.id)) } else { create(scope: .user) }
+        case .preferences:
+            onEditPreferences()
+            return
+        }
+        DispatchQueue.main.async { reveal(Self.editorID) }
     }
 
     private var history: some View {
@@ -442,61 +463,77 @@ struct PromptLibraryArea: View {
     }
 }
 
-struct PromptPreviewPane: View {
-    let sections: [NativeContextSection]
+struct FullPromptSheet: View {
+    let preview: (Bool) -> NativePromptPreview
+    let companionLabel: String
+    var onEdit: ((NativeSystemPromptPart.Destination) -> Void)?
     var onDone: (() -> Void)?
-    var scrolls: Bool = true
-    var memoryTrace: NativeMemoryRetrievalTrace? = nil
+    var scrolls = true
+    @State var companion = false
+
+    struct Block: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let text: String
+        let sent: Bool
+        let destination: NativeSystemPromptPart.Destination?
+    }
+
+    static func blocks(_ parts: [NativeSystemPromptPart]) -> [Block] {
+        var blocks: [Block] = []
+        for part in parts where !part.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let last = blocks.last, last.title == part.title, last.sent == part.sent {
+                blocks[blocks.count - 1] = Block(id: last.id, title: last.title, text: last.text + "\n\n" + part.text,
+                                                 sent: last.sent, destination: last.destination ?? part.destination)
+            } else {
+                blocks.append(Block(id: part.name, title: part.title, text: part.text, sent: part.sent, destination: part.destination))
+            }
+        }
+        return blocks
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Request preview").font(.system(size: 14, weight: .semibold))
+                Text("Full prompt").font(.system(size: 14, weight: .semibold))
                 Spacer()
-                if let onDone { Button("Done", action: onDone) }
+                if let onDone { Button("Done", action: onDone).keyboardShortcut(.defaultAction) }
             }
             .padding(14)
+            Picker("Conversation", selection: $companion) {
+                Text("Normal chat").tag(false)
+                Text(companionLabel).tag(true)
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            .padding(.horizontal, 14).padding(.bottom, 12)
             Divider()
             if scrolls {
-                ScrollView { inner }
+                ScrollView { content }
             } else {
-                inner
+                content
                 Spacer(minLength: 0)
             }
         }
     }
 
-    private var inner: some View {
+    private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Sections render in this order on every request. The app policy comes first and cannot be edited; your prompts follow it and cannot override it.")
-                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-            ForEach(sections, id: \.name) { section in
+            ForEach(Self.blocks(preview(companion).parts)) { block in
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 5) {
-                        if section.name == "policy" {
-                            Image(systemName: "lock.fill").font(.system(size: 9))
-                                .foregroundStyle(Theme.textSecondary)
-                        }
-                        Text(Self.sectionTitle(section.name))
-                            .font(.system(size: 10, weight: .semibold))
+                    HStack(spacing: 6) {
+                        Text(block.title)
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                        if let destination = block.destination, let onEdit {
+                            Button("Edit") { onEdit(destination) }
+                                .controlSize(.small)
+                                .accessibilityLabel("Edit \(block.title)")
+                        }
                     }
-                    Text(section.content)
-                        .font(.system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(section.name == "policy" ? Theme.bg.opacity(0.6) : Theme.bg)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-            }
-            if let memoryTrace {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Memory retrieval (last turn, not sent)")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.textSecondary)
-                    Text(memoryTrace.summary)
-                        .font(.system(size: 11, design: .monospaced))
+                    Text(block.text)
+                        .font(.system(size: 11, design: block.sent ? .monospaced : .default))
+                        .foregroundStyle(block.sent ? Theme.textPrimary : Theme.textSecondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
@@ -506,17 +543,6 @@ struct PromptPreviewPane: View {
             }
         }
         .padding(14)
-    }
-
-    static func sectionTitle(_ name: String) -> String {
-        switch name {
-        case "policy": return "App policy"
-        case "persona": return "Persona"
-        case "user": return "User context"
-        case "conversation": return "Conversation instructions"
-        case "session": return "Session"
-        default: return name.capitalized
-        }
     }
 }
 
@@ -567,26 +593,10 @@ struct ConversationInstructionsEditor: View {
 struct PromptLibraryShotView: View {
     let variant: String
 
-    private static let fixtureDate = Date(timeIntervalSince1970: 1_785_000_000)
-
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
-            if variant == "prompt-preview" {
-                let assembled = NativeContextAssembler.assemble(NativeContextInput(
-                    persona: "Answer plainly, admit uncertainty, and keep household matters private.",
-                    userScope: "I prefer metric units and 24 hour time.",
-                    conversationInstructions: "Keep answers under three paragraphs in this conversation.",
-                    timestamp: Self.fixtureDate,
-                    timeZone: TimeZone(identifier: "America/Chicago") ?? .current,
-                    contracts: []))
-                PromptPreviewPane(sections: assembled.sections, scrolls: false)
-                    .frame(width: 620)
-                    .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 14))
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
-            } else {
-                libraryMirror
-            }
+            libraryMirror
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -602,9 +612,10 @@ struct PromptLibraryShotView: View {
                 Label("Add", systemImage: "plus").font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))
+                Text("View full prompt").font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            Text("Personas, user context, and reusable prompts are stored in Tandem's local database with revision history.")
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             group("Personas", PromptScope.persona.explanation, [
                 entry("Default", "Persona", active: true, selected: false),
                 entry("Brief mode", "Persona", active: false, selected: true),
@@ -631,7 +642,7 @@ struct PromptLibraryShotView: View {
                     .padding(10).frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
                     .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
                 HStack(spacing: 12) {
-                    ForEach(["Save", "Duplicate", "Preview", "History", "Export"], id: \.self) { title in
+                    ForEach(["Save", "Duplicate", "History", "Export"], id: \.self) { title in
                         Text(title).font(.system(size: 11, weight: .medium))
                             .padding(.horizontal, 10).padding(.vertical, 4)
                             .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))

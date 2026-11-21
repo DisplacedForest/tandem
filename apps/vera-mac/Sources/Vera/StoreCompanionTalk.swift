@@ -9,6 +9,12 @@ extension ChatStore {
         return companion && plainChat && ownTurn && canAct
     }
 
+    func companionTalkSetup(for turn: NativeConversationTurn, supportsTools: Bool, typed: NativeTypedWords, capture: CompanionTalkCapture?,
+                            authorizer: NativeRequestAuthorizer, timeout: Duration, now: Date = Date()) -> (control: CompanionTalkControl, tools: [NativeToolDefinition])? {
+        guard let control = companionTalkControl(for: turn, supportsTools: supportsTools, now: now) else { return nil }
+        return (control, companionTalkTools(control, turn: turn, typed: typed, capture: capture, authorizer: authorizer, timeout: timeout))
+    }
+
     func companionTalkControl(for turn: NativeConversationTurn, supportsTools: Bool, now: Date = Date()) -> CompanionTalkControl? {
         guard companionTalkOffered(turn), supportsTools else { return nil }
         let entries = companionTalkEntries(now: now)

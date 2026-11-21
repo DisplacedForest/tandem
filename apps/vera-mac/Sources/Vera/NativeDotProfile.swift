@@ -264,16 +264,17 @@ enum NativeDotContext {
         return sentences.isEmpty ? "Acts without asking" : sentences.joined(separator: " ")
     }
 
+    static let opening = "You are the user's standing assistant."
+
     static func retired(_ stored: String) -> String {
         stored.components(separatedBy: "\n")
             .filter { !$0.hasPrefix("Your standing goal:") && $0 != "No standing goal has been set yet." }
             .map { $0.replacingOccurrences(of: "work on the goal is handed to", with: "longer work is handed to") }
+            .map { $0.range(of: #"^You are .+, the user's standing assistant\.$"#, options: .regularExpression) == nil ? $0 : opening }
             .joined(separator: "\n")
     }
 
-    static func render(name: String, resolver: NativeRuleResolver) -> String {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let opening = trimmedName.isEmpty ? "You are the user's standing assistant." : "You are \(trimmedName), the user's standing assistant."
+    static func render(resolver: NativeRuleResolver) -> String {
         let rules = NativeActionClass.configurable.map { "\($0.title): \(wording(resolver.choice(for: $0)))." }
         let floor = floorLine(resolver.global)
         return ([opening, coordinatorNote, "What asks first here:"] + rules + [floor]).joined(separator: "\n")

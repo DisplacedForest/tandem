@@ -85,13 +85,26 @@ struct ModelTab: View {
 }
 
 struct PersonaTab: View {
+    static let preferencesID = "preferences"
+    @State private var preferencesFocus = 0
+
     var body: some View {
-        Form {
-            Section("Preferences") { PreferencesSettingsView() }
-            Section("Prompt library") { PromptLibraryView() }
-            SaveSection()
+        ScrollViewReader { proxy in
+            Form {
+                Section("Preferences") { PreferencesSettingsView(focusRequest: preferencesFocus) }
+                    .id(Self.preferencesID)
+                Section("Prompt library") {
+                    PromptLibraryView(
+                        reveal: { target in withAnimation { proxy.scrollTo(target, anchor: .top) } },
+                        onEditPreferences: {
+                            withAnimation { proxy.scrollTo(Self.preferencesID, anchor: .top) }
+                            preferencesFocus += 1
+                        })
+                }
+                SaveSection()
+            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
     }
 }
 

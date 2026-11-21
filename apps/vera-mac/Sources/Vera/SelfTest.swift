@@ -501,6 +501,7 @@ enum SelfTest {
         do { try await runStoppedStep() } catch { print("SELFTEST ERROR: stopped step \(error)"); exit(1) }
         do { try await runOpenedStep() } catch { print("SELFTEST ERROR: opened step \(error)"); exit(1) }
         do { try await NativePreferencesSelftest.run() } catch { print("SELFTEST ERROR: preferences \(error)"); exit(1) }
+        do { try await PromptIdentitySelftest.run() } catch { print("SELFTEST ERROR: prompt identity \(error)"); exit(1) }
         do { try await NativeRuleRecordsSelftest.run() } catch { print("SELFTEST ERROR: rule records \(error)"); exit(1) }
         do { try await runNativeMemoryRetrieval() } catch { print("SELFTEST ERROR: native memory retrieval \(error)"); exit(1) }
         do { try await runSettingsToolsCopy() } catch { print("SELFTEST ERROR: settings tools copy \(error)"); exit(1) }
@@ -1834,19 +1835,19 @@ enum SelfTest {
             }
             let unnamedContext = NativeContextAssembler.assemble(NativeContextInput(
                 persona: "You are an assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
-                timeZone: TimeZone(identifier: "America/Chicago")!, ownerName: "Riley", assistantName: named.companionName))
+                timeZone: TimeZone(identifier: "America/Chicago")!, ownerName: "Riley", assistantName: named.companionName, companionThread: true))
             let unnamedWorker = named.nativeWorkerIdentity.current
             let builtIn = "Ver" + "a"
             let unnamedPrompts = [unnamedContext.prompt, NativeResearchWorker.planPrompt(identity: unnamedWorker),
                                   NativeResearchWorker.synthesisPrompt(identity: unnamedWorker), PiCheckpointPricing.system,
-                                  NativeDotContext.render(name: named.companionName ?? "", resolver: NativeRuleSource().resolver(for: "c", requestText: ""))]
+                                  NativeDotContext.render(resolver: NativeRuleSource().resolver(for: "c", requestText: ""))]
             guard unnamedPrompts.allSatisfy({ !$0.contains("Your name is") && !$0.contains(builtIn) && !$0.contains("our companion") }),
                   unnamedWorker.assistantName == nil, unnamedWorker.opening == "You are the user's assistant" else {
                 print("SELFTEST ERROR: a prompt for an unnamed companion claims a name"); exit(1)
             }
             let identity = NativeContextAssembler.assemble(NativeContextInput(
                 persona: "You are an assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
-                timeZone: TimeZone(identifier: "America/Chicago")!, ownerName: "Riley", assistantName: "Ada"))
+                timeZone: TimeZone(identifier: "America/Chicago")!, ownerName: "Riley", assistantName: "Ada", companionThread: true))
             guard identity.prompt.contains("Your name is Ada."), identity.prompt.contains("You are speaking with Riley.") else {
                 print("SELFTEST ERROR: shell assistant name missing from the assembled context"); exit(1)
             }
