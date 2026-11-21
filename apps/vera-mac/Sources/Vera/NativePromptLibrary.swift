@@ -15,7 +15,7 @@ enum PromptScope: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var explanation: String {
         switch self {
-        case .persona: return "The assistant's durable identity, sent with every request after the app policy."
+        case .persona: return "How the assistant talks and works. Sent with every request."
         case .user: return "Context about you, sent after the persona on every request."
         }
     }
@@ -247,14 +247,34 @@ enum PromptPreviewComposer {
 }
 
 enum NativePromptMigration {
+    static let retiredBuiltInPersona = "You are " + "Ver" + "a, a thoughtful personal assistant. Be clear, practical, and honest about what you can do."
+    static let retiredBuiltInName = "Ver" + "a"
+
+    static func isRetiredBuiltIn(_ content: String) -> Bool {
+        content.trimmingCharacters(in: .whitespacesAndNewlines) == retiredBuiltInPersona
+    }
+
     @discardableResult
     static func run(
         repository: any NativePromptLibraryRepository,
-        settings: inout NativeChatSettings
+        settings: inout NativeChatSettings,
+        now: Date = Date()
     ) throws -> Bool {
+        var changed = false
+        if isRetiredBuiltIn(settings.systemPrompt) {
+            settings.systemPrompt = NativeChatSettings.defaultSystemPrompt
+            changed = true
+        }
+        for var profile in try repository.promptProfiles() where profile.scope == .persona && isRetiredBuiltIn(profile.content) {
+            profile.content = NativeChatSettings.defaultSystemPrompt
+            if profile.name == retiredBuiltInName { profile.name = "Default" }
+            profile.updatedAt = now
+            try repository.migratePromptProfile(profile)
+            changed = true
+        }
         let personas = try repository.promptProfiles().filter { $0.scope == .persona }
         if let active = settings.activePersonaID, personas.contains(where: { $0.id == active }) {
-            return false
+            return changed
         }
         if let first = personas.first {
             settings.activePersonaID = first.id

@@ -40,7 +40,7 @@ extension SelfTest {
                     "An ordinary chat's prompt never carries the companion's name")
         let namedContext = NativeContextAssembler.assemble(NativeContextInput(
             persona: "You are an assistant.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
-            timeZone: TimeZone(identifier: "America/Chicago")!, assistantName: ordinary.companionName))
+            timeZone: TimeZone(identifier: "America/Chicago")!, assistantName: ordinary.companionName, companionThread: true))
         try require(namedContext.prompt.contains("Your name is Ada."), "The companion's own conversation is still told its name")
         final class FlakyDisk: @unchecked Sendable { var contents: [String: Any] = [:]; var failing = true }
         let disk = FlakyDisk()

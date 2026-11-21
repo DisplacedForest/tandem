@@ -7,6 +7,8 @@ struct PreferencesSettingsView: View {
     @State private var editingID: String?
     @State private var editingText = ""
     @State private var problem: String?
+    @FocusState private var addFocused: Bool
+    var focusRequest = 0
 
     var body: some View {
         if let preferences = store.nativePreferenceStore {
@@ -40,8 +42,11 @@ struct PreferencesSettingsView: View {
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 } else {
                     HStack(spacing: 8) {
-                        TextField("Never use em dashes", text: $draft)
+                        TextField("", text: $draft, prompt: Text("Add a preference"))
+                            .labelsHidden()
+                            .accessibilityLabel("Add a preference")
                             .textFieldStyle(.roundedBorder)
+                            .focused($addFocused)
                             .onSubmit { add(preferences) }
                         Button("Add") { add(preferences) }
                             .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -53,6 +58,7 @@ struct PreferencesSettingsView: View {
             }
             .onAppear { reload(preferences) }
             .onChange(of: store.preferencesRevision) { reload(preferences) }
+            .onChange(of: focusRequest) { addFocused = true }
         } else {
             Label("Local storage is unavailable, so preferences cannot be edited.", systemImage: "exclamationmark.triangle")
                 .font(.system(size: 12)).foregroundStyle(.orange)

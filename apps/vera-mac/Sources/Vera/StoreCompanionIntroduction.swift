@@ -51,8 +51,12 @@ extension ChatStore {
     }
 
     func companionProfileInstruction(for turn: NativeConversationTurn) -> String {
-        guard isVeraThread(turn.conversationID) else { return "" }
-        let openings = conversationTurns.filter { $0.conversationID == turn.conversationID && $0.companionEvent?.kind == .introduction }
+        companionProfileInstruction(conversationID: turn.conversationID)
+    }
+
+    func companionProfileInstruction(conversationID: String) -> String {
+        guard isVeraThread(conversationID) else { return "" }
+        let openings = conversationTurns.filter { $0.conversationID == conversationID && $0.companionEvent?.kind == .introduction }
         let introduction = !openings.isEmpty
         let nameDeclined = companionName == nil && openings.contains { $0.companionEvent?.observation == NativeCompanionEvent.nameDeclined }
         let questions = nameDeclined

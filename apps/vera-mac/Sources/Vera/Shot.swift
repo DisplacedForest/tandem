@@ -79,6 +79,10 @@ enum Shot {
             NameStylingShot.render(to: path, view: view, appearance: appearance)
             return
         }
+        if PromptIdentityShot.views.contains(view) {
+            PromptIdentityShot.render(to: path, view: view, appearance: appearance)
+            return
+        }
         let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? workSeed ?? ChatStore()
         CompanionNameShot.apply(to: store)
         let size: CGSize
@@ -397,7 +401,7 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
-        } else if view == "prompt-library" || view == "prompt-preview" {
+        } else if view == "prompt-library" {
             content = AnyView(
                 PromptLibraryShotView(variant: view)
                     .frame(width: size.width, height: size.height)
@@ -1283,12 +1287,10 @@ struct NativeSettingsShotView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("PROMPT LIBRARY").font(.system(size: 10, weight: .semibold)).tracking(0.5)
                     .foregroundStyle(Theme.textSecondary)
-                Text("Personas, user context, and reusable prompts are stored in Tandem's local database with revision history.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Text(NativeChatSettings.defaultSystemPrompt)
                     .font(.system(size: 13)).padding(12).frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
                     .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
-                HStack { Text("Saved in Tandem's local database."); Spacer(); Text("Preview · History · Export") }
+                HStack { Spacer(); Text("View full prompt · History · Export") }
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
         } else if tab == "Tools" {

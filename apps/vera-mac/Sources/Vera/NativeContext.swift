@@ -84,6 +84,7 @@ struct NativeContextInput: Sendable {
     var timeZone: TimeZone
     var ownerName: String?
     var assistantName: String?
+    var companionThread: Bool
     var memories: [NativeMemoryRanked]
     var worldModel: String
     var knowledgeGrounding: String
@@ -95,7 +96,7 @@ struct NativeContextInput: Sendable {
 
     init(
         persona: String, userScope: String = "", preferences: [String] = [], conversationInstructions: String = "", projectName: String? = nil,
-        timestamp: Date, timeZone: TimeZone, ownerName: String? = nil, assistantName: String? = nil,
+        timestamp: Date, timeZone: TimeZone, ownerName: String? = nil, assistantName: String? = nil, companionThread: Bool = false,
         memories: [NativeMemoryRanked] = [], worldModel: String = "",
         knowledgeGrounding: String = "",
         capabilities: ModelCapabilityProfile = .textOnly, tools: [NativeToolDefinition] = [],
@@ -112,6 +113,7 @@ struct NativeContextInput: Sendable {
         self.timeZone = timeZone
         self.ownerName = ownerName
         self.assistantName = assistantName
+        self.companionThread = companionThread
         self.memories = memories
         self.worldModel = worldModel
         self.knowledgeGrounding = knowledgeGrounding
@@ -138,6 +140,11 @@ enum NativeContextAssembler {
     static let toolNamingRule = "Each line gives the function name to call, then in quotes the plain name to use with the user. Never say a function name to the user."
     static let unavailableHeading = "Not available right now"
     static let sessionHeading = "About this session"
+    static let unnamedRule = "You have no personal name in this conversation. Don't introduce yourself by one or use a name from any other part of this prompt."
+
+    static func namedRule(_ name: String) -> String {
+        "Your name is \(name). Use no other name for yourself, whatever any other part of this prompt says."
+    }
 
     static let policy = """
     \(policyHeading)
@@ -247,8 +254,12 @@ enum NativeContextAssembler {
             sessionHeading,
             "Current date and time: \(formatter.string(from: input.timestamp)) (\(input.timeZone.identifier)).",
         ]
-        if let name = input.assistantName?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
-            lines.append("Your name is \(name).")
+        if input.companionThread {
+            if let name = input.assistantName?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+                lines.append(namedRule(name))
+            }
+        } else {
+            lines.append(unnamedRule)
         }
         if let owner = input.ownerName?.trimmingCharacters(in: .whitespaces), !owner.isEmpty {
             lines.append("You are speaking with \(owner).")
