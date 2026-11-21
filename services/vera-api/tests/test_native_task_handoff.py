@@ -248,7 +248,7 @@ async def test_native_provider_transport_deadlines_and_sanitized_diagnostics(sce
         result = json.loads(stdout.decode().splitlines()[-1])
         timing = result['timing']
         assert timing['outcome'] == expected
-        assert set(timing) <= {'phase', 'outcome', 'status', 'setupSeconds', 'headersSeconds', 'finishSeconds', 'dnsSeconds', 'connectSeconds', 'tlsSeconds'}
+        assert set(timing) <= {'phase', 'outcome', 'status', 'setupSeconds', 'headersSeconds', 'firstByteSeconds', 'firstReplySeconds', 'finishSeconds', 'dnsSeconds', 'connectSeconds', 'tlsSeconds'}
         assert timing['phase'] == 'synthesize'
         assert 'synthetic-secret-sentinel' not in stdout.decode()
         tested = {'setup': value['setup'], 'overall': value['overall'], 'short-overall': value['overall'], 'cancel': 0.1}

@@ -181,6 +181,17 @@ The app arbitrates model admission in process. A foreground chat turn is admitte
 
 Native chat constructors used by the app, including settings reloads and vision bridging, join foreground admission. Automatic native memory extraction joins the background class; explicit memory-change requests join foreground. Embeddings and reranking bypass this policy.
 
+Research, document and companion work in the app asks the model for a streamed reply and sends the profile's saved chat template options. A server that ignores the streaming flag and answers with one JSON body still works. Each request has four limits. Time spent waiting in line behind foreground work doesn't count against them; a request waits in line at most one request ceiling, and each research, document or companion step allows for that wait, one full request and two more minutes of other work.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `VERA_BACKGROUND_CONNECT_SECONDS` | `10` | Connecting and sending the request. |
+| `VERA_BACKGROUND_FIRST_REPLY_SECONDS` | `180` | From the request being sent to the first reply text, reasoning, tool call or finish. Response headers and empty opening events don't count, so a long prompt can be read in this window. |
+| `VERA_BACKGROUND_REPLY_IDLE_SECONDS` | `45` | Longest silence between response bytes once the reply has started. |
+| `VERA_BACKGROUND_REQUEST_SECONDS` | `600` | Ceiling for one whole request, and the longest it waits in line. |
+
+Values must be positive numbers of seconds; anything else uses the default. A request that runs past any of these fails as a request that took too long. Each request logs one `native_generation_timing` line with the time to response headers, the first body byte, the first reply and the finish.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `INFERENCE_BACKGROUND_SLOTS` | `1` | Maximum admitted background generations per resource, from 1 to 32. |

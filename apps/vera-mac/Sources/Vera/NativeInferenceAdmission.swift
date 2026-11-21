@@ -86,12 +86,12 @@ struct NativeInferenceAdmission: Sendable {
     }
 
     func perform<T: Sendable>(
-        endpoint: URL, priority: Priority, requestedSeconds: Double,
+        endpoint: URL, priority: Priority, requestedSeconds: Double, queueSeconds: Double? = nil,
         operation: @escaping @Sendable (NativeInferenceBudget) async throws -> T
     ) async throws -> T {
         if let arbiter {
             return try await performLocally(arbiter, endpoint: endpoint, priority: priority,
-                                            requestedSeconds: requestedSeconds, operation: operation)
+                                            requestedSeconds: requestedSeconds, queueSeconds: queueSeconds, operation: operation)
         }
         let requestID = UUID().uuidString.lowercased()
         let body = Body(request_id: requestID, resource: try Self.resource(for: endpoint),
@@ -146,17 +146,18 @@ struct NativeInferenceAdmission: Sendable {
     }
 
     private func performLocally<T: Sendable>(
-        _ arbiter: NativeInferenceArbiter, endpoint: URL, priority: Priority, requestedSeconds: Double,
+        _ arbiter: NativeInferenceArbiter, endpoint: URL, priority: Priority, requestedSeconds: Double, queueSeconds: Double?,
         operation: @escaping @Sendable (NativeInferenceBudget) async throws -> T
     ) async throws -> T {
         guard requestedSeconds.isFinite, requestedSeconds > 0 else { throw AdmissionError.deadline }
+        if let queueSeconds { guard queueSeconds.isFinite, queueSeconds > 0 else { throw AdmissionError.deadline } }
         let resource = try Self.resource(for: endpoint)
         let queueStart = ContinuousClock.now
-        let lease = try await arbiter.acquire(resource: resource, priority: priority, queueSeconds: requestedSeconds)
+        let lease = try await arbiter.acquire(resource: resource, priority: priority, queueSeconds: queueSeconds ?? requestedSeconds)
         let waited = Self.seconds(queueStart.duration(to: .now))
         observe?("admission_seconds", waited)
         observe?("queue_wait_seconds", waited)
-        let remaining = requestedSeconds - waited
+        let remaining = queueSeconds == nil ? requestedSeconds - waited : requestedSeconds
         guard remaining > 0 else {
             await arbiter.release(lease)
             throw AdmissionError.expired

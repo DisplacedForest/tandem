@@ -37,13 +37,12 @@ struct NativeTaskProvider {
         if let limit = NativeTaskConfiguration.outputLimit(config.options) {
             options.topLevel.append(.init(key: "max_tokens", value: .number(Double(limit)), source: .saved))
         }
+        options.kwargs = config.options.kwargs
         let bounded = NativeChatConfig(baseURL: binding.provider.base, apiKey: config.apiKey,
-            model: binding.executionModel, chatTemplateKwargs: nil,
-            streaming: false, options: options)
+            model: binding.executionModel, chatTemplateKwargs: config.chatTemplateKwargs,
+            streaming: true, options: options)
         let client = NativeChatClient(config: bounded, admission: nil)
-        guard limits.connectAndSend.isFinite, limits.connectAndSend > 0,
-              limits.readIdle.isFinite, limits.readIdle > 0,
-              let phase = NativeTaskTransportTiming.Phase(jobPhase: job.phase) else {
+        guard limits.valid, let phase = NativeTaskTransportTiming.Phase(jobPhase: job.phase) else {
             throw NativeTaskGenerationFailure(code: "provider_response")
         }
         var request = try client.request(messages: job.messages.map {
@@ -72,8 +71,8 @@ struct NativeTaskProvider {
         }
         let readTimer = Task {
             while observer.outcome == nil {
-                do { try await Task.sleep(for: .seconds(min(0.05, limits.readIdle / 4))) } catch { return }
-                if observer.finish(.read_idle_timeout, readIdle: limits.readIdle) { session.invalidateAndCancel(); return }
+                do { try await Task.sleep(for: .seconds(min(0.05, limits.firstReply / 4, limits.replyIdle / 4))) } catch { return }
+                if observer.finishIfStalled(limits) { session.invalidateAndCancel(); return }
             }
         }
         defer {
@@ -91,14 +90,14 @@ struct NativeTaskProvider {
                 guard (200..<300).contains(response.statusCode) else {
                     throw NativeTaskGenerationFailure(code: failureCode(status: response.statusCode))
                 }
-                var data = Data()
+                var reader = NativeTaskReplyReader()
                 for try await byte in bytes {
                     try Task.checkCancellation()
-                    guard data.count < 1048576 else { throw NativeTaskGenerationFailure(code: "response_too_large") }
-                    observer.receivedByte()
-                    data.append(byte)
+                    observer.receivedBytes()
+                    if try reader.append(byte) { observer.replied() }
+                    if reader.finished { break }
                 }
-                return try completed(snapshot(from: data, text: job.tools == nil), job: job)
+                return try completed(reader.snapshot(text: job.tools == nil), job: job)
             } onCancel: {
                 observer.finish(.canceled)
                 session.invalidateAndCancel()
@@ -121,8 +120,7 @@ struct NativeTaskProvider {
                 observer.finish(.canceled)
                 throw CancellationError()
             }
-            if let outcome = observer.outcome,
-               [.connect_send_timeout, .read_idle_timeout, .overall_timeout, .transport_timeout].contains(outcome) {
+            if let outcome = observer.outcome, NativeTaskTransportObserver.timedOut.contains(outcome) {
                 throw failure("request_timeout")
             }
             if let error = error as? NativeTaskGenerationFailure {
@@ -146,11 +144,14 @@ struct NativeTaskProvider {
             if text, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let choice = (object["choices"] as? [[String: Any]])?.first,
                choice["finish_reason"] as? String == "length" {
-                throw NativeTaskGenerationFailure(code: "response_cut_short",
-                                                  detail: NativeTaskGenerationFailureDetail(phase: nil, finishReason: "length"))
+                throw cutShort()
             }
             throw NativeTaskGenerationFailure(code: "response_unreadable")
         }
+    }
+
+    static func cutShort() -> NativeTaskGenerationFailure {
+        NativeTaskGenerationFailure(code: "response_cut_short", detail: NativeTaskGenerationFailureDetail(phase: nil, finishReason: "length"))
     }
 
     static func failureCode(status: Int) -> String {
@@ -176,5 +177,98 @@ struct NativeTaskProvider {
         guard !snapshot.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw failure("response_empty") }
         guard snapshot.content.utf8.count <= 262144 else { throw failure("response_too_large") }
         return snapshot.content
+    }
+}
+
+struct NativeTaskReplyReader {
+    static let maximumBytes = 1048576
+
+    private enum Mode { case undecided, body, events }
+
+    private var mode = Mode.undecided
+    private var body = Data()
+    private var pending = Data()
+    private var decoder = ChatSSEDecoder()
+    private var accumulator = NativeChatDeltaAccumulator()
+    private var latest = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
+    private var finishReason: String?
+    private(set) var finished = false
+    private var done = false
+
+    mutating func append(_ byte: UInt8) throws -> Bool {
+        var started = false
+        if mode == .undecided, ![9, 10, 13, 32].contains(byte) {
+            if byte == 123 || byte == 91 {
+                mode = .body
+                started = true
+            } else {
+                mode = .events
+                body.removeAll()
+            }
+        }
+        if mode != .events {
+            body.append(byte)
+            guard body.count <= Self.maximumBytes else { throw NativeTaskGenerationFailure(code: "response_too_large") }
+            return started
+        }
+        pending.append(byte)
+        guard pending.count <= Self.maximumBytes else { throw NativeTaskGenerationFailure(code: "response_too_large") }
+        guard byte == 10 || pending.count >= 1024 else { return false }
+        return try drain(finishing: false)
+    }
+
+    private mutating func drain(finishing: Bool) throws -> Bool {
+        var replied = false
+        let payloads: [String]
+        do { payloads = try decoder.feed(pending, finishing: finishing) }
+        catch { throw NativeTaskGenerationFailure(code: "response_unreadable") }
+        pending.removeAll(keepingCapacity: true)
+        for payload in payloads where !done {
+            if payload == "[DONE]" { done = true; finished = true; break }
+            let kind = Self.kind(of: payload)
+            if kind == .bookkeeping { continue }
+            if kind == .reply { replied = true }
+            do { latest = try accumulator.consume(payload) }
+            catch let error as NativeChatClient.ClientError {
+                if case .provider = error { throw NativeTaskGenerationFailure(code: "provider_error") }
+                throw NativeTaskGenerationFailure(code: "response_unreadable")
+            }
+            if let reason = latest.finishReason { finishReason = reason }
+            let size = latest.content.utf8.count + latest.toolCalls.reduce(0) { $0 + $1.arguments.utf8.count + $1.name.utf8.count }
+            guard size <= Self.maximumBytes else { throw NativeTaskGenerationFailure(code: "response_too_large") }
+        }
+        return replied
+    }
+
+    enum EventKind { case opening, reply, bookkeeping }
+
+    static func kind(of payload: String) -> EventKind {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any] else { return .reply }
+        if object["error"] != nil { return .reply }
+        if let choices = object["choices"] as? [Any], choices.isEmpty { return .bookkeeping }
+        guard let choice = (object["choices"] as? [[String: Any]])?.first else { return .reply }
+        if let reason = choice["finish_reason"] as? String, !reason.isEmpty { return .reply }
+        guard let delta = choice["delta"] as? [String: Any] else { return .opening }
+        for key in ["content", "reasoning_content", "reasoning"] {
+            if let text = delta[key] as? String, !text.isEmpty { return .reply }
+        }
+        return (delta["tool_calls"] as? [Any])?.isEmpty == false ? .reply : .opening
+    }
+
+    mutating func snapshot(text: Bool) throws -> NativeChatStreamSnapshot {
+        switch mode {
+        case .undecided, .body:
+            return try NativeTaskProvider.snapshot(from: body, text: text)
+        case .events:
+            if !done { _ = try drain(finishing: true) }
+            let snapshot = NativeChatStreamSnapshot(content: latest.content, toolCalls: latest.toolCalls, finishReason: finishReason)
+            guard done || finishReason != nil else { throw NativeTaskGenerationFailure(code: "response_unreadable") }
+            if !snapshot.toolCalls.isEmpty,
+               snapshot.finishReason != "tool_calls" || snapshot.toolCalls.contains(where: { $0.id.isEmpty || $0.name.isEmpty }) {
+                if text, snapshot.finishReason == "length" { throw NativeTaskProvider.cutShort() }
+                throw NativeTaskGenerationFailure(code: "response_unreadable")
+            }
+            return snapshot
+        }
     }
 }

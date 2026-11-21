@@ -63,7 +63,7 @@ final class TaskReplyCauseWire: URLProtocol, @unchecked Sendable {
     static func complete(_ scenario: String, job: NativeTaskGenerationJob) async throws -> NativeTaskGenerationCompletion {
         let binding = try binding(scenario)
         let config = NativeChatConfig(baseURL: binding.provider.base, apiKey: "causes-key", model: binding.executionModel, chatTemplateKwargs: nil)
-        let limits = scenario == "timeout" ? NativeTaskTransportLimits(connectAndSend: 0.3, readIdle: 0.3) : NativeTaskTransportLimits()
+        let limits = scenario == "timeout" ? NativeTaskTransportLimits(connectAndSend: 0.3, firstReply: 0.3, replyIdle: 0.3) : NativeTaskTransportLimits()
         return try await NativeTaskProvider.completion(config: config, binding: binding, job: job, limits: limits,
                                                        protocolClasses: [TaskReplyCauseWire.self], diagnostics: { _ in })
     }

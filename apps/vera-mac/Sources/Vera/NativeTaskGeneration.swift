@@ -359,7 +359,7 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
               attempt.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0)
                   || (97...122).contains($0) || $0 == 45 }),
               UUID(uuidString: id) != nil, generation > 0,
-              deadlineSeconds.isFinite, deadlineSeconds > 0, deadlineSeconds <= 180,
+              deadlineSeconds.isFinite, deadlineSeconds > 0, deadlineSeconds <= NativeTaskTransportLimits.configured.request,
               Self.validShape(messages, tools: tools, toolChoice: toolChoice, budget: budget),
               Self.digest(messages, tools: tools, toolChoice: toolChoice) == messagesDigest else { throw NativeTaskHTTPError.invalidResponse }
         let limit = budget.allowsTools || !NativeResourcePolicy(binding).legacy ? budget.maximumBytes : profile.limits.maximumInputBytes

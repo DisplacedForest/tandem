@@ -14,6 +14,7 @@ enum NativeTaskTransportFixture {
         let overall: Double
         let setup: Double
         let idle: Double
+        let first: Double?
     }
 
     static func terminalFence() throws {
@@ -56,7 +57,7 @@ enum NativeTaskTransportFixture {
         let config = NativeChatConfig(baseURL: input.base, apiKey: "synthetic-secret-sentinel", model: "fixture", chatTemplateKwargs: nil)
         let operation = Task {
             try await NativeTaskProvider.complete(config: config, binding: binding, job: job,
-                limits: .init(connectAndSend: input.setup, readIdle: input.idle), diagnostics: { capture.append($0) })
+                limits: .init(connectAndSend: input.setup, firstReply: input.first ?? input.idle, replyIdle: input.idle), diagnostics: { capture.append($0) })
         }
         let cancel = Task {
             guard input.scenario == "cancel" else { return }

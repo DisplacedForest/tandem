@@ -191,7 +191,7 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
 }
 
 enum NativeCompanionWorker {
-    static let stepTimeoutSeconds: Double = 1800
+    static let stepTimeoutSeconds = max(1800, NativeTaskTransportLimits.configured.stepSeconds)
     static let reportScalars = NativeResourcePolicy.companionReportScalars
     static let noteScalars = NativeResourcePolicy.companionNoteScalars
     static let stoppedShortFallback = "I couldn't finish this."

@@ -18,7 +18,7 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
                 if state == "completed", let response: String = row["response"] { return .completed(response) }
                 let deadline: Double = row["reserved_until"]
                 if state == "reserved" && deadline > Date().timeIntervalSince1970
-                    && deadline <= Date().timeIntervalSince1970 + 180 { return .pending }
+                    && deadline <= Date().timeIntervalSince1970 + NativeTaskTransportLimits.configured.request { return .pending }
                 return .unavailable((row["failure"] as String?) ?? "previous_request_uncertain")
             }
             try db.execute(sql: """
