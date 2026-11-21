@@ -46,7 +46,7 @@ enum SavedWording {
         (NativeDocumentWorker.invalidSectionMessage, "The model did not return a valid section."),
         (NativeDocumentWorker.bulletCountMessage, "The result did not match the requested bullet count. Your saved work is preserved."),
         (NativeTaskWorkerFailures.outlineCutShortMessage, "The plan was cut off before it finished, even after asking for a shorter one. Try this step again?"),
-        (NativeTaskWorkerFailures.modelChangedMessage, "The model this was using has changed in Settings. Start it again to use the new one."),
+        (NativeTaskWorkerFailures.modelChangedMessage, "The model this was using has changed in Settings. The next run uses the new one."),
         (NativeDocumentWorker.progressTooLargeMessage, "This grew larger than Tandem can hold while working on it. " + lessFromSchedule),
         ("This document would need more than Tandem can save in one document. Ask for it as two documents.",
          "This would need more than Tandem can save at once. " + lessFromSchedule),

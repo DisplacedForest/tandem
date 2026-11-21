@@ -133,7 +133,8 @@ enum NativeTaskDelivery {
         let workerType = reference.createRequest.workerType
         let requestTitle = shownTitle(reference.request.title)
         if snapshot.state == .failed {
-            let text = failureText(snapshot: snapshot, workerType: workerType, subject: subject(reference: reference, snapshot: snapshot))
+            let text = failureText(snapshot: snapshot, workerType: workerType, subject: subject(reference: reference, snapshot: snapshot),
+                                   scheduled: reference.request.scheduleID != nil)
             return delivered(text: text, kind: NativeDeliveredMessage.result,
                              delivery: NativeDeliveredMessage(referenceID: id, kind: NativeDeliveredMessage.result,
                                                               title: requestTitle ?? "", finished: false), now: now)
@@ -191,13 +192,15 @@ enum NativeTaskDelivery {
         return first.lowercased() + rest
     }
 
-    static func failureText(snapshot: NativeTaskSnapshot, workerType: String, subject: String? = nil) -> String {
+    static func failureText(snapshot: NativeTaskSnapshot, workerType: String, subject: String? = nil, scheduled: Bool = false) -> String {
         if let report = snapshot.result?.report.trimmingCharacters(in: .whitespacesAndNewlines), !report.isEmpty {
             let sources = (try? NativeTaskProjection.displaySources(snapshot.result?.sources ?? [])) ?? []
             return linked(report, sources: sources)
         }
         let opening: String
-        if let subject {
+        if let subject, scheduled {
+            opening = "I couldn't finish \"\(subject)\"."
+        } else if let subject {
             opening = workerType == "document" ? "I couldn't finish the \(lowered(subject))." : "I couldn't finish looking into \(lowered(subject))."
         } else {
             opening = "I couldn't finish this."
@@ -211,7 +214,8 @@ enum NativeTaskDelivery {
         if workerType == "document", snapshot.checkpoint.outline.count > 0 {
             let written = max(snapshot.checkpoint.revisions.count, snapshot.checkpoint.drafts.count)
             if written > 0 {
-                return opening + " I'd written \(written) of \(snapshot.checkpoint.outline.count) sections."
+                return opening + (scheduled ? " I'd got through \(written) of \(snapshot.checkpoint.outline.count) parts."
+                    : " I'd written \(written) of \(snapshot.checkpoint.outline.count) sections.")
             }
         }
         if snapshot.checkpoint.failureReason == "request_conflict" {

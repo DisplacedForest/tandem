@@ -22,7 +22,7 @@ extension SelfTest {
         try scheduleWithoutKindsDelivered(require)
         try scheduleWithoutKindsCurrentLine(require)
         try await scheduleWithoutKindsDeletedChat(require)
-        print("  schedule without kinds OK (new schedules are the companion's with either destination, reload, edit keeps kind, old research and document load, fire and edit as before, own chat and companion runs start in the chosen chat without search, pause skips and notes both, profile and companion lists, start over counts and removes both and keeps the chat, tool has no kind field, results default per conversation, real loop allow decline and unreadable in both conversations, own chat question posts and is answered in the companion's conversation and the result lands in its own chat, old research question stays in its chat, no search line and reasons, the loaded question card updates where it was answered, card lines, words, profile and work panels, runs of older schedules read as plain work while chat work reads as before, every question, failure and step line the older routines write reads plainly on a scheduled run and as before from a chat, old saved cards decode, own chat run in the profile with put aside and pick back up, the companion's documents in the Library and profile and not the next companion's after start over, delivered results open plainly, the current work line, a deleted own chat takes its question card with it)")
+        print("  schedule without kinds OK (new schedules are the companion's with either destination, reload, edit keeps kind, old research and document load, fire and edit as before, own chat and companion runs start in the chosen chat without search, pause skips and notes both, profile and companion lists, start over counts and removes both and keeps the chat, tool has no kind field, results default per conversation, real loop allow decline and unreadable in both conversations, own chat question posts and is answered in the companion's conversation and the result lands in its own chat, old research question stays in its chat, no search line and reasons, the loaded question card updates where it was answered, card lines, words, profile and work panels, runs of older schedules read as plain work while chat work reads as before, every question, failure, step and delivered failure line the older routines write reads plainly on a scheduled run and as before from a chat, old saved cards decode, own chat run in the profile with put aside and pick back up, the companion's documents in the Library and profile and not the next companion's after start over, delivered results open plainly, the current work line, a deleted own chat takes its question card with it)")
     }
 
     private static func scheduleWithoutKindsStore(_ require: (Bool, String) throws -> Void) async throws {
@@ -624,13 +624,33 @@ extension SelfTest {
                 let remote = UUID().uuidString
                 _ = try repository.acknowledgeTaskReference(id: prepared.id, snapshot: try scheduleWithoutKindsSnapshot(prepared, remote: remote, workerType: workerType, state: "queued"))
                 guard let reference = try repository.taskReference(id: prepared.id) else { throw NativeTaskFixture.Failure.assertion("The reference binds") }
-                func shown(_ state: String, checkpoint: [String: Any], decision: [String: Any]? = nil) throws -> String {
+                func made(_ state: String, checkpoint: [String: Any], decision: [String: Any]? = nil) throws -> NativeTaskSnapshot {
                     var object = (try JSONSerialization.jsonObject(with: NativeTaskFixture.snapshot(reference, id: remote, state: state))) as? [String: Any] ?? [:]
                     object["worker_type"] = workerType
                     object["checkpoint"] = checkpoint
                     if let decision { object["decision"] = decision }
-                    let snapshot = try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical(object))
-                    return try NativeTaskProjection.display(reference: reference, snapshot: snapshot).card.milestone
+                    return try JSONDecoder().decode(NativeTaskSnapshot.self, from: NativeTaskClient.canonical(object))
+                }
+                func shown(_ state: String, checkpoint: [String: Any], decision: [String: Any]? = nil) throws -> String {
+                    try NativeTaskProjection.display(reference: reference, snapshot: try made(state, checkpoint: checkpoint, decision: decision)).card.milestone
+                }
+                let progress: [String: Any] = workerType == "document"
+                    ? ["outline": [["heading": "Tonight", "instructions": "Say whether frost is likely."],
+                                   ["heading": "Tomorrow", "instructions": "Say what to cover."],
+                                   ["heading": "Beds", "instructions": "Say which beds to cover."]],
+                       "drafts": ["Frost is likely.", "Cover the beds."]]
+                    : ["sources": [["n": 1, "title": "Frost outlook", "url": "https://example.com/frost"]]]
+                for checkpoint in [[:], progress] {
+                    let delivered = NativeTaskDelivery.resultMessage(reference: reference, snapshot: try made("failed", checkpoint: checkpoint), scheduled: scheduled)?.text ?? ""
+                    if scheduled {
+                        try require(!delivered.isEmpty && plain(delivered) && !delivered.lowercased().contains("looking into"),
+                                    "A scheduled \(workerType) failure is delivered without a kind of work: \(delivered)")
+                    } else {
+                        let opening = workerType == "document" ? "I couldn't finish the check the frost forecast." : "I couldn't finish looking into check the frost forecast."
+                        let tail = checkpoint.isEmpty ? "" : workerType == "document" ? " I'd written 2 of 3 sections."
+                            : " Here's what I'd read so far:\n\n- [Frost outlook](https://example.com/frost)"
+                        try require(delivered == opening + tail, "A \(workerType) failure from a chat is delivered as before: \(delivered)")
+                    }
                 }
                 for prompt in decisionPrompts {
                     let milestone = try shown("needs_decision", checkpoint: [:], decision: ["id": "retry", "prompt": prompt, "choices": ["retry"]])
