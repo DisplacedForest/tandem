@@ -325,6 +325,9 @@ extension SelfTest {
              "Saying not to research rules out a schedule that would research"),
             ("research anything", "Don't research anything, just tell me what you know about green tea.", "Check my calendar for tomorrow", false,
              "Saying not to research leaves a schedule that only checks a calendar to its card"),
+            ("research anything", "Check my calendar every morning, but don't research anything.",
+             String(repeating: "Check my calendar for tomorrow and list each meeting. ", count: 30) + "Then research green tea and sum up what you find", true,
+             "Saying not to research rules out a schedule whose last step, past a thousand characters, would research"),
         ]
         for item in cases {
             let saved = NativeChatRulesCounter()
