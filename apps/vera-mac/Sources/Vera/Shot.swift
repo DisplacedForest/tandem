@@ -6,6 +6,14 @@ import AppKit
 @MainActor
 enum Shot {
     static func render(view: String, to path: String, appearance: String = "dark") {
+        if CompanionProfileOpeningShot.views.contains(view) {
+            CompanionProfileOpeningShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
+        if TypingDotsShot.views.contains(view) {
+            TypingDotsShot.render(view: view, to: path, appearance: appearance)
+            return
+        }
         if view == "companion-attention" {
             CompanionAttentionShot.render(to: path)
             return

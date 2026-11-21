@@ -93,7 +93,9 @@ struct TranscriptFollow: Equatable {
             navigating = false
         }
         guard readerScrolling || (sameSize && !holding && !navigating) else { return false }
-        if up, distance > Self.restMargin {
+        let lastDistance = last.contentHeight - last.offset - last.containerHeight
+        let settling = !readerScrolling && (atLatest || lastDistance < -Self.restMargin)
+        if up, distance > Self.restMargin, !settling {
             following = false
         } else if down, atLatest {
             resume()
@@ -251,6 +253,7 @@ extension SelfTest {
         try require(follow.following && follow.atLatest && !follow.holding && !follow.readerScrolling, "Another conversation starts fresh at its latest message")
         try require(!follow.sent(1), "A send in the conversation left behind does not carry over")
         try newReplyMarker(require)
+        try settlingAtTheBottom(require)
         let defaults = AppLocations.scratchPreferences()
         let messages = [UUID(), UUID(), UUID()]
         let saved = CompanionTranscriptContinuity(defaults: defaults)
@@ -270,6 +273,49 @@ extension SelfTest {
         try require(CompanionTranscriptContinuity(defaults: defaults).begin(conversationID: "c", messages: messages) == nil,
                     "A stale callback for another conversation saves nothing")
         print("  transcript follow OK (follows at the bottom, new reply marker, growth is not scrolling, small and large scrolls away, scroll bar style moves, bounce, resize, updates while away, scroll back, arrow only with content below, reveal hold, explicit send, conversation change, catch up on any growth, saved companion position)")
+    }
+
+    private static func settlingAtTheBottom(_ require: (Bool, String) throws -> Void) throws {
+        func at(_ offset: CGFloat, content: CGFloat) -> TranscriptGeometry {
+            TranscriptGeometry(offset: offset, contentHeight: content, containerHeight: 568)
+        }
+        let reply = UUID()
+        var rows = [UUID(), UUID()]
+        var follow = TranscriptFollow()
+        follow.scope("settle", sends: 0)
+        follow.replies([rows[1]], rows: rows)
+        for geometry in [at(0, content: 3106), at(2532, content: 3106), at(2456.3, content: 3051), at(2456.5, content: 3047),
+                         at(2452.5, content: 3047), at(2456.5, content: 3047), at(2452.5, content: 3047)] {
+            follow.geometry(geometry)
+        }
+        try require(follow.following && follow.atLatest && !follow.showsJump,
+                    "Rows above settling their height nudge the view a few points at the bottom without stopping it following")
+        try require(follow.geometry(at(2452.5, content: 3276)), "The next growth still asks the view to catch up")
+        rows += [UUID(), reply]
+        follow.replies([rows[1]], rows: rows)
+        follow.geometry(at(2607.5, content: 3276))
+        follow.geometry(at(2603.5, content: 3202))
+        follow.geometry(at(2599.5, content: 3202))
+        try require(follow.geometry(at(2599.5, content: 3240)), "A streaming reply that keeps settling keeps being caught up")
+        follow.replies([rows[1], reply], rows: rows)
+        try require(follow.following && follow.unseenReplies([rows[1], reply]).isEmpty,
+                    "The reply's first words arrive in view with no New reply marker")
+        follow.geometry(at(2282.5, content: 2877))
+        follow.geometry(at(2282.5, content: 2297))
+        follow.geometry(at(66, content: 2297))
+        try require(follow.following, "The view pulling back after the content above it shrank is not the reader scrolling away")
+        try require(follow.geometry(at(66, content: 2330)), "So the next growth returns it to the latest")
+        follow.geometry(at(1762, content: 2330))
+        follow.geometry(at(1740, content: 2330))
+        try require(follow.following, "A small unreported move that stays at the latest keeps following")
+        follow.scrollPhase(reader: true)
+        follow.geometry(at(1730, content: 2330))
+        follow.scrollPhase(reader: false)
+        try require(!follow.following, "The same small move made by the reader's own scroll stops following")
+        follow.jumpToLatest()
+        follow.geometry(at(1762, content: 2330))
+        follow.geometry(at(1500, content: 2330))
+        try require(!follow.following && follow.showsJump, "An unreported move well away from the latest still stops following")
     }
 
     private static func newReplyMarker(_ require: (Bool, String) throws -> Void) throws {
