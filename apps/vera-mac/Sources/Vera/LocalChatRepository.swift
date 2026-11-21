@@ -526,7 +526,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         } else {
             activityJSON = String(decoding: try JSONEncoder().encode(message.toolActivities), as: UTF8.self)
         }
-        let metadata = Self.metadataJSON(for: message)
+        let metadata = try Self.keepingSavedAnswer(Self.metadataJSON(for: message), for: message, db: db)
             try db.execute(sql: """
                 INSERT INTO messages
                     (id, conversation_id, ordinal, role, content, created_at, state,
@@ -1088,6 +1088,15 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
               let ask = message.ask else { return nil }
         let saved = SavedAsk(ask: ask, answered: message.answered ? true : nil, answerText: message.answered ? message.answerText : nil)
         return try? encode(saved)
+    }
+
+    private static func keepingSavedAnswer(_ metadata: String?, for message: Message, db: Database) throws -> String? {
+        guard let ask = message.ask, !message.answered, metadata != nil,
+              let stored = try String.fetchOne(db, sql: "SELECT metadata_json FROM messages WHERE id = ? AND role = 'assistant' AND content_type = ?",
+                                               arguments: [message.id.uuidString, MessageContentType.text.rawValue]),
+              let saved = try? JSONDecoder().decode(SavedAsk.self, from: Data(stored.utf8)),
+              saved.answered == true, saved.ask == ask else { return metadata }
+        return stored
     }
 
     private struct SavedAsk: Codable {

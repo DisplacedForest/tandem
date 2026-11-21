@@ -6,7 +6,7 @@ final class AskPersistenceTransport: NativeChatTransport, @unchecked Sendable {
     static let asking = "Help me plan the week."
     static let block = """
         ```vera:ask
-        {"question":"How should I plan with you?","multiSelect":true,"options":[{"label":"Short lists","description":"A few items per day."},{"label":"Time blocks","description":"Hours set aside for each task."},{"label":"Loose themes","description":"One focus per day, no times."}]}
+        {"question":"How should I plan with you?","multiSelect":true,"options":[{"label":"Short lists","description":"A few items per day."},{"label":"Time blocks","description":"Hours set aside for each item."},{"label":"Loose themes","description":"One focus per day, no times."}]}
         ```
         """
     private let lock = NSLock()
@@ -37,13 +37,14 @@ final class AskPersistenceTransport: NativeChatTransport, @unchecked Sendable {
 enum AskPersistenceSelftest {
     static let expected = VeraAsk(question: "How should I plan with you?", multiSelect: true, options: [
         VeraAskOption(label: "Short lists", description: "A few items per day."),
-        VeraAskOption(label: "Time blocks", description: "Hours set aside for each task."),
+        VeraAskOption(label: "Time blocks", description: "Hours set aside for each item."),
         VeraAskOption(label: "Loose themes", description: "One focus per day, no times."),
     ])
 
     static func run() async throws {
         let require = NativeTaskFixture.require
         try roundTrip(require)
+        try staleSaves(require)
         try history(require)
         try await endToEnd(require)
         print("ASK PERSISTENCE SELFTEST OK")
@@ -84,6 +85,60 @@ enum AskPersistenceSelftest {
                     "An answered question stays answered after a reload")
         try require(try repository.recentMessages(conversationID: conversation.id, limit: 2).first?.ask == expected,
                     "The recent window loads the question too")
+    }
+
+    static func staleSaves(_ require: (Bool, String) throws -> Void) throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ask-persistence-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("chat.sqlite")
+        let artifacts = folder.appendingPathComponent("artifacts", isDirectory: true)
+        let projects = folder.appendingPathComponent("projects", isDirectory: true)
+        let repository = try LocalChatRepository(url: file, artifactDirectory: artifacts, projectsDirectory: projects)
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: AskPersistenceTransport(), repository: repository,
+                              artifactPersistenceEnabled: false)
+        store.suspendsTurnScheduling = true
+        store.newConversation()
+        try require(store.sendText(AskPersistenceTransport.asking), "The chat accepts the message")
+        guard let accepted = try repository.conversationTurns().last,
+              let turn = try repository.claimTurn(accepted.id, attempt: UUID()) else {
+            throw NativeTaskFixture.Failure.assertion("The turn is accepted and claimed")
+        }
+        let conversationID = turn.conversationID
+        func reload() throws -> Message? {
+            try repository.messages(conversationID: conversationID).first { $0.id == turn.assistantMessageID }
+        }
+        let stale = Message(id: turn.assistantMessageID, role: .assistant, text: AskPersistenceTransport.opener, state: .streaming, ask: expected)
+        try repository.checkpointTurn(turn, message: stale, ordinal: 1)
+        var answered = stale
+        answered.answered = true
+        answered.answerText = "Short lists"
+        try repository.saveAskAnswer(answered)
+        try repository.checkpointTurn(turn, message: stale, ordinal: 1)
+        let checkpointed = try reload()
+        try require(checkpointed?.answered == true && checkpointed?.answerText == "Short lists",
+                    "A queued checkpoint saved after the answer keeps the answer")
+        var finished = stale
+        finished.state = .complete
+        try repository.finishTurn(turn.id, attempt: turn.attempt, state: .complete, message: finished, ordinal: 1)
+        try repository.saveMessage(finished, conversationID: conversationID, ordinal: 1)
+        let fresh = try LocalChatRepository(url: file, artifactDirectory: artifacts, projectsDirectory: projects)
+        let kept = try fresh.messages(conversationID: conversationID).first { $0.id == turn.assistantMessageID }
+        try require(kept?.answered == true && kept?.answerText == "Short lists" && kept?.ask == expected && kept?.state == .complete,
+                    "Completion saved from a snapshot taken before the answer keeps the answer after a fresh load")
+        let changedAsk = VeraAsk(question: "Which day first?", options: [VeraAskOption(label: "Monday"), VeraAskOption(label: "Friday")])
+        var changed = finished
+        changed.ask = changedAsk
+        try repository.saveMessage(changed, conversationID: conversationID, ordinal: 1)
+        let rewritten = try reload()
+        try require(rewritten?.ask == changedAsk && rewritten?.answered == false && rewritten?.answerText == nil,
+                    "A different question replaces the saved answer")
+        try repository.saveAskAnswer(answered)
+        var dropped = finished
+        dropped.ask = nil
+        try repository.saveMessage(dropped, conversationID: conversationID, ordinal: 1)
+        let cleared = try reload()
+        let clearedMetadata = try metadata(repository, turn.assistantMessageID)
+        try require(cleared?.ask == nil && clearedMetadata == nil, "A reply with no question saves no question")
     }
 
     static func history(_ require: (Bool, String) throws -> Void) throws {
