@@ -97,7 +97,7 @@ struct NativeTaskProvider {
                     if try reader.append(byte) { observer.replied() }
                     if reader.finished { break }
                 }
-                return try completed(reader.snapshot(text: job.tools == nil), job: job)
+                return try completed(reader.snapshot(), job: job)
             } onCancel: {
                 observer.finish(.canceled)
                 session.invalidateAndCancel()
@@ -136,12 +136,12 @@ struct NativeTaskProvider {
         }
     }
 
-    static func snapshot(from data: Data, text: Bool) throws -> NativeChatStreamSnapshot {
+    static func snapshot(from data: Data) throws -> NativeChatStreamSnapshot {
         do {
             return try NativeChatClient.completeSnapshot(from: data)
         } catch let error as NativeChatClient.ClientError {
             if case .provider = error { throw NativeTaskGenerationFailure(code: "provider_error") }
-            if text, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let choice = (object["choices"] as? [[String: Any]])?.first,
                choice["finish_reason"] as? String == "length" {
                 throw cutShort()
@@ -161,6 +161,7 @@ struct NativeTaskProvider {
     }
 
     static func completed(_ snapshot: NativeChatStreamSnapshot, job: NativeTaskGenerationJob) throws -> NativeTaskGenerationCompletion {
+        if snapshot.finishReason == "length" { throw cutShort() }
         guard job.tools != nil else { return .text(try completedText(snapshot)) }
         let finish = snapshot.finishReason ?? ""
         return try NativeTaskGenerationCompletion(content: snapshot.content, toolCalls: snapshot.toolCalls,
@@ -194,6 +195,9 @@ struct NativeTaskReplyReader {
     private var finishReason: String?
     private(set) var finished = false
     private var done = false
+    private var eventBytes = 0
+    private var reasoningBytes = 0
+    private var window: UInt32 = 0
 
     mutating func append(_ byte: UInt8) throws -> Bool {
         var started = false
@@ -212,8 +216,11 @@ struct NativeTaskReplyReader {
             return started
         }
         pending.append(byte)
-        guard pending.count <= Self.maximumBytes else { throw NativeTaskGenerationFailure(code: "response_too_large") }
-        guard byte == 10 || pending.count >= 1024 else { return false }
+        eventBytes += 1
+        window = window << 8 | UInt32(byte)
+        if window & 0xFFFF == 0x0A0A || window == 0x0D0A0D0A { eventBytes = 0 }
+        guard eventBytes <= Self.maximumBytes else { throw NativeTaskGenerationFailure(code: "response_too_large") }
+        guard byte == 10 else { return false }
         return try drain(finishing: false)
     }
 
@@ -225,8 +232,9 @@ struct NativeTaskReplyReader {
         pending.removeAll(keepingCapacity: true)
         for payload in payloads where !done {
             if payload == "[DONE]" { done = true; finished = true; break }
-            let kind = Self.kind(of: payload)
+            let (kind, reasoning) = Self.kind(of: payload)
             if kind == .bookkeeping { continue }
+            reasoningBytes += reasoning
             if kind == .reply { replied = true }
             do { latest = try accumulator.consume(payload) }
             catch let error as NativeChatClient.ClientError {
@@ -234,7 +242,8 @@ struct NativeTaskReplyReader {
                 throw NativeTaskGenerationFailure(code: "response_unreadable")
             }
             if let reason = latest.finishReason { finishReason = reason }
-            let size = latest.content.utf8.count + latest.toolCalls.reduce(0) { $0 + $1.arguments.utf8.count + $1.name.utf8.count }
+            let size = reasoningBytes + latest.content.utf8.count
+                + latest.toolCalls.reduce(0) { $0 + $1.arguments.utf8.count + $1.name.utf8.count }
             guard size <= Self.maximumBytes else { throw NativeTaskGenerationFailure(code: "response_too_large") }
         }
         return replied
@@ -242,30 +251,31 @@ struct NativeTaskReplyReader {
 
     enum EventKind { case opening, reply, bookkeeping }
 
-    static func kind(of payload: String) -> EventKind {
-        guard let object = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any] else { return .reply }
-        if object["error"] != nil { return .reply }
-        if let choices = object["choices"] as? [Any], choices.isEmpty { return .bookkeeping }
-        guard let choice = (object["choices"] as? [[String: Any]])?.first else { return .reply }
-        if let reason = choice["finish_reason"] as? String, !reason.isEmpty { return .reply }
-        guard let delta = choice["delta"] as? [String: Any] else { return .opening }
-        for key in ["content", "reasoning_content", "reasoning"] {
-            if let text = delta[key] as? String, !text.isEmpty { return .reply }
+    static func kind(of payload: String) -> (EventKind, Int) {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any] else { return (.reply, 0) }
+        if object["error"] != nil { return (.reply, 0) }
+        if let choices = object["choices"] as? [Any], choices.isEmpty { return (.bookkeeping, 0) }
+        guard let choice = (object["choices"] as? [[String: Any]])?.first else { return (.reply, 0) }
+        let delta = choice["delta"] as? [String: Any] ?? [:]
+        let reasoning = ["reasoning_content", "reasoning"].reduce(0) { $0 + ((delta[$1] as? String)?.utf8.count ?? 0) }
+        if let reason = choice["finish_reason"] as? String, !reason.isEmpty { return (.reply, reasoning) }
+        if reasoning > 0 || (delta["content"] as? String)?.isEmpty == false || (delta["tool_calls"] as? [Any])?.isEmpty == false {
+            return (.reply, reasoning)
         }
-        return (delta["tool_calls"] as? [Any])?.isEmpty == false ? .reply : .opening
+        return (.opening, 0)
     }
 
-    mutating func snapshot(text: Bool) throws -> NativeChatStreamSnapshot {
+    mutating func snapshot() throws -> NativeChatStreamSnapshot {
         switch mode {
         case .undecided, .body:
-            return try NativeTaskProvider.snapshot(from: body, text: text)
+            return try NativeTaskProvider.snapshot(from: body)
         case .events:
             if !done { _ = try drain(finishing: true) }
             let snapshot = NativeChatStreamSnapshot(content: latest.content, toolCalls: latest.toolCalls, finishReason: finishReason)
             guard done || finishReason != nil else { throw NativeTaskGenerationFailure(code: "response_unreadable") }
+            if snapshot.finishReason == "length" { throw NativeTaskProvider.cutShort() }
             if !snapshot.toolCalls.isEmpty,
                snapshot.finishReason != "tool_calls" || snapshot.toolCalls.contains(where: { $0.id.isEmpty || $0.name.isEmpty }) {
-                if text, snapshot.finishReason == "length" { throw NativeTaskProvider.cutShort() }
                 throw NativeTaskGenerationFailure(code: "response_unreadable")
             }
             return snapshot

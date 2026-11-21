@@ -130,13 +130,14 @@ extension SelfTest {
         try await limitsWholeBody()
         try await limitsStreamedToolCalls()
         try await limitsCutShort()
+        try await limitsReplySize()
         try await limitsTemplateOptions()
         try await limitsQueuedRequest()
     }
 
-    private static let scaledLimits = NativeTaskTransportLimits(connectAndSend: 1, firstReply: 1.2, replyIdle: 0.4, request: 30)
+    private static let scaledLimits = NativeTaskTransportLimits(connectAndSend: 3, firstReply: 3, replyIdle: 0.5, request: 60)
 
-    private static func limitsJob(deadline: Double = 30, tools: [NativeTaskGenerationTool]? = nil) -> NativeTaskGenerationJob {
+    private static func limitsJob(deadline: Double = 60, tools: [NativeTaskGenerationTool]? = nil) -> NativeTaskGenerationJob {
         let messages = [NativeTaskGenerationMessage(role: "user", content: "Write one section")]
         return NativeTaskGenerationJob(id: UUID().uuidString, taskID: UUID().uuidString, bindingID: UUID().uuidString,
             enrollmentDigest: String(repeating: "a", count: 64), admissionBase: URL(string: "http://127.0.0.1/v1")!,
@@ -196,7 +197,7 @@ extension SelfTest {
 
     private static func limitsLateFirstReply() async throws {
         let require = NativeTaskFixture.require
-        let wire = try await TaskLimitsWire(pieces: TaskLimitsWire.streamed(["Late ", "but ", "steady."], every: 0.1, from: 0.9))
+        let wire = try await TaskLimitsWire(pieces: TaskLimitsWire.streamed(["Late ", "but ", "steady."], every: 0.1, from: 1))
         defer { wire.stop() }
         let capture = NativeTaskTimingCapture()
         let result = try await limitsComplete(wire, job: limitsJob(), capture: capture)
@@ -204,13 +205,15 @@ extension SelfTest {
         try await Task.sleep(for: .milliseconds(50))
         let timing = capture.snapshot
         try require(timing.count == 1 && timing[0].outcome == .completed, "One completed diagnostic is logged")
-        try require((timing[0].firstByteSeconds ?? 9) < 0.5 && (timing[0].firstReplySeconds ?? 0) >= 0.85,
+        let firstByte = timing[0].firstByteSeconds ?? 99
+        let firstReply = timing[0].firstReplySeconds ?? 0
+        try require(firstReply >= 0.95 && firstByte < firstReply - 0.3,
                     "The diagnostic records the first body byte and the first reply apart: \(timing[0])")
     }
 
     private static func limitsSteadyStream() async throws {
         let require = NativeTaskFixture.require
-        let parts = (0..<25).map { "w\($0) " }
+        let parts = (0..<40).map { "w\($0) " }
         let wire = try await TaskLimitsWire(pieces: TaskLimitsWire.streamed(parts, every: 0.1, from: 0.1))
         defer { wire.stop() }
         let started = ContinuousClock.now
@@ -226,7 +229,7 @@ extension SelfTest {
         let capture = NativeTaskTimingCapture()
         let (failure, elapsed) = try await limitsFailure(quiet, job: limitsJob(), capture: capture)
         try require(failure.code == "request_timeout", "Silence fails as a slow request: \(failure.code)")
-        try require(elapsed >= scaledLimits.firstReply && elapsed < scaledLimits.firstReply + 0.8,
+        try require(elapsed >= scaledLimits.firstReply && elapsed < scaledLimits.firstReply + 2,
                     "Silence fails once the first-reply limit passes and not before: \(elapsed)")
         try await Task.sleep(for: .milliseconds(50))
         try require(capture.snapshot.map(\.outcome) == [.first_reply_timeout], "Silence is logged as a missing first reply")
@@ -261,7 +264,7 @@ extension SelfTest {
         let require = NativeTaskFixture.require
         let body = TaskReplyCauseWire.choice("A whole answer.", finish: "stop")
         let wire = try await TaskLimitsWire(contentType: "application/json",
-            pieces: [.init(at: 0.6, bytes: body.prefix(10)), .init(at: 0.7, bytes: body.dropFirst(10))])
+            pieces: [.init(at: 1, bytes: body.prefix(10)), .init(at: 1.05, bytes: body.dropFirst(10))])
         defer { wire.stop() }
         let result = try await limitsComplete(wire, job: limitsJob())
         try require(result.content == "A whole answer." && result.finishReason == "stop", "A single JSON answer still reads")
@@ -297,30 +300,70 @@ extension SelfTest {
 
     private static func limitsCutShort() async throws {
         let require = NativeTaskFixture.require
-        for tools in [false, true] {
-            let wire = try await TaskLimitsWire(pieces: [
-                .init(at: 0, bytes: TaskLimitsWire.event(["role": "assistant", "content": ""])),
-                .init(at: 0.05, bytes: TaskLimitsWire.event(["content": TaskReplyCauseWire.partial])),
-            ] + (tools ? [.init(at: 0.08, bytes: TaskLimitsWire.event(["tool_calls": [["index": 0, "id": "call-1", "type": "function",
-                                                                                        "function": ["name": "lookup", "arguments": "{\"q\":"]]]]))] : [])
-              + [.init(at: 0.1, bytes: TaskLimitsWire.event([:], finish: "length")), .init(at: 0.1, bytes: TaskLimitsWire.done)])
+        func expectCut(_ job: NativeTaskGenerationJob, _ what: String, _ run: () async throws -> NativeTaskGenerationCompletion) async throws {
+            do {
+                _ = try await run()
+                throw NativeTaskFixture.Failure.assertion("\(what) must fail")
+            } catch let failure as NativeTaskGenerationFailure {
+                try require(failure.code == "response_cut_short"
+                            && failure.detail == NativeTaskGenerationFailureDetail(phase: job.phase, httpStatus: 200, finishReason: "length"),
+                            "\(what) is reported as cut short: \(failure.code) \(String(describing: failure.detail))")
+            }
+        }
+        for offered in [false, true] {
+            for partial in [false, true] {
+                let job = limitsJob(tools: offered ? [dotLookupTool] : nil)
+                let label = "\(offered ? "With" : "Without") tools offered, \(partial ? "a partial call" : "text only")"
+                let wire = try await TaskLimitsWire(pieces: [
+                    .init(at: 0, bytes: TaskLimitsWire.event(["role": "assistant", "content": ""])),
+                    .init(at: 0.05, bytes: TaskLimitsWire.event(["content": TaskReplyCauseWire.partial])),
+                ] + (partial ? [.init(at: 0.08, bytes: TaskLimitsWire.event(["tool_calls": [["index": 0, "id": "call-1", "type": "function",
+                                                                                              "function": ["name": "lookup_moon", "arguments": "{\"moon\":"]]]]))] : [])
+                  + [.init(at: 0.1, bytes: TaskLimitsWire.event([:], finish: "length")), .init(at: 0.1, bytes: TaskLimitsWire.done)])
+                defer { wire.stop() }
+                try await expectCut(job, "\(label), a streamed reply cut off by the output limit") {
+                    try await limitsComplete(wire, job: job)
+                }
+                try await expectCut(job, "\(label), a single-body reply cut off by the output limit") {
+                    try await TaskReplyCauseWire.complete(partial ? "lengthtools" : "length", job: job)
+                }
+            }
+        }
+    }
+
+    private static func limitsReplySize() async throws {
+        let require = NativeTaskFixture.require
+        let cap = NativeTaskReplyReader.maximumBytes
+        func tooLarge(_ pieces: [TaskLimitsWire.Piece], _ what: String) async throws {
+            let wire = try await TaskLimitsWire(pieces: pieces, closes: false)
             defer { wire.stop() }
             do {
                 _ = try await limitsComplete(wire, job: limitsJob())
-                throw NativeTaskFixture.Failure.assertion("A cut-off stream must fail")
+                throw NativeTaskFixture.Failure.assertion("\(what) must fail")
             } catch let failure as NativeTaskGenerationFailure {
-                try require(failure.code == "response_cut_short"
-                            && failure.detail == NativeTaskGenerationFailureDetail(phase: "draft-1", httpStatus: 200, finishReason: "length"),
-                            "A streamed reply cut off by the output limit is reported as cut short: \(failure.code)")
-            }
-            let scenario = tools ? "lengthtools" : "length"
-            do {
-                _ = try await TaskReplyCauseWire.complete(scenario, job: limitsJob())
-                throw NativeTaskFixture.Failure.assertion("A cut-off body must fail")
-            } catch let failure as NativeTaskGenerationFailure {
-                try require(failure.code == "response_cut_short", "The single-body path reports the same cut")
+                try require(failure.code == "response_too_large", "\(what) is too large: \(failure.code)")
             }
         }
+        let opening = Data("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"".utf8)
+        try await tooLarge([.init(at: 0, bytes: opening + Data(repeating: 97, count: cap + 1024))], "An unterminated data line over the cap")
+        try await tooLarge([.init(at: 0, bytes: TaskLimitsWire.event(["content": String(repeating: "b", count: cap + 1024)]))],
+                           "A single event over the cap")
+        let thinking = (0..<12).map { index in
+            TaskLimitsWire.Piece(at: Double(index) * 0.02, bytes: TaskLimitsWire.event(["reasoning_content": String(repeating: "r", count: 100_000)]))
+        }
+        try await tooLarge(thinking + [.init(at: 0.3, bytes: TaskLimitsWire.event(["content": "ok"]))], "Reasoning over the cap")
+
+        let word = "abcdefghi "
+        let batch = (0..<1000).reduce(into: Data()) { data, _ in data.append(TaskLimitsWire.event(["content": word])) }
+        var pieces = [TaskLimitsWire.Piece(at: 0, bytes: TaskLimitsWire.event(["role": "assistant", "content": ""]))]
+        pieces += (0..<16).map { TaskLimitsWire.Piece(at: Double($0) * 0.02, bytes: batch) }
+        pieces += [.init(at: 0.4, bytes: TaskLimitsWire.event([:], finish: "stop")), .init(at: 0.4, bytes: TaskLimitsWire.done)]
+        let raw = pieces.reduce(0) { $0 + $1.bytes.count }
+        let wire = try await TaskLimitsWire(pieces: pieces)
+        defer { wire.stop() }
+        let report = try await limitsComplete(wire, job: limitsJob())
+        try require(raw > cap && report.content.utf8.count == 16000 * word.utf8.count && report.content.utf8.count < cap,
+                    "A long report whose stream framing passes the cap still completes: \(raw)")
     }
 
     private static func limitsTemplateOptions() async throws {
@@ -347,17 +390,17 @@ extension SelfTest {
         let endpoint = URL(string: "https://queued.test/v1")!
         let resource = try NativeInferenceAdmission.resource(for: endpoint)
         let foreground = try await arbiter.acquire(resource: resource, priority: .foreground, queueSeconds: 1)
-        let queued = Task { () -> Double in
-            try await admission.perform(endpoint: endpoint, priority: .background, requestedSeconds: 0.5, queueSeconds: 3) { budget in
-                let seconds = budget.seconds
-                try await Task.sleep(for: .seconds(0.4))
-                return seconds
+        let queuedAt = ContinuousClock.now
+        let queued = Task { () -> (Double, Double) in
+            try await admission.perform(endpoint: endpoint, priority: .background, requestedSeconds: 30, queueSeconds: 20) { budget in
+                (budget.seconds, nativeTaskSeconds(queuedAt.duration(to: .now)))
             }
         }
-        try await Task.sleep(for: .seconds(0.7))
+        try await Task.sleep(for: .seconds(0.6))
         await arbiter.release(foreground)
-        let granted = try await queued.value
-        try require(granted == 0.5, "A request that waited behind foreground work still gets its full window: \(granted)")
+        let (granted, waited) = try await queued.value
+        try require(waited >= 0.6 && granted == 30,
+                    "A request that waited behind foreground work still gets its full window: \(granted) after \(waited)")
         let foregroundAgain = try await arbiter.acquire(resource: resource, priority: .foreground, queueSeconds: 1)
         let gaveUp = Task { () -> String in
             try await admission.perform(endpoint: endpoint, priority: .background, requestedSeconds: 5, queueSeconds: 0.2) { _ in "ran" }
