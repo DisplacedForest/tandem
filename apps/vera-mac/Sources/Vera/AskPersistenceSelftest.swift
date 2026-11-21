@@ -22,6 +22,11 @@ final class AskPersistenceTransport: NativeChatTransport, @unchecked Sendable {
         set { lock.withLock { replacement = newValue } }
     }
     var histories: [[NativeChatMessage]] { lock.withLock { captured } }
+    private var holding = false
+    var holdsAfterQuestion: Bool {
+        get { lock.withLock { holding } }
+        set { lock.withLock { holding = newValue } }
+    }
 
     func discoverModels() async throws -> [String] { ["local-model"] }
 
@@ -32,13 +37,23 @@ final class AskPersistenceTransport: NativeChatTransport, @unchecked Sendable {
         let full = Self.opener + "\n\n" + (nextAsk ?? Self.block)
         let partial = Self.opener + "\n\n```vera:ask\n{\"question\":\"How should"
         return AsyncThrowingStream { continuation in
-            if query == Self.asking {
-                continuation.yield(NativeChatStreamSnapshot(content: partial, toolCalls: [], finishReason: nil))
-                continuation.yield(NativeChatStreamSnapshot(content: full, toolCalls: [], finishReason: "stop"))
-            } else {
+            guard query == Self.asking else {
                 continuation.yield(NativeChatStreamSnapshot(content: "Noted.", toolCalls: [], finishReason: "stop"))
+                continuation.finish()
+                return
             }
-            continuation.finish()
+            continuation.yield(NativeChatStreamSnapshot(content: partial, toolCalls: [], finishReason: nil))
+            guard holdsAfterQuestion else {
+                continuation.yield(NativeChatStreamSnapshot(content: full, toolCalls: [], finishReason: "stop"))
+                continuation.finish()
+                return
+            }
+            continuation.yield(NativeChatStreamSnapshot(content: full, toolCalls: [], finishReason: nil))
+            Task {
+                while self.holdsAfterQuestion { try? await Task.sleep(for: .milliseconds(10)) }
+                continuation.yield(NativeChatStreamSnapshot(content: full, toolCalls: [], finishReason: "stop"))
+                continuation.finish()
+            }
         }
     }
 }
@@ -57,6 +72,7 @@ enum AskPersistenceSelftest {
         try staleSaves(require)
         try await retried(require)
         try await retriedAfterReply(require)
+        try await composerReplyWhileStreaming(require)
         try history(require)
         try await endToEnd(require)
         print("ASK PERSISTENCE SELFTEST OK")
@@ -236,6 +252,35 @@ enum AskPersistenceSelftest {
         try await NativeSessionFixture.eventually("It loads answered with the first reply below it") {
             let saved = try? repository.messages(conversationID: conversationID).first { $0.id == replyID }
             return saved?.ask?.question == "Which day first?" && saved?.answered == true && saved?.answerText == "Short lists"
+        }
+    }
+
+    static func composerReplyWhileStreaming(_ require: (Bool, String) throws -> Void) async throws {
+        let repository = try LocalChatRepository(inMemory: true)
+        let transport = AskPersistenceTransport()
+        transport.holdsAfterQuestion = true
+        let store = ChatStore(nativeConfig: NativeSessionFixture.config, nativeTransport: transport, repository: repository,
+                              artifactPersistenceEnabled: false)
+        store.newConversation()
+        try require(store.sendText(AskPersistenceTransport.asking), "The chat accepts the message")
+        try await NativeSessionFixture.eventually("The question shows while the reply is still open") {
+            store.selected?.messages.last(where: { $0.role == .assistant })?.ask?.question == expected.question
+        }
+        guard let conversationID = store.selectedID,
+              let replyID = store.selected?.messages.last(where: { $0.role == .assistant })?.id else {
+            throw NativeTaskFixture.Failure.assertion("The reply is shown")
+        }
+        func card() -> Message? { store.conversations.first { $0.id == conversationID }?.messages.first { $0.id == replyID } }
+        try require(card()?.answered == false, "The open question can be answered")
+        try require(store.sendText("Short lists"), "A reply typed in the message box is accepted while the question streams")
+        try require(card()?.answered == true && card()?.answerText == "Short lists",
+                    "A typed reply answers the open question right away")
+        transport.holdsAfterQuestion = false
+        try await NativeSessionFixture.eventually("The reply with the question completes") { card()?.state == .complete }
+        try require(card()?.answered == true && card()?.answerText == "Short lists", "The question stays answered after the stream finishes")
+        try await NativeSessionFixture.eventually("The question loads answered with the typed reply") {
+            let saved = try? repository.messages(conversationID: conversationID).first { $0.id == replyID }
+            return saved?.answered == true && saved?.answerText == "Short lists"
         }
     }
 

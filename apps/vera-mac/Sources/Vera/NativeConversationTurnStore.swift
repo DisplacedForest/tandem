@@ -180,7 +180,7 @@ extension ChatStore {
                     continue
                 }
                 let live = Dictionary(uniqueKeysWithValues: conversations[index].messages.map { ($0.id, $0) })
-                conversations[index].messages = try repository.messages(conversationID: id).map { stored in
+                conversations[index].messages = LocalChatRepository.markingAnsweredAsks(try repository.messages(conversationID: id).map { stored in
                     if ownedMessages.contains(stored.id), var current = live[stored.id] {
                         current.displayBlocks = stored.displayBlocks
                         return current
@@ -191,7 +191,7 @@ extension ChatStore {
                         value.answerText = live[stored.id]?.answerText
                     }
                     return value
-                }
+                })
                 refreshPreferenceMarkers(conversationID: id)
                 dirtyTurnConversations.remove(id)
             }

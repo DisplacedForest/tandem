@@ -2281,7 +2281,7 @@ final class ChatStore: ObservableObject {
             if let pendingReply { recordReply(pendingReply, messageID: user.id, conversationID: id, saved: answered != nil && turnRepository is LocalChatRepository) }
             let stored = (try? repository.messages(conversationID: id)) ?? (conversation.messages + [user, reply])
             let live = Dictionary(uniqueKeysWithValues: conversation.messages.map { ($0.id, $0) })
-            conversation.messages = stored.map { live[$0.id] ?? $0 }
+            conversation.messages = LocalChatRepository.markingAnsweredAsks(stored.map { live[$0.id] ?? $0 })
             conversations[index] = conversation
             if !conversationTurns.contains(where: { $0.id == turn.id }) {
                 conversationTurns.append(turn)
