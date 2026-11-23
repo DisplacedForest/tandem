@@ -61,7 +61,7 @@ enum IntegrationsText {
 
     static func footer(_ authentication: NativeMCPServerConfiguration.Authentication, reports: Bool = false) -> String {
         let approved = reports ? "The service decides which tools it offers and which of them only read. You can turn any of them off." : "Only what you approve is available, and a service cannot give itself more."
-        return authentication == .bearer ? approved : approved + " Connections end when Tandem quits."
+        return authentication == .oauth ? approved + " Connections end when Tandem quits." : approved
     }
 
     static let accountSignInNote = "Account sign-in needs details from the publisher in the configuration file; see the setup guide."
@@ -390,7 +390,7 @@ private struct IntegrationsDestination: View {
     private func primaryAction(_ server: NativeMCPServerState, progress: String?) -> some View {
         let saved = manager.hasSavedToken(server.id)
         if server.connected || server.connecting || progress != nil || reconnects(server) {
-            let pending = !saved && (server.connecting || progress != nil)
+            let pending = !manager.keeps(server) && (server.connecting || progress != nil)
             IntegrationsAction(title: pending ? "Cancel connection" : "Disconnect", symbol: "xmark", prominent: true, help: saved ? IntegrationsText.disconnectNote : nil) {
                 enteredTokens.removeValue(forKey: server.id)
                 manager.cancelOAuthLocally(server.id)
