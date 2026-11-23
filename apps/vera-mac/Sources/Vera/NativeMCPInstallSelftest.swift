@@ -77,18 +77,11 @@ enum NativeMCPInstallSelftest {
         let persisted = NativeChatSettings.load(from: disk.contents)
         try check(!persisted.enabledToolIDs.contains(toolID), "the pruned tool should not be persisted")
 
-        for _ in 0..<8 {
+        for _ in 0..<12 {
             try config.addNativeMCPServer(catalog.configurationRow(for: entry, readTools: entry.readTools, scopes: ["focused"]))
         }
-        let writesBefore = disk.writes
-        do {
-            try config.addNativeMCPServer(catalog.configurationRow(for: entry, readTools: entry.readTools, scopes: ["focused"]))
-            throw Failure(description: "a ninth service should be refused")
-        } catch let error as NativeToolError {
-            try check(error.errorDescription?.contains("eight") == true, "the refusal should explain the limit")
-        }
-        try check(disk.writes == writesBefore && config.nativeMCPServerRows.count == 8, "a refused add should not write")
-        try await settle(manager) { manager.servers.count == 8 }
+        try check(config.nativeMCPServerRows.count == 12, "any number of services can be added")
+        try await settle(manager) { manager.servers.count == 12 }
 
         try await runScopeNarrowing(catalog: catalog, entry: entry)
         try await runReconcile(catalog: catalog, entry: entry)

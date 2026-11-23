@@ -32,7 +32,7 @@ struct NativeMCPJSONSchema: Sendable {
     init(_ schema: NativeJSONValue) throws {
         var nodes = 0
         var bytes = 0
-        try Self.measure(schema, depth: 0, nodes: &nodes, bytes: &bytes, limit: Self.largestValue)
+        try Self.measure(schema, depth: 0, nodes: &nodes, bytes: &bytes)
         self.schema = schema
         if case .object(let root) = schema, let declaration = root["$schema"] {
             guard case .string(let identifier) = declaration, let dialect = Dialect(rawValue: identifier) else { throw Failure.unsupportedSchema }
@@ -45,7 +45,7 @@ struct NativeMCPJSONSchema: Sendable {
         } else {
             definitions = [:]
         }
-        var budget = 50_000 + nodes
+        var budget = Self.steps(nodes: nodes, bytes: bytes)
         var inspected: Set<String> = []
         try inspect(schema, depth: 0, references: [], inspected: &inspected, budget: &budget)
     }
@@ -54,11 +54,13 @@ struct NativeMCPJSONSchema: Sendable {
         var nodes = 0
         var bytes = 0
         try Self.measure(value, depth: 0, nodes: &nodes, bytes: &bytes)
-        var budget = 50_000
+        var budget = Self.steps(nodes: nodes, bytes: bytes)
         guard try matches(value, schema: schema, depth: 0, budget: &budget) else {
             throw Failure.invalidArguments
         }
     }
+
+    private static func steps(nodes: Int, bytes: Int) -> Int { 50_000 + nodes * 16 + bytes * 2 }
 
     func validateResult(_ value: NativeJSONValue) throws {
         guard !Self.holdsLongNumber(value) else { return }
@@ -347,17 +349,17 @@ struct NativeMCPJSONSchema: Sendable {
         number.rounded(.towardZero) == number && abs(number) < 1e18 ? String(Int(number)) : String(number)
     }
 
-    private static func measure(_ value: NativeJSONValue, depth: Int, nodes: inout Int, bytes: inout Int, limit: Int = 32_768) throws {
+    private static func measure(_ value: NativeJSONValue, depth: Int, nodes: inout Int, bytes: inout Int) throws {
         nodes += 1
-        guard depth <= 48, nodes <= limit, bytes <= largestValue else { throw Failure.resourceLimit }
+        guard depth <= 48, nodes <= largestValue, bytes <= largestValue else { throw Failure.resourceLimit }
         switch value {
         case .object(let object):
             for (key, item) in object {
                 bytes += key.utf8.count
-                try measure(item, depth: depth + 1, nodes: &nodes, bytes: &bytes, limit: limit)
+                try measure(item, depth: depth + 1, nodes: &nodes, bytes: &bytes)
             }
         case .array(let array):
-            for item in array { try measure(item, depth: depth + 1, nodes: &nodes, bytes: &bytes, limit: limit) }
+            for item in array { try measure(item, depth: depth + 1, nodes: &nodes, bytes: &bytes) }
         case .string(let string): bytes += string.utf8.count
         case .number(let number):
             guard number.isFinite else { throw Failure.resourceLimit }

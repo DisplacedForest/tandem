@@ -38,7 +38,7 @@ async function run(config) {
     },
   }));
   const schemas = config.host_tools ?? [];
-  if (!Array.isArray(schemas) || schemas.length > 16 || Buffer.byteLength(JSON.stringify(schemas)) > 8192) throw new Error('catalog_limit');
+  if (!Array.isArray(schemas)) throw new Error('catalog_invalid');
   const names = new Set(builtins.map(tool => tool.name));
   const tools = [...builtins, ...schemas.map(schema => {
     if (!schema || typeof schema.name !== 'string' || schema.name.length !== 44 || !/^mcp_[a-f0-9]{40}$/.test(schema.name) || names.has(schema.name) || typeof schema.description !== 'string' || !schema.parameters || schema.parameters.type !== 'object') throw new Error('catalog_invalid');

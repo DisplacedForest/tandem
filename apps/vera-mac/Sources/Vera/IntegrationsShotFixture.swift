@@ -25,12 +25,32 @@ enum IntegrationsShotFixture {
         "publisher": "GitHub", "source_url": "https://github.com/github/github-mcp-server",
     ]
 
+    static let reportsID = "0d4b6f2e-5a1c-4e93-b7d8-3c9e1f6a2b50"
+
+    static var reportsRow: [String: Any] {
+        ["id": reportsID, "name": "Home Assistant", "url": "https://house.example/mcp", "scopes": IntegrationsText.scopeKeys, "timeout_seconds": 20.0]
+    }
+
+    static var signedInRow: [String: Any] {
+        ["id": wikiID, "name": "Reference", "url": "https://reference.example/mcp", "read_tools": ["lookup_reference"], "scopes": ["focused", "assistant"], "timeout_seconds": 20.0, "authentication": "oauth",
+         "oauth": ["resource": "https://reference.example/mcp", "issuer": "https://login.reference.example",
+                   "protected_resource_metadata_url": "https://reference.example/.well-known/oauth-protected-resource/mcp",
+                   "authorization_server_metadata_url": "https://login.reference.example/.well-known/oauth-authorization-server",
+                   "authorization_endpoint": "https://login.reference.example/authorize", "token_endpoint": "https://login.reference.example/token",
+                   "client_id": "preregistered-public-client", "redirect_uri": "vera-oauth://callback", "scopes": ["reference.read"]]]
+    }
+
+    static func changeDefinition(_ store: ChatStore) -> NativeToolDefinition {
+        let seeded = self.store(variant: "integrations-reports")
+        return seeded.config.nativeMCP.authority.definitions(scope: "focused").first { $0.title.hasSuffix("HassTurnOff") }!
+    }
+
     static func store(variant: String) -> Seeded {
         let store = ChatStore()
         store.section = .integrations
         let manage = variant.hasPrefix("integrations-manage")
         let changes = variant == "integrations-changes" || manage
-        let rows: [[String: Any]] = variant == "integrations-empty" ? [] : changes ? [codeRow] : [
+        let rows: [[String: Any]] = variant == "integrations-empty" ? [] : variant == "integrations-reports" || variant == "integrations-manage-reports" ? [reportsRow] : variant == "integrations-signed-in" ? [signedInRow] : changes ? [codeRow] : [
             [
                 "id": wikiID, "name": "DeepWiki", "url": "https://mcp.deepwiki.com/mcp",
                 "read_tools": ["read_wiki_structure", "read_wiki_contents", "ask_question"],
@@ -47,7 +67,7 @@ enum IntegrationsShotFixture {
         let disk = Disk(rows.isEmpty ? [:] : ["native_mcp_servers": rows])
         let (servers, _) = NativeMCPServerConfiguration.load(disk.contents)
         let keys = NativeCredentialFixtureStore()
-        if variant == "integrations-manage", let code = servers.first(where: { $0.id == codeID }) {
+        if ["integrations-manage", "integrations-reconnecting"].contains(variant), let code = servers.first(where: { $0.id == codeID }) {
             try? NativeMCPTokenKeeper(store: keys).save("synthetic-shot-token", server: code)
         }
         let manager = NativeMCPManager(servers: servers, tokens: keys, reconnectDelays: [])
@@ -91,7 +111,34 @@ enum IntegrationsShotFixture {
             for (name, _, _) in tools where name != "get_file_contents" && name != "delete_repository" { config.setNativeTool(code.toolID(name), enabled: true) }
             manager.refresh()
         }
+        if variant == "integrations-failed", var state = manager.authority.access.snapshot().first(where: { $0.id == codeID }) {
+            state.status = NativeMCPAuthority.tokenNeeded
+            state.refused = true
+            manager.authority.access.update(state)
+            manager.refresh()
+        }
+        if let reports = servers.first(where: { $0.reportsTools }), var state = manager.authority.access.snapshot().first(where: { $0.id == reports.id }) {
+            let tools: [(String, String, Bool)] = [("GetLiveContext", "See what's on and what the sensors read.", true), ("HassTurnOn", "Turn something on.", false), ("HassTurnOff", "Turn something off.", false)]
+            state.connected = true
+            state.status = "Connected"
+            state.tools = tools.map { name, description, readOnly in
+                NativeMCPToolRecord(id: reports.toolID(name), server: reports, generation: state.generation, remoteName: name, description: description, schema: schema,
+                                    validator: try? NativeMCPJSONSchema(schema), reason: nil, hints: NativeMCPToolHints(readOnly: readOnly, destructive: true))
+            }
+            manager.authority.access.update(state)
+            manager.refresh()
+        }
+        if variant == "integrations-signed-in", var state = manager.authority.access.snapshot().first {
+            state.connected = true
+            state.status = "Signed in"
+            manager.authority.access.update(state)
+            manager.refresh()
+        }
         switch variant {
+        case "integrations-reconnecting", "integrations-failed":
+            return Seeded(store: store, config: config, tab: .personal, search: "", selection: codeID)
+        case "integrations-reports", "integrations-manage-reports", "integrations-signed-in":
+            return Seeded(store: store, config: config, tab: .personal, search: "", selection: nil)
         case "integrations-public":
             return Seeded(store: store, config: config, tab: .catalogue, search: "documentation", selection: "deepwiki")
         default:

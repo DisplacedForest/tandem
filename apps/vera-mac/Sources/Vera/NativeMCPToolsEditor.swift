@@ -72,7 +72,8 @@ struct NativeMCPOAuthReviewEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Sign in to \(review.configuration.name)").font(.title2)
-            Text("Review the service and access before continuing. Sign-in does not enable any tools; you choose those separately after connecting.")
+            Text(review.configuration.reportsTools ? "Review the service and access before continuing. Every tool the service offers is on once you sign in, and you can turn any of them off."
+                 : "Review the service and access before continuing. Sign-in does not enable any tools; you choose those separately after connecting.")
                 .font(.callout)
             Text("Service").font(.headline)
             Text(review.consent.resource.absoluteString).textSelection(.enabled)
@@ -93,7 +94,7 @@ struct NativeMCPOAuthReviewEditor: View {
                     }
                 }
             }
-            Text("A private browser session is requested. Tandem keeps this sign-in only in memory, and it ends after a while or when Tandem quits. Disconnect ends it right away.")
+            Text("A private browser session is requested. Tandem keeps this sign-in only in memory, for up to one hour. Disconnect or quitting Tandem ends it right away.")
                 .font(.caption).foregroundStyle(Theme.textSecondary)
             if let progress = manager.oauthProgress[review.configuration.id] { Text(progress).font(.callout) }
             if let browser = manager.oauthFlows[review.configuration.id]?.browser as? NativeMCPOAuthFixtureBrowser {

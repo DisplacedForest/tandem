@@ -379,10 +379,23 @@ enum Shot {
                     .environment(\.colorScheme, .dark)
                     .foregroundStyle(Theme.textPrimary)
             )
+        } else if view == "integrations-sign-in", let seed = Optional(IntegrationsShotFixture.store(variant: "integrations-signed-in")) {
+            seed.config.nativeMCP.authority.access.replaceServers(seed.config.nativeMCP.servers.map(\.configuration))
+            content = AnyView(
+                Group {
+                    if let review = seed.config.nativeMCP.beginOAuthReview(IntegrationsShotFixture.wikiID) {
+                        NativeMCPOAuthReviewEditor(manager: seed.config.nativeMCP, review: review)
+                    }
+                }
+                .background(Theme.surface)
+                .frame(width: size.width, height: size.height)
+                .background(Theme.bg)
+                .environment(\.renderSafe, true)
+            )
         } else if view.hasPrefix("integrations-manage"), let seed = integrationsSeed {
             content = AnyView(
-                IntegrationsManageSheet(target: IntegrationsManageTarget(id: IntegrationsShotFixture.codeID, existing: true),
-                                        filled: IntegrationsShotFixture.codeRow) { _ in }
+                IntegrationsManageSheet(target: IntegrationsManageTarget(id: view == "integrations-manage-reports" ? IntegrationsShotFixture.reportsID : IntegrationsShotFixture.codeID, existing: true),
+                                        filled: view == "integrations-manage-reports" ? IntegrationsShotFixture.reportsRow : IntegrationsShotFixture.codeRow) { _ in }
                     .background(Theme.surface)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
@@ -684,7 +697,7 @@ enum Shot {
                  "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
                  "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow", "artifacts-collapsed": section = .artifacts
             case "scheduled", "scheduled-paused", "scheduled-caught-up", "scheduled-anything": section = .scheduled
-            case "integrations", "integrations-public", "integrations-empty", "integrations-changes": section = .integrations
+            case "integrations", "integrations-public", "integrations-empty", "integrations-changes", "integrations-reports", "integrations-reconnecting", "integrations-failed", "integrations-signed-in": section = .integrations
             case "memory": section = .memory
             case "companion-connection":
                 section = .vera

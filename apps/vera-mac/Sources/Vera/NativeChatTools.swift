@@ -279,8 +279,8 @@ struct NativeToolDefinition: Sendable {
             throw NativeToolError.invalidArguments("Expected a JSON object")
         }
         if let argumentValidator {
-            try NativeMCPWireJSON.validate(data, maximumBytes: 16384)
-            guard data.count <= 16384, let values = try NativeJSONValue.piRead(data).piObject else { throw NativeToolError.invalidArguments("Expected a bounded JSON object") }
+            try NativeMCPWireJSON.validate(data, maximumBytes: NativeMCPSDKConnection.responseBytes)
+            guard let values = try NativeJSONValue.piRead(data, maximumBytes: NativeMCPSDKConnection.responseBytes).piObject else { throw NativeToolError.invalidArguments("Expected a bounded JSON object") }
             do { try argumentValidator(values) } catch NativeToolError.invalidArguments(let detail) {
                 throw NativeToolError.invalidArguments(detail)
             } catch {
@@ -325,8 +325,6 @@ struct NativeToolIssue: Equatable, Sendable {
         case unsupportedSchema
         case unsupportedOutputSchema
         case invalidExample
-        case descriptionTooLong
-        case tooManyTools
     }
 
     let name: String

@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 enum NativeMCPAddress {
-    static let publicNeedsHTTPS = "A service outside your own network needs an https address."
+    static let publicNeedsHTTPS = "A plain http address needs to be on your own network. Otherwise use https."
     static let listNeedsHTTPS = "The service address must be a plain https address."
     static let unreadable = "Enter the service's full address, starting with https:// or http://."
     static let extras = "The service address can't include a sign-in, a question mark part or a # part."
@@ -17,6 +17,8 @@ enum NativeMCPAddress {
         guard isLocal(host) else { throw NativeToolError.failed(publicNeedsHTTPS) }
     }
 
+    static let localEndings = [".local", ".lan", ".home.arpa"]
+
     static func isLocal(_ host: String) -> Bool {
         let bare = OutboundGuard.normalized(host)
         var v4 = in_addr()
@@ -30,8 +32,11 @@ enum NativeMCPAddress {
         var v6 = in6_addr()
         let unscoped = bare.split(separator: "%", maxSplits: 1).first.map(String.init) ?? bare
         if inet_pton(AF_INET6, unscoped, &v6) == 1 {
-            return withUnsafeBytes(of: &v6) { $0[0] == 0xfe && $0[1] & 0xc0 == 0x80 }
+            return withUnsafeBytes(of: &v6) { ($0[0] == 0xfe && $0[1] & 0xc0 == 0x80) || $0[0] & 0xfe == 0xfc }
         }
-        return bare.hasSuffix(".local") && bare.count > ".local".count
+        if localEndings.contains(where: { bare.hasSuffix($0) && bare.count > $0.count }) { return true }
+        var legacy = in_addr()
+        return !bare.isEmpty && inet_aton(bare, &legacy) == 0
+            && bare.utf8.allSatisfy { (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }
     }
 }

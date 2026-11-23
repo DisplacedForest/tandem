@@ -39,7 +39,6 @@ final class ConfigStore: ObservableObject {
     @Published var companionShortcutProblem: String?
     @Published var companionActiveShortcut: CompanionShortcut?
     private var nativeMCPReplacement: Task<Void, Never>?
-    static let nativeMCPServerLimit = 8
     static let tokenLost = "The change couldn't be saved, and the service's token couldn't be put back in your keychain. The service needs its token again."
     @Published private var nativeAPIKeys: [String: String]
     @Published var visionBridgeAPIKey: String {
@@ -172,9 +171,6 @@ final class ConfigStore: ObservableObject {
 
     func addNativeMCPServer(_ row: [String: Any]) throws {
         let rows = nativeMCPServerRows
-        guard rows.count < Self.nativeMCPServerLimit else {
-            throw NativeToolError.failed("You can connect up to eight services. Remove one to add another.")
-        }
         try commitNativeMCPServers(rows + [row], pruning: [])
     }
 
@@ -202,6 +198,17 @@ final class ConfigStore: ObservableObject {
         do { try commitNativeMCPServers(rows, pruning: []); return true } catch { return false }
     }
 
+    func setNativeMCPTool(_ record: NativeMCPToolRecord, enabled: Bool) throws {
+        var rows = nativeMCPServerRows
+        guard let index = rows.firstIndex(where: { ($0["id"] as? String)?.lowercased() == record.server.id }) else {
+            throw NativeToolError.failed("That service is no longer connected.")
+        }
+        var off = Set(rows[index]["off_tools"] as? [String] ?? [])
+        if enabled { off.remove(record.remoteName) } else { off.insert(record.remoteName) }
+        if off.isEmpty { rows[index].removeValue(forKey: "off_tools") } else { rows[index]["off_tools"] = off.sorted() }
+        try commitNativeMCPServers(rows, pruning: [])
+    }
+
     func removeNativeMCPServer(id: String) throws {
         let id = id.lowercased()
         let rows = nativeMCPServerRows
@@ -218,9 +225,6 @@ final class ConfigStore: ObservableObject {
             let kept = asks.filter(reads.contains)
             if kept.isEmpty { row.removeValue(forKey: "asks_tools") } else { row["asks_tools"] = kept }
             return row
-        }
-        guard rows.count <= Self.nativeMCPServerLimit else {
-            throw NativeToolError.failed("You can connect up to eight services. Remove one to add another.")
         }
         let (servers, failure) = NativeMCPServerConfiguration.load(["native_mcp_servers": rows])
         if let failure { throw NativeToolError.failed(failure) }

@@ -211,7 +211,7 @@ enum NativeCredentialLifecycleFixture {
         let credentials = KeychainNativeCredentialStore(operations: operations)
         let raw = configuration()
         let config = ConfigStore(credentialStore: credentials, readConfiguration: { raw }, writeConfiguration: { _ in })
-        try NativeTaskFixture.require(reads == 2 && prohibitedInteraction == 2 && writes == 0,
+        try NativeTaskFixture.require(reads == 3 && prohibitedInteraction == 3 && writes == 0,
             "Every startup credential read must prohibit interaction without changing saved items")
         try NativeTaskFixture.require(config.credentialError != nil && config.activeNativeAPIKey.isEmpty,
             "Denied startup access must return an unavailable state so the application can open")
@@ -219,7 +219,7 @@ enum NativeCredentialLifecycleFixture {
         try config.save()
         try NativeTaskFixture.require(writes == 0, "An unavailable startup credential must survive unrelated settings saves")
         try NativeTaskFixture.require(try credentials.read(for: "fixture-profile") == "synthetic-explicit-read"
-            && prohibitedInteraction == 2 && credentials.allowsInteraction,
+            && prohibitedInteraction == 3 && credentials.allowsInteraction,
             "Startup read policy must not mutate the existing explicit credential path")
         try NativeTaskFixture.require(interactionAllowed, "Denied startup reads must restore the prior process policy")
         readStatus = errSecSuccess
