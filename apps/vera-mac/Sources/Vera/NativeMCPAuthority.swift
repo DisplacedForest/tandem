@@ -9,6 +9,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     let actTools: Set<String>
     private(set) var asksTools: Set<String>
     private(set) var offTools: Set<String>
+    private(set) var staysConnected: Bool
     let scopes: Set<String>
     let timeout: TimeInterval
     enum Authentication: String, Sendable { case none, bearer, oauth }
@@ -16,7 +17,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     let oauth: NativeMCPOAuthConfiguration?
     let publisher: String?
     let sourceURL: URL?
-    init(id: String, name: String, endpoint: URL, readTools: Set<String>, actTools: Set<String> = [], asksTools: Set<String> = [], offTools: Set<String> = [], scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, oauth: NativeMCPOAuthConfiguration? = nil, publisher: String? = nil, sourceURL: URL? = nil) throws {
+    init(id: String, name: String, endpoint: URL, readTools: Set<String>, actTools: Set<String> = [], asksTools: Set<String> = [], offTools: Set<String> = [], staysConnected: Bool = false, scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, oauth: NativeMCPOAuthConfiguration? = nil, publisher: String? = nil, sourceURL: URL? = nil) throws {
         try NativeMCPAddress.validate(endpoint, personSupplied: true)
         guard UUID(uuidString: id) != nil, !name.isEmpty, name.utf8.count <= 100,
               readTools.union(actTools).allSatisfy({ !$0.isEmpty && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }),
@@ -28,7 +29,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
         self.publisher = publisher; self.sourceURL = sourceURL
         self.oauth = oauth
         self.id = id.lowercased(); self.name = name; self.endpoint = endpoint
-        self.readTools = readTools; self.actTools = actTools; self.asksTools = asksTools.intersection(readTools); self.offTools = offTools; self.scopes = scopes; self.timeout = timeout; self.authentication = authentication
+        self.readTools = readTools; self.actTools = actTools; self.asksTools = asksTools.intersection(readTools); self.offTools = offTools; self.staysConnected = staysConnected && authentication == .none; self.scopes = scopes; self.timeout = timeout; self.authentication = authentication
     }
     static func load(_ raw: [String: Any]) -> ([Self], String?) {
         guard let value = raw["native_mcp_servers"] else { return ([], nil) }
@@ -36,11 +37,11 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
         do {
             var ids = Set<String>()
             let servers = try rows.map { row -> Self in
-                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "act_tools", "asks_tools", "off_tools", "scopes", "timeout_seconds", "authentication", "oauth", "publisher", "source_url"]),
+                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "act_tools", "asks_tools", "off_tools", "stays_connected", "scopes", "timeout_seconds", "authentication", "oauth", "publisher", "source_url"]),
                       let id = row["id"] as? String, let name = row["name"] as? String,
                       let url = row["url"] as? String, let endpoint = URL(string: url),
                       row["read_tools"] == nil || row["read_tools"] is [String], row["act_tools"] == nil || row["act_tools"] is [String],
-                      row["asks_tools"] == nil || row["asks_tools"] is [String], row["off_tools"] == nil || row["off_tools"] is [String],
+                      row["asks_tools"] == nil || row["asks_tools"] is [String], row["off_tools"] == nil || row["off_tools"] is [String], row["stays_connected"] == nil || row["stays_connected"] is Bool,
                       row["read_tools"] == nil && row["act_tools"] == nil || !((row["read_tools"] as? [String] ?? []) + (row["act_tools"] as? [String] ?? [])).isEmpty,
                       row["scopes"] == nil || row["scopes"] is [String],
                       row["timeout_seconds"] == nil || row["timeout_seconds"] is Double,
@@ -49,7 +50,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
                       row["publisher"] == nil || row["publisher"] is String,
                       row["source_url"] == nil || (row["source_url"] as? String).flatMap(URL.init(string:)) != nil else { throw NativeToolError.unavailable }
                 let oauth = row["oauth"] == nil ? nil : try NativeMCPOAuthConfiguration.load(row["oauth"])
-                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(row["read_tools"] as? [String] ?? []), actTools: Set(row["act_tools"] as? [String] ?? []), asksTools: Set(row["asks_tools"] as? [String] ?? []), offTools: Set(row["off_tools"] as? [String] ?? []), scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth, publisher: row["publisher"] as? String, sourceURL: (row["source_url"] as? String).flatMap(URL.init(string:)))
+                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(row["read_tools"] as? [String] ?? []), actTools: Set(row["act_tools"] as? [String] ?? []), asksTools: Set(row["asks_tools"] as? [String] ?? []), offTools: Set(row["off_tools"] as? [String] ?? []), staysConnected: row["stays_connected"] as? Bool ?? false, scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth, publisher: row["publisher"] as? String, sourceURL: (row["source_url"] as? String).flatMap(URL.init(string:)))
                 guard ids.insert(server.id).inserted else { throw NativeToolError.unavailable }
                 return server
             }
@@ -67,7 +68,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
         return NativeMCPToolState.classify(read: readTools.contains { $0.utf8.elementsEqual(name.utf8) }, act: actTools.contains { $0.utf8.elementsEqual(name.utf8) },
                                     remembered: asksTools.contains { $0.utf8.elementsEqual(name.utf8) }, hints: hints)
     }
-    func sameService(_ other: Self) -> Bool { asking([]).turningOff([]) == other.asking([]).turningOff([]) }
+    func sameService(_ other: Self) -> Bool { asking([]).turningOff([]).staying(false) == other.asking([]).turningOff([]).staying(false) }
     func carried(_ previous: Self) -> Set<String> { previous.id == id && previous.endpoint == endpoint ? previous.asksTools : [] }
     func asking(_ names: Set<String>) -> Self {
         var copy = self
@@ -77,6 +78,11 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     func turningOff(_ names: Set<String>) -> Self {
         var copy = self
         copy.offTools = names
+        return copy
+    }
+    func staying(_ value: Bool) -> Self {
+        var copy = self
+        copy.staysConnected = value
         return copy
     }
     func newlyMarked(_ tools: [NativeMCPToolRecord]) -> Set<String> {
@@ -615,6 +621,9 @@ final class NativeMCPManager: ObservableObject {
     static let tokenUnused = "Tandem couldn't connect with the new token, so the saved one was kept."
     @Published private(set) var savedTokens: Set<String>
     let reconnectDelays: [Duration]
+    static let disconnectUnsaved = "This couldn't be saved, so the service connects again when Tandem opens. Choose Connect, then Disconnect to try again."
+    private var disconnectStatuses: [String: String] = [:]
+    var keepsConnection: ((String, Bool) -> Bool)?
     private let keeper: NativeMCPTokenKeeper
     init(servers: [NativeMCPServerConfiguration], enabled: Set<String> = [], configurationError: String? = nil, factory: NativeMCPAuthority.Factory? = nil, authenticatedFactory: NativeMCPAuthority.AuthenticatedFactory? = nil, oauthTransport: any NativeMCPOAuthTransport = NativeMCPOAuthHTTPTransport(), oauthBrowserFactory: @escaping @MainActor () -> any NativeMCPOAuthBrowser = { NativeMCPOAuthSystemBrowser() }, oauthLifetimeForFixture: TimeInterval? = nil, tokens: any NativeCredentialStore = NativeCredentialFixtureStore(), prunesTokens: Bool = false, reconnectDelays: [Duration] = [.zero, .seconds(5), .seconds(15), .seconds(60), .seconds(300)]) {
         self.oauthTransport = oauthTransport
@@ -643,12 +652,21 @@ final class NativeMCPManager: ObservableObject {
     func connect(_ id: String, token: String? = nil) async {
         guard let server = servers.first(where: { $0.id == id })?.configuration else { return }
         guard server.authentication != .oauth else { return }
+        keeper.resume(id)
+        let turn = keeper.turn(id)
+        if let pending = keeper.inFlight(id) {
+            await pending.value
+            guard keeper.isCurrent(turn, id: id) else { return }
+        }
         guard server.authentication == .bearer else {
-            await authority.connect(id)
+            await openPlain(id)
+            if keeper.isCurrent(turn, id: id), let state = authority.access.snapshot().first(where: { $0.id == id }),
+               state.connected, state.configuration.sameService(server), !state.configuration.staysConnected {
+                _ = keepsConnection?(id, true)
+            }
             refresh()
             return
         }
-        keeper.resume(id)
         if let token { await open(server, token: token, saving: true) }
         else if let saved = keeper.read(server) { await open(server, token: saved, saving: false) }
         else {
@@ -657,6 +675,11 @@ final class NativeMCPManager: ObservableObject {
             Self.markUnremoved(keeper, authority.access)
         }
         refresh()
+    }
+    private func openPlain(_ id: String) async {
+        await authority.connect(id)
+        guard keeper.isPaused(id), let state = authority.access.snapshot().first(where: { $0.id == id }), state.connected || state.connecting else { return }
+        await authority.disconnect(id, status: disconnectStatuses[id] ?? "Not connected", expectedGeneration: state.generation)
     }
     func hasSavedToken(_ id: String) -> Bool { savedTokens.contains(id) }
     func replaceToken(_ id: String, with token: String) async -> String? {
@@ -715,12 +738,19 @@ final class NativeMCPManager: ObservableObject {
         return result
     }
     private func wantsConnection(_ id: String) -> Bool {
-        guard keeper.wants(id), let state = authority.access.snapshot().first(where: { $0.id == id }) else { return false }
-        return state.configuration.authentication == .bearer && !state.connected && !state.connecting && !state.refused
+        guard let state = authority.access.snapshot().first(where: { $0.id == id }) else { return false }
+        return keeps(state) && !state.connected && !state.connecting && !state.refused
     }
     var startedToolIDs: Set<String> { authority.access.startedIDs() }
+    func keeps(_ server: NativeMCPServerState) -> Bool {
+        switch server.configuration.authentication {
+        case .bearer: return keeper.wants(server.id)
+        case .none: return server.configuration.staysConnected && !keeper.isPaused(server.id)
+        case .oauth: return false
+        }
+    }
     func reconnects(_ server: NativeMCPServerState) -> Bool {
-        server.configuration.authentication == .bearer && !server.connected && !server.refused && keeper.wants(server.id)
+        keeps(server) && !server.connected && !server.refused
     }
     private static func markUnremoved(_ keeper: NativeMCPTokenKeeper, _ access: NativeMCPAccess) {
         for var state in access.snapshot() where keeper.unremoved.contains(state.id) && !state.connected {
@@ -733,27 +763,44 @@ final class NativeMCPManager: ObservableObject {
         for state in servers {
             if state.connected { keeper.settled(state.id) }
             guard wantsConnection(state.id) else { continue }
-            keeper.retry(state.id, delays: reconnectDelays) { [weak self] in
-                guard let self, self.wantsConnection(state.id) else { return }
-                guard let server = self.authority.access.snapshot().first(where: { $0.id == state.id })?.configuration,
-                      let token = self.keeper.read(server) else {
-                    self.savedTokens = self.keeper.saved
-                    Self.markUnremoved(self.keeper, self.authority.access)
-                    return
-                }
-                await self.open(server, token: token, saving: false)
-            } then: { [weak self] in self?.refresh() }
+            keeper.retry(state.id, delays: reconnectDelays) { [weak self] in await self?.attempt(state.id) } then: { [weak self] in self?.refresh() }
         }
+    }
+    private func attempt(_ id: String) async {
+        guard wantsConnection(id), let server = authority.access.snapshot().first(where: { $0.id == id })?.configuration else { return }
+        guard server.authentication == .bearer else {
+            await openPlain(id)
+            return
+        }
+        guard let token = keeper.read(server) else {
+            savedTokens = keeper.saved
+            Self.markUnremoved(keeper, authority.access)
+            return
+        }
+        await open(server, token: token, saving: false)
+    }
+    func settleReconnects(scope: String) async {
+        refresh()
+        let waiting = servers.filter { $0.configuration.scopes.contains(scope) && reconnects($0) }.map(\.id)
+        let runs = waiting.map { id in
+            keeper.runNow(id) { [weak self] in await self?.attempt(id) } then: { [weak self] in self?.refresh() }
+        }
+        for run in runs { await run.value }
     }
     func disconnect(_ id: String) async {
         let state = authority.access.snapshot().first(where: { $0.id == id })
         let owner = authority.access.oauthOwner(id)
         cancelOAuthLocally(id)
         var status = "Not connected"
+        if state?.configuration.authentication == NativeMCPServerConfiguration.Authentication.none {
+            keeper.pause(id)
+            if state?.configuration.staysConnected == true, keepsConnection?(id, false) == false { status = Self.disconnectUnsaved }
+        }
         if state?.configuration.authentication == .bearer {
             do { try keeper.forget(id) } catch { status = Self.tokenUnremoved }
             savedTokens = keeper.saved
         }
+        disconnectStatuses[id] = status
         await authority.disconnect(id, status: status, oauth: owner, expectedGeneration: owner == nil && state?.configuration.authentication == .oauth ? state?.generation : nil)
         refresh()
     }
