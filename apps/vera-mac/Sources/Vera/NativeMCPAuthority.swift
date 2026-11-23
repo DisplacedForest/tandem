@@ -350,7 +350,7 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
     }
     func connect(_ id: String, authorization: NativeMCPAuthorization? = nil, oauth: NativeMCPOAuthConnectionLifetime? = nil) async {
         if let authorization, authorization.revoked { return }
-        guard var state = access.snapshot().first(where: { $0.id == id }) else { authorization?.revoke(); return }
+        guard var state = access.snapshot().first(where: { $0.id == id }), !state.configuration.locked else { authorization?.revoke(); return }
         if state.configuration.authentication == .oauth {
             guard let oauth, oauth.isActive, oauth.session != nil, oauth.configuration.sameService(state.configuration), access.oauthOwner(id) === oauth else { authorization?.revoke(); return }
         } else if oauth != nil { authorization?.revoke(); return }
@@ -693,7 +693,9 @@ final class NativeMCPManager: ObservableObject {
     }
     func hasSavedToken(_ id: String) -> Bool { savedTokens.contains(id) }
     func replaceToken(_ id: String, with token: String) async -> String? {
+        if servers.first(where: { $0.id == id })?.configuration.locked == true, unlock?(id) != true { return Self.lockedAddress }
         guard let server = servers.first(where: { $0.id == id })?.configuration, server.authentication == .bearer else { return Self.tokenUnused }
+        guard !server.locked else { return Self.lockedAddress }
         let turn = keeper.pause(id)
         await authority.disconnect(id)
         refresh()

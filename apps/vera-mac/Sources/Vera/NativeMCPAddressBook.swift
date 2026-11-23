@@ -117,10 +117,10 @@ extension NativeMCPServerConfiguration {
     private var hiddenSegments: [String] {
         let raw = endpoint.path(percentEncoded: true).split(separator: "/").map(String.init)
         return Set(raw + raw.compactMap(\.removingPercentEncoding)).filter { segment in
-            let letters = segment.contains(where: \.isLetter)
-            if segment.count >= 8, letters, segment.contains(where: \.isNumber) { return true }
-            return segment.count >= 12 && segment.allSatisfy { $0.isLetter || $0.isNumber }
-                && segment.dropFirst().contains(where: \.isUppercase) && segment.contains(where: \.isLowercase)
+            segment.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains { part in
+                guard part.count >= 8, part.contains(where: \.isLetter) else { return false }
+                return part.contains(where: \.isNumber) || (part.count >= 12 && part.dropFirst().contains(where: \.isUppercase) && part.contains(where: \.isLowercase))
+            }
         }.sorted { $0.count > $1.count }
     }
 
@@ -135,11 +135,13 @@ extension NativeMCPServerConfiguration {
     func redacted(_ text: String) -> String {
         guard authentication != .oauth, !["", "/"].contains(endpoint.path(percentEncoded: true)) else { return text }
         let full = endpoint.absoluteString
-        var spellings = [full, full.removingPercentEncoding ?? full]
+        let schemeless = full.range(of: "://").map { String(full[$0.upperBound...]) } ?? full
+        let portless = (endpoint.host(percentEncoded: true) ?? "") + endpoint.path(percentEncoded: true)
+        var spellings = [full, schemeless, portless].flatMap { [$0, $0.removingPercentEncoding ?? $0] }
         spellings += spellings.filter { $0.hasSuffix("/") }.map { String($0.dropLast()) }
         var result = text
         for spelling in Set(spellings).sorted(by: { $0.count > $1.count }) {
-            result = result.replacingOccurrences(of: spelling, with: source, options: .caseInsensitive)
+            result = result.replacingOccurrences(of: spelling, with: spelling.contains("://") ? source : endpoint.host ?? "", options: .caseInsensitive)
         }
         for path in hiddenPaths {
             let pattern = "(?<![A-Za-z0-9_-])" + NSRegularExpression.escapedPattern(for: path) + "(?![A-Za-z0-9_-])"
@@ -166,6 +168,7 @@ extension NativeMCPServerConfiguration {
         case .object(let fields):
             return .object(Dictionary(uniqueKeysWithValues: fields.map { key, value in
                 if ["description", "title", "$comment"].contains(key), case .string = value { return (key, redacted(value)) }
+                if ["default", "examples"].contains(key) { return (key, redacted(value)) }
                 return (key, redactedSchema(value))
             }))
         default: return schema

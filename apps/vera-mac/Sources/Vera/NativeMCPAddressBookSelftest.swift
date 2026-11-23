@@ -110,6 +110,11 @@ enum NativeMCPAddressBookSelftest {
         try check(manager.servers.count == 1 && manager.servers[0].configuration.name == "House" && manager.servers[0].status == NativeMCPManager.lockedAddress, "A locked keychain says what to do")
         await manager.connect(id)
         try check(!manager.servers[0].connected && keys.values == before, "Nothing is lost while it's locked")
+        let replaced = await manager.replaceToken(id, with: "synthetic-other-token")
+        try check(replaced == NativeMCPManager.lockedAddress && keys.values == before && !manager.servers[0].connected, "A token is never sent to the bare host")
+        let lease = try NativeMCPAuthorization(serverID: id, endpoint: manager.servers[0].configuration.endpoint, token: "synthetic-other-token")
+        await manager.authority.connect(id, authorization: lease)
+        try check(lease.revoked && !manager.servers[0].connected, "Nothing connects to a service whose address is locked")
         let changed = IntegrationsManageSheet.row(config.nativeMCPServerRows[0], id: id, name: "Home", endpoint: config.nativeMCPServerRows[0]["url"] as? String ?? "", reads: "", acts: "",
                                                   scopes: ["focused"], seconds: 5, authentication: .bearer)
         try config.updateNativeMCPServer(changed)
@@ -187,6 +192,14 @@ enum NativeMCPAddressBookSelftest {
             try check(!short.redacted(text).contains("a7f29c"), "A quoted path gives nothing away: \(short.redacted(text))")
         }
         let wordy = try NativeMCPServerConfiguration(id: id, name: "Wordy", endpoint: URL(string: "https://service.example/home-automations")!, readTools: [])
+        let versioned = try NativeMCPServerConfiguration(id: id, name: "Versioned", endpoint: URL(string: "https://service.example/home-automations-v2")!, readTools: [])
+        try check(versioned.redacted("Your home-automations-v2 are on") == "Your home-automations-v2 are on", "A versioned word isn't hidden")
+        let single = try NativeMCPServerConfiguration(id: id, name: "Single", endpoint: URL(string: "https://service.example:8443/a7f29c")!, readTools: [])
+        for text in ["Request to service.example/a7f29c failed", "service.example:8443/a7f29c", "GET /a7f29c"] {
+            try check(!single.redacted(text).contains("a7f29c"), "An address without its scheme gives nothing away: \(single.redacted(text))")
+        }
+        let offered = NativeJSONValue.object(["properties": .object(["at": .object(["default": .string("https://service.example:8443/a7f29c"), "examples": .array([.string("service.example/a7f29c")])])])])
+        try check(!String(decoding: try single.redactedSchema(offered).piData(), as: UTF8.self).contains("a7f29c"), "A default or example gives nothing away")
         try check(wordy.redacted("Your home-automations are on") == "Your home-automations are on", "A long ordinary word isn't hidden")
         let schema = NativeJSONValue.object(["type": .string("object"), "properties": .object([secret: .object(["enum": .array([.string(secret)]), "description": .string("At /" + secret)])])])
         try check(manager.servers[0].configuration.redactedSchema(schema).pi("properties").pi(secret).pi("enum") == .array([.string(secret)]), "What a call is checked against isn't changed")
