@@ -118,8 +118,8 @@ extension NativeMCPServerConfiguration {
         let raw = endpoint.path(percentEncoded: true).split(separator: "/").map(String.init)
         return Set(raw + raw.compactMap(\.removingPercentEncoding)).filter { segment in
             segment.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains { part in
-                guard part.count >= 8, part.contains(where: \.isLetter) else { return false }
-                return part.contains(where: \.isNumber) || (part.count >= 12 && part.dropFirst().contains(where: \.isUppercase) && part.contains(where: \.isLowercase))
+                guard part.count >= 12, part.contains(where: \.isLetter) else { return false }
+                return part.contains(where: \.isNumber) || (part.dropFirst().contains(where: \.isUppercase) && part.contains(where: \.isLowercase))
             }
         }.sorted { $0.count > $1.count }
     }
@@ -129,6 +129,7 @@ extension NativeMCPServerConfiguration {
         var spellings = [raw, raw.removingPercentEncoding ?? raw]
         spellings += spellings.filter { $0.hasSuffix("/") }.map { String($0.dropLast()) }
         spellings += spellings.map { String($0.dropFirst()) }.filter { $0.dropLast($0.hasSuffix("/") ? 1 : 0).contains("/") }
+        spellings += spellings.map { $0.replacingOccurrences(of: "/", with: "\\/") }
         return Set(spellings.filter { $0.count > 1 }).sorted { $0.count > $1.count }
     }
 
@@ -139,13 +140,14 @@ extension NativeMCPServerConfiguration {
         let portless = (endpoint.host(percentEncoded: true) ?? "") + endpoint.path(percentEncoded: true)
         var spellings = [full, schemeless, portless].flatMap { [$0, $0.removingPercentEncoding ?? $0] }
         spellings += spellings.filter { $0.hasSuffix("/") }.map { String($0.dropLast()) }
+        spellings += spellings.map { $0.replacingOccurrences(of: "/", with: "\\/") }
         var result = text
         for spelling in Set(spellings).sorted(by: { $0.count > $1.count }) {
-            result = result.replacingOccurrences(of: spelling, with: spelling.contains("://") ? source : endpoint.host ?? "", options: .caseInsensitive)
+            result = result.replacingOccurrences(of: spelling, with: spelling.contains("://") || spelling.contains(":\\/\\/") ? source : endpoint.host ?? "", options: .caseInsensitive)
         }
         for path in hiddenPaths {
             let pattern = "(?<![A-Za-z0-9_-])" + NSRegularExpression.escapedPattern(for: path) + "(?![A-Za-z0-9_-])"
-            result = result.replacingOccurrences(of: path.hasPrefix("/") ? pattern.replacingOccurrences(of: "(?<![A-Za-z0-9_-])", with: "(?<![A-Za-z_-])") : pattern,
+            result = result.replacingOccurrences(of: path.hasPrefix("/") || path.hasPrefix("\\") ? pattern.replacingOccurrences(of: "(?<![A-Za-z0-9_-])", with: "(?<![A-Za-z_-])") : pattern,
                                                  with: "[hidden]", options: .regularExpression)
         }
         for segment in hiddenSegments { result = result.replacingOccurrences(of: segment, with: "[hidden]") }
@@ -160,6 +162,11 @@ extension NativeMCPServerConfiguration {
             return .object(Dictionary(fields.map { (redacted($0.key), redacted($0.value)) }, uniquingKeysWith: { first, _ in first }))
         default: return value
         }
+    }
+
+    func quotesAddress(_ schema: NativeJSONValue) -> Bool {
+        let shown = redactedSchema(schema)
+        return redacted(shown) != shown
     }
 
     func redactedSchema(_ schema: NativeJSONValue) -> NativeJSONValue {

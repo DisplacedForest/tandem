@@ -440,8 +440,9 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
             let outputValidator = output.flatMap { try? NativeMCPJSONSchema($0) }
             let declared = tool.declaresOutput || tool.outputSchema != nil
             let outputReason = declared && outputValidator == nil ? "This tool declares a result shape Tandem can't check." : nil
+            let addressReason = server.quotesAddress(tool.inputSchema) ? "This tool's settings include the service's address, so it isn't offered." : nil
             return NativeMCPToolRecord(id: server.toolID(tool.name), server: server, generation: generation, remoteName: tool.name,
-                description: server.redacted(tool.description), schema: server.redactedSchema(tool.inputSchema), validator: validator, reason: reason ?? outputReason, hints: tool.hints,
+                description: server.redacted(tool.description), schema: server.redactedSchema(tool.inputSchema), validator: validator, reason: reason ?? outputReason ?? addressReason, hints: tool.hints,
                 title: title, outputSchema: output, outputValidator: outputValidator)
         }
     }
@@ -546,13 +547,13 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
             let result = try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
             try Task.checkCancellation()
             guard access.allowed(record, scope: scope, revision: revision) else { throw NativeMCPPermissionRevoked() }
-            if result.pi("isError") == .bool(true) { throw NativeMCPServiceFailure(text: Self.serviceText(result)) }
+            if result.pi("isError") == .bool(true) { throw NativeMCPServiceFailure(text: Self.serviceText(record.server.redacted(result))) }
             if let output = record.outputValidator, result.pi("structuredContent") != .null {
                 do { try output.validateResult(result.pi("structuredContent")) } catch { throw NativeMCPMismatchedReply() }
             }
             return NativeJSONValue.object(["source": .string(record.server.source), "content": record.server.redacted(result)])
         } catch {
-            if let failure = error as? NativeMCPServiceFailure { throw NativeToolError.failed(Self.serviceFailure(failure.text.map(record.server.redacted))) }
+            if let failure = error as? NativeMCPServiceFailure { throw NativeToolError.failed(Self.serviceFailure(failure.text)) }
             if error is NativeMCPMismatchedReply {
                 throw NativeToolError.failed(Self.mismatch + (record.state == .change ? " The change may have been made, so check before trying it again." : ""))
             }

@@ -198,6 +198,21 @@ enum NativeMCPAddressBookSelftest {
         for text in ["Request to service.example/a7f29c failed", "service.example:8443/a7f29c", "GET /a7f29c"] {
             try check(!single.redacted(text).contains("a7f29c"), "An address without its scheme gives nothing away: \(single.redacted(text))")
         }
+        for text in [#"{"url":"https:\/\/service.example:8443\/mcp\/a7f29c"}"#, #"\/mcp\/a7f29c"#, #"service.example\/mcp\/a7f29c"#] {
+            try check(!short.redacted(text).contains("a7f29c"), "An escaped address gives nothing away: \(short.redacted(text))")
+        }
+        let office = try NativeMCPServerConfiguration(id: id, name: "Office", endpoint: URL(string: "https://service.example/office365/mcp")!, readTools: [])
+        try check(office.redacted("Your office365 mailbox") == "Your office365 mailbox", "A product name isn't hidden")
+        let tied = NativeMCPChangesConnection([NativeMCPDiscoveredTool(name: "tied", description: "Tied", inputSchema: .object(["type": .string("object"), "properties": .object(["at": .object(["enum": .array([.string("https://service.example:8443/mcp/a7f29c")])])])]))])
+        let tiedManager = NativeMCPManager(servers: [short], factory: { _ in tied })
+        await tiedManager.connect(id)
+        try check(tiedManager.authority.definitions(scope: "focused").isEmpty && tiedManager.servers[0].tools.first?.reason == "This tool's settings include the service's address, so it isn't offered.", "A tool tied to the address is held back and says why")
+        let long = NativeMCPChangesConnection([NativeMCPChangesSelftest.tool("look", readOnly: true)])
+        await long.respond(.object(["isError": .bool(true), "content": .array([.object(["type": .string("text"), "text": .string(String(repeating: "x", count: 365) + " https://service.example:8443/mcp/a7f29c")])])]))
+        let longManager = NativeMCPManager(servers: [short], factory: { _ in long })
+        await longManager.connect(id)
+        do { _ = try await longManager.authority.definitions(scope: "focused")[0].execute([:]); throw NativeMCPTransportError.network }
+        catch NativeToolError.failed(let text) { try check(!text.contains("mcp/a7"), "A cut error gives nothing away: \(text.suffix(60))") }
         let offered = NativeJSONValue.object(["properties": .object(["at": .object(["default": .string("https://service.example:8443/a7f29c"), "examples": .array([.string("service.example/a7f29c")])])])])
         try check(!String(decoding: try single.redactedSchema(offered).piData(), as: UTF8.self).contains("a7f29c"), "A default or example gives nothing away")
         try check(wordy.redacted("Your home-automations are on") == "Your home-automations are on", "A long ordinary word isn't hidden")
