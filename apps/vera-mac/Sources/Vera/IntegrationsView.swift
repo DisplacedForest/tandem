@@ -15,17 +15,28 @@ enum IntegrationsTab: String, CaseIterable, Identifiable, Hashable {
 }
 
 enum IntegrationsText {
-    static let scopeKeys = ["focused", "assistant", "worker"]
+    static let companionScope = "assistant"
+    static let ownWorkScope = "worker"
+    static let companionScopes: Set<String> = [companionScope, ownWorkScope]
+    static let scopeKeys = ["focused", companionScope, ownWorkScope]
+
+    static let ownWork = "Work {name} does on its own"
 
     static func scopeOrder(_ companion: CompanionSubject) -> [(key: String, title: String)] {
-        [("focused", "Focused chats"), ("assistant", companion.leading), ("worker", "Research and documents")]
+        [("focused", "Focused chats"), ("assistant", companion.leading), (ownWorkScope, CompanionSentence.plain(ownWork, name: companion.name))]
     }
 
     static func scopes(_ scopes: Set<String>) -> CompanionLine {
         let titles = scopeOrder(CompanionSubject(nil)).filter { scopes.contains($0.key) }
-            .map { (scope: (key: String, title: String)) -> String in scope.key == "assistant" ? CompanionSentence.placeholder : scope.title }
+            .map { (scope: (key: String, title: String)) -> String in
+                switch scope.key {
+                case companionScope: return CompanionSentence.placeholder
+                case ownWorkScope: return ownWork
+                default: return scope.title
+                }
+            }
         let text = titles.joined(separator: ", ")
-        return scopes.contains("assistant") ? .named(text) : .literal(text)
+        return !scopes.isDisjoint(with: companionScopes) ? .named(text) : .literal(text)
     }
 
     static func authentication(_ authentication: NativeMCPServerConfiguration.Authentication) -> String {
@@ -85,7 +96,6 @@ struct IntegrationsView: View {
 
 struct IntegrationsManageTarget: Identifiable {
     let id: String
-    let existing: Bool
 }
 
 private struct IntegrationsDestination: View {
@@ -128,7 +138,7 @@ private struct IntegrationsDestination: View {
     }
 
     private func installed(_ entry: NativeMCPStarterEntry) -> Bool {
-        manager.servers.contains { $0.configuration.endpoint.absoluteString == entry.url.absoluteString }
+        manager.servers.contains { entry.matches($0.configuration) }
     }
 
     var body: some View {
@@ -140,7 +150,7 @@ private struct IntegrationsDestination: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .sheet(item: $installing) { entry in
-            IntegrationsInstallSheet(entry: entry) { id in
+            IntegrationsInstallSheet(draft: NativeMCPInstallDraft(entry: entry)) { id in
                 tab = .personal
                 selectedServerID = id
             }
@@ -183,7 +193,7 @@ private struct IntegrationsDestination: View {
         if let error = config.nativeMCPConfigurationError ?? manager.configurationError {
             IntegrationsNotice(text: error)
         }
-        IntegrationsAddButton { managing = IntegrationsManageTarget(id: UUID().uuidString.lowercased(), existing: false) }
+        IntegrationsAddButton { installing = .own }
         ShotSafeScroll(renderSafe: renderSafe) {
             VStack(spacing: 2) {
                 ForEach(manager.servers) { server in
@@ -233,7 +243,7 @@ private struct IntegrationsDestination: View {
                 }
             }
         } else {
-            Text("The integration catalogue could not be loaded.")
+            Text("The list could not be loaded.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary).padding(.top, 6)
             Spacer(minLength: 0)
         }
@@ -270,11 +280,11 @@ private struct IntegrationsDestination: View {
             Image(systemName: AppSection.integrations.icon).font(.system(size: 30, weight: .light))
                 .foregroundStyle(Theme.textSecondary)
             Text("No connected services yet.").font(.system(size: 20, weight: .semibold))
-            Text("Browse Public to install one, or add your own with Manage.")
+            Text("Browse Public to install one, or add your own.")
                 .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 380)
             IntegrationsAction(title: "Add your own…", symbol: "plus", prominent: true) {
-                managing = IntegrationsManageTarget(id: UUID().uuidString.lowercased(), existing: false)
+                installing = .own
             }
             .padding(.top, 6)
         }
@@ -307,7 +317,7 @@ private struct IntegrationsDestination: View {
                 Spacer(minLength: 8)
                 HStack(spacing: 14) {
                     IntegrationsAction(title: "Manage", symbol: "slider.horizontal.3") {
-                        managing = IntegrationsManageTarget(id: server.id, existing: true)
+                        managing = IntegrationsManageTarget(id: server.id)
                     }
                     primaryAction(server, progress: progress)
                 }
@@ -337,7 +347,7 @@ private struct IntegrationsDestination: View {
             if let consentError {
                 IntegrationsNotice(text: consentError)
             }
-            IntegrationsSection(title: "Reads") {
+            IntegrationsSection(title: "Read") {
                 if reads.isEmpty {
                     Text(server.connected ? (server.tools.isEmpty ? "This service offered no reads." : "No reads are approved.") : "Connect to see the reads this service offers.")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -348,7 +358,7 @@ private struct IntegrationsDestination: View {
                 }
             }
             if !changes.isEmpty {
-                IntegrationsSection(title: "Changes") {
+                IntegrationsSection(title: "Write") {
                     VStack(spacing: 6) {
                         ForEach(changes) { tool in toolRow(tool, warning: nil) }
                     }
@@ -456,6 +466,7 @@ private struct IntegrationsDestination: View {
     private func entryCard(_ entry: NativeMCPStarterEntry) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 12) {
+                IntegrationsEntryIcon(name: entry.icon, size: 36)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(entry.name).font(.system(size: 17, weight: .semibold)).lineLimit(2)
                     Text("by \(entry.publisher)").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -471,88 +482,193 @@ private struct IntegrationsDestination: View {
             Text(entry.description).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 IntegrationsTag(text: entry.category)
-                IntegrationsTag(text: IntegrationsText.authentication(entry.authentication))
+                if entry.credentialField?.required ?? true { IntegrationsTag(text: IntegrationsText.authentication(entry.authentication)) }
             }
-            IntegrationsLink(title: "Publisher's page", url: entry.sourceURL)
+            if let source = entry.sourceURL { IntegrationsLink(title: "Publisher's page", url: source) }
         }
+    }
+}
+
+private struct IntegrationsEntryIcon: View {
+    let name: String?
+    let size: CGFloat
+
+    @MainActor private static var cache: [String: NSImage] = [:]
+
+    @MainActor private static func image(_ name: String) -> NSImage? {
+        if let hit = cache[name] { return hit }
+        let file = name as NSString
+        guard let url = VeraResources.url(file.deletingPathExtension, ext: file.pathExtension), let image = NSImage(contentsOf: url) else { return nil }
+        if file.pathExtension == "svg" {
+            image.isTemplate = true
+            image.size = NSSize(width: 144, height: 144)
+        }
+        cache[name] = image
+        return image
+    }
+
+    var body: some View {
+        Group {
+            if let image = name.flatMap(Self.image) {
+                Image(nsImage: image).resizable().interpolation(.high).scaledToFit().foregroundStyle(Theme.textPrimary)
+            } else {
+                Image(systemName: AppSection.integrations.icon).font(.system(size: size * 0.5)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }
 
 struct IntegrationsInstallSheet: View {
     @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var store: ChatStore
     @Environment(\.dismiss) private var dismiss
-    let entry: NativeMCPStarterEntry
+    @Environment(\.renderSafe) private var renderSafe
+    @StateObject private var draft: NativeMCPInstallDraft
+    @State private var writesOpen: Bool
+    @State private var readsOpen = false
     let onInstalled: (String) -> Void
-    @State private var reads: Set<String>
-    @State private var scopes: Set<String> = ["focused", "assistant"]
-    @State private var error: String?
 
-    init(entry: NativeMCPStarterEntry, onInstalled: @escaping (String) -> Void) {
-        self.entry = entry
+    init(draft: @autoclosure @escaping () -> NativeMCPInstallDraft, writesOpen: Bool = false, onInstalled: @escaping (String) -> Void) {
+        _draft = StateObject(wrappedValue: draft())
+        _writesOpen = State(initialValue: writesOpen)
         self.onInstalled = onInstalled
-        _reads = State(initialValue: Set(entry.readTools))
     }
+
+    private var entry: NativeMCPStarterEntry { draft.entry }
+    private var reviewing: Bool { [.review, .installing, .installed].contains(draft.step) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Install \(entry.name)").font(.title2)
-                Text("by \(entry.publisher)").font(.callout).foregroundStyle(Theme.textSecondary)
-            }
-            IntegrationsField(label: "Service address") {
-                Text(entry.url.absoluteString).font(.system(size: 12)).textSelection(.enabled)
-            }
-            IntegrationsField(label: "Sign-in") {
-                Text(IntegrationsText.authentication(entry.authentication)).font(.system(size: 12))
-            }
-            IntegrationsField(label: "Reads") {
+            HStack(spacing: 12) {
+                if !entry.isOwn { IntegrationsEntryIcon(name: entry.icon, size: 36) }
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(entry.readTools, id: \.self) { name in
-                        Toggle(name, isOn: Binding(get: { reads.contains(name) }, set: {
-                            if $0 { reads.insert(name) } else { reads.remove(name) }
-                        }))
-                    }
+                    Text(draft.title).font(.title2)
+                    if !entry.isOwn { Text("by \(entry.publisher)").font(.callout).foregroundStyle(Theme.textSecondary) }
                 }
             }
-            IntegrationsField(label: "Available in") {
-                IntegrationsScopeToggles(scopes: $scopes)
+            if reviewing { review.disabled(draft.busy) } else { fill }
+            if let error = draft.error {
+                Text(error).font(.callout).foregroundStyle(Theme.accent).fixedSize(horizontal: false, vertical: true)
             }
-            Text("Only the reads you approve here become available. You can change this later under Manage.")
-                .font(.caption).foregroundStyle(Theme.textSecondary)
-            if entry.authentication == .oauth {
-                Text(IntegrationsText.accountSignInNote).font(.callout).fixedSize(horizontal: false, vertical: true)
-            }
-            if let error { Text(error).font(.callout).foregroundStyle(Theme.accent) }
             HStack {
+                if draft.busy {
+                    if !renderSafe { ProgressView().controlSize(.small) }
+                    Text(draft.step == .checking ? "Seeing what your server offers" : "Connecting").font(.callout).foregroundStyle(Theme.textSecondary)
+                }
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                if entry.authentication != .oauth {
-                    Button("Install", action: install)
+                Button("Cancel") { if draft.cancel() { dismiss() } }.controlSize(.small).keyboardShortcut(.cancelAction)
+                if reviewing {
+                    IntegrationsAction(title: entry.isOwn ? "Add" : "Install", symbol: "plus", prominent: true, disabled: !draft.canInstall, action: install)
                         .keyboardShortcut(.defaultAction)
-                        .disabled(reads.isEmpty || scopes.isEmpty)
+                } else if entry.authentication != .oauth {
+                    IntegrationsAction(title: "Continue", symbol: "arrow.right", prominent: true, disabled: !draft.filled || draft.step == .checking) { draft.beginCheck() }
+                        .keyboardShortcut(.defaultAction)
                 }
             }
         }
         .padding(24).frame(width: 480)
+        .onChange(of: draft.step) { _, step in
+            guard step == .installed else { return }
+            store.connectAddedService(draft.id, scopes: draft.scopes)
+            onInstalled(draft.id)
+            dismiss()
+        }
+        .onDisappear { if !renderSafe { draft.cancel() } }
+    }
+
+    @ViewBuilder
+    private var fill: some View {
+        if entry.authentication == .oauth {
+            Text(IntegrationsText.accountSignInNote).font(.callout).fixedSize(horizontal: false, vertical: true)
+        }
+        ForEach(entry.fields) { field in
+            IntegrationsField(label: field.label, help: help(field)) {
+                if field.secret {
+                    IntegrationsSecureField(placeholder: "Paste it here", label: field.label, text: value(field))
+                } else if renderSafe {
+                    IntegrationsStaticField(text: draft.values[field.id] ?? field.placeholder ?? "", dimmed: draft.values[field.id] == nil)
+                } else {
+                    TextField(field.placeholder ?? "", text: value(field)).textFieldStyle(.roundedBorder).accessibilityLabel(field.label)
+                }
+            }
+        }
+        .disabled(draft.step == .checking)
+    }
+
+    @ViewBuilder
+    private var review: some View {
+        HStack(spacing: 5) {
+            Text(verbatim: draft.count).font(.system(size: 13, weight: .medium))
+            Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                .help(Self.ruleNote).accessibilityLabel(Self.ruleNote)
+        }
+        ShotSafeScroll(renderSafe: renderSafe) {
+            VStack(alignment: .leading, spacing: 10) {
+                group("Write", draft.changes, open: $writesOpen)
+                group("Read", draft.reads, open: $readsOpen)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: writesOpen || readsOpen ? 360 : 80).clipped()
+        IntegrationsField(label: "Available in") {
+            IntegrationsScopeToggles(scopes: $draft.scopes).tint(Theme.accent)
+        }
+    }
+
+    private static let ruleNote = "Reads run when they're needed. Writes follow your settings in Rules."
+
+    @ViewBuilder
+    private func group(_ title: String, _ offers: [NativeMCPInstallOffer], open: Binding<Bool>) -> some View {
+        if !offers.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Button { open.wrappedValue.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: open.wrappedValue ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary).frame(width: 12)
+                        Text(title).font(.system(size: 13, weight: .semibold))
+                        Text(verbatim: "\(offers.count)").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(title), \(offers.count)")
+                .accessibilityValue(open.wrappedValue ? "Open" : "Closed")
+                if open.wrappedValue {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(offers) { offer in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(verbatim: offer.label).font(.system(size: 13, weight: .medium))
+                                if !offer.usable {
+                                    Text("Tandem can't use this one.").font(.system(size: 11)).foregroundStyle(Theme.accent)
+                                }
+                                if !offer.detail.isEmpty {
+                                    Text(verbatim: offer.detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                        .lineLimit(3).help(Text(verbatim: offer.detail))
+                                }
+                            }
+                        }
+                    }
+                    .padding(.leading, 18)
+                }
+            }
+        }
+    }
+
+    private func help(_ field: NativeMCPStarterField) -> String? {
+        let parts = [field.help, field.target == .credential ? IntegrationsText.tokenNote : nil].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    private func value(_ field: NativeMCPStarterField) -> Binding<String> {
+        Binding(get: { draft.values[field.id] ?? "" }, set: { draft.values[field.id] = $0 })
     }
 
     private func install() {
-        guard entry.authentication != .oauth else { return }
-        guard let catalogue = try? IntegrationsCatalogue.loaded.get() else {
-            error = "The integration catalogue could not be loaded."
-            return
-        }
-        let row = catalogue.configurationRow(
-            for: entry,
-            readTools: entry.readTools.filter { reads.contains($0) },
-            scopes: IntegrationsText.scopeKeys.filter { scopes.contains($0) })
-        do {
-            try config.addNativeMCPServer(row)
-            onInstalled(((row["id"] as? String) ?? "").lowercased())
-            dismiss()
-        } catch {
-            self.error = IntegrationsText.message(error)
-        }
+        draft.install(config)
     }
 }
 
@@ -567,7 +683,7 @@ struct IntegrationsManageSheet: View {
     @State private var endpoint = ""
     @State private var reads = ""
     @State private var acts = ""
-    @State private var scopes: Set<String> = ["focused", "assistant"]
+    @State private var scopes = Set(IntegrationsText.scopeKeys)
     @State private var authentication: NativeMCPServerConfiguration.Authentication = .none
     @State private var timeout = "20"
     @State private var error: String?
@@ -593,7 +709,7 @@ struct IntegrationsManageSheet: View {
     }
 
     private var reportsTools: Bool {
-        guard target.existing, let row = existingRow else { return false }
+        guard let row = existingRow else { return false }
         return row["read_tools"] == nil && row["act_tools"] == nil
     }
 
@@ -604,12 +720,12 @@ struct IntegrationsManageSheet: View {
     }
 
     private var hasSignInDetails: Bool {
-        target.existing && existingRow?["oauth"] != nil
+        existingRow?["oauth"] != nil
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(target.existing ? "Manage \(name.isEmpty ? "service" : name)" : "Add a service").font(.title2)
+            Text("Manage \(name.isEmpty ? "service" : name)").font(.title2)
             IntegrationsField(label: "Name") {
                 if renderSafe { IntegrationsStaticField(text: name) } else {
                     TextField("Name", text: $name).textFieldStyle(.roundedBorder).accessibilityLabel("Name")
@@ -629,21 +745,20 @@ struct IntegrationsManageSheet: View {
                         .accessibilityLabel("Approved reads, one per line")
                 }
             }
-            IntegrationsField(label: "Approved changes, one per line") {
+            IntegrationsField(label: "Approved writes, one per line") {
                 if renderSafe { IntegrationsStaticField(text: acts, lines: true) } else {
                     TextEditor(text: $acts).font(.system(.body, design: .monospaced))
                         .frame(height: 90)
                         .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.hairline, lineWidth: 1))
-                        .accessibilityLabel("Approved changes, one per line")
+                        .accessibilityLabel("Approved writes, one per line")
                 }
             }
             }
             IntegrationsField(label: "Available in") {
-                IntegrationsScopeToggles(scopes: $scopes)
+                IntegrationsScopeToggles(scopes: $scopes).tint(Theme.accent)
             }
             HStack(alignment: .top, spacing: 20) {
-                IntegrationsField(label: "Sign-in") {
-                    VStack(alignment: .leading, spacing: 6) {
+                IntegrationsField(label: "Sign-in", help: hasSignInDetails ? nil : IntegrationsText.accountSignInNote) {
                         Picker("Sign-in", selection: $authentication) {
                             Text("No sign-in").tag(NativeMCPServerConfiguration.Authentication.none)
                             Text("Access token").tag(NativeMCPServerConfiguration.Authentication.bearer)
@@ -652,11 +767,6 @@ struct IntegrationsManageSheet: View {
                             }
                         }
                         .labelsHidden().fixedSize()
-                        if !hasSignInDetails {
-                            Text(IntegrationsText.accountSignInNote).font(.caption).foregroundStyle(Theme.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
                 }
                 IntegrationsField(label: "Timeout in seconds") {
                     if renderSafe { IntegrationsStaticField(text: timeout).frame(width: 80) } else {
@@ -665,17 +775,15 @@ struct IntegrationsManageSheet: View {
                     }
                 }
             }
-            if target.existing, authentication == .bearer {
+            if authentication == .bearer {
                 IntegrationsTokenField(manager: config.nativeMCP, id: target.id, addressChanged: addressChanged)
             }
             if let error { Text(error).font(.callout).foregroundStyle(Theme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
-                if target.existing {
-                    Button("Remove…", role: .destructive) { confirmingRemove = true }
-                }
+                Button("Remove…", role: .destructive) { confirmingRemove = true }.controlSize(.small)
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save", action: save).keyboardShortcut(.defaultAction)
+                Button("Cancel") { dismiss() }.controlSize(.small).keyboardShortcut(.cancelAction)
+                IntegrationsAction(title: "Save", symbol: "checkmark", prominent: true, action: save).keyboardShortcut(.defaultAction)
             }
         }
         .padding(24).frame(width: 520)
@@ -754,10 +862,10 @@ struct IntegrationsManageSheet: View {
             error = IntegrationsText.accountSignInNote
             return
         }
-        let row = Self.row(target.existing ? (existingRow ?? [:]) : [:], id: target.id, name: name, endpoint: endpoint, reads: reads, acts: acts,
+        let row = Self.row(existingRow ?? [:], id: target.id, name: name, endpoint: endpoint, reads: reads, acts: acts,
                            scopes: scopes, seconds: seconds, authentication: authentication)
         do {
-            if target.existing { try config.updateNativeMCPServer(row) } else { try config.addNativeMCPServer(row) }
+            try config.updateNativeMCPServer(row)
             onSaved(target.id)
             dismiss()
         } catch {
@@ -854,11 +962,18 @@ private struct IntegrationsScopeToggles: View {
 
 private struct IntegrationsField<Content: View>: View {
     let label: String
+    var help: String? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(label).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 5) {
+                Text(label).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                if let help {
+                    Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        .help(help).accessibilityLabel(help)
+                }
+            }
             content()
         }
     }
@@ -867,9 +982,11 @@ private struct IntegrationsField<Content: View>: View {
 private struct IntegrationsStaticField: View {
     let text: String
     var lines = false
+    var dimmed = false
 
     var body: some View {
         Text(text).font(lines ? .system(.body, design: .monospaced) : .system(size: 13))
+            .foregroundStyle(dimmed ? Theme.textSecondary : Theme.textPrimary)
             .frame(maxWidth: .infinity, minHeight: lines ? 90 : nil, alignment: .topLeading)
             .padding(.horizontal, lines ? 4 : 6).padding(.vertical, lines ? 2 : 3)
             .background(Theme.surface)
@@ -912,12 +1029,12 @@ private struct IntegrationsSearchField: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             if renderSafe {
-                Text(text.isEmpty ? "Search integrations" : text).font(.system(size: 13))
+                Text(text.isEmpty ? "Search plugins" : text).font(.system(size: 13))
                     .foregroundStyle(text.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                 Spacer(minLength: 0)
             } else {
-                TextField("Search integrations", text: $text).textFieldStyle(.plain).font(.system(size: 13))
-                    .accessibilityLabel("Search integrations")
+                TextField("Search plugins", text: $text).textFieldStyle(.plain).font(.system(size: 13))
+                    .accessibilityLabel("Search plugins")
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
@@ -930,18 +1047,19 @@ private struct IntegrationsSearchField: View {
 private struct IntegrationsSecureField: View {
     @Environment(\.renderSafe) private var renderSafe
     let placeholder: String
+    var label: String?
     @Binding var text: String
 
     var body: some View {
         if renderSafe {
-            Text(placeholder).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+            Text(text.isEmpty ? placeholder : String(repeating: "•", count: 24)).font(.system(size: 13)).foregroundStyle(text.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .background(Theme.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline, lineWidth: 1))
         } else {
-            SecureField(placeholder, text: $text).textFieldStyle(.roundedBorder).accessibilityLabel(placeholder)
+            SecureField(placeholder, text: $text).textFieldStyle(.roundedBorder).accessibilityLabel(label ?? placeholder)
                 .help(IntegrationsText.tokenNote)
         }
     }
@@ -969,7 +1087,7 @@ private struct IntegrationsSwitch: View {
     }
 }
 
-private struct IntegrationsAction: View {
+struct IntegrationsAction: View {
     @Environment(\.renderSafe) private var renderSafe
     let title: String
     let symbol: String
@@ -991,7 +1109,7 @@ private struct IntegrationsAction: View {
             }
         } else if prominent {
             Button(title, action: action)
-                .buttonStyle(.borderedProminent).controlSize(.small).font(.system(size: 12))
+                .buttonStyle(.borderedProminent).tint(Theme.accent).foregroundStyle(Theme.onAccent).controlSize(.small).font(.system(size: 12))
                 .disabled(disabled)
                 .accessibilityLabel(title)
                 .help(help ?? "")
@@ -1062,6 +1180,7 @@ private struct IntegrationsEntryRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
+            IntegrationsEntryIcon(name: entry.icon, size: 26).padding(.top, 2)
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
                 Text(entry.publisher).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
@@ -1094,7 +1213,7 @@ private struct IntegrationsPill: View {
                 .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title == "All" ? "Show all integrations" : "Show \(title)")
+        .accessibilityLabel(title == "All" ? "Show all plugins" : "Show \(title)")
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }

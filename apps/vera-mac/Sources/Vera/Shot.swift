@@ -394,8 +394,20 @@ enum Shot {
             )
         } else if view.hasPrefix("integrations-manage"), let seed = integrationsSeed {
             content = AnyView(
-                IntegrationsManageSheet(target: IntegrationsManageTarget(id: view == "integrations-manage-reports" ? IntegrationsShotFixture.reportsID : IntegrationsShotFixture.codeID, existing: true),
+                IntegrationsManageSheet(target: IntegrationsManageTarget(id: view == "integrations-manage-reports" ? IntegrationsShotFixture.reportsID : IntegrationsShotFixture.codeID),
                                         filled: view == "integrations-manage-reports" ? IntegrationsShotFixture.reportsRow : IntegrationsShotFixture.codeRow) { _ in }
+                    .background(Theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(seed.store)
+                    .environmentObject(seed.config)
+            )
+        } else if view.hasPrefix("integrations-install"), let seed = integrationsSeed, let draft = IntegrationsShotFixture.installDraft(view) {
+            content = AnyView(
+                IntegrationsInstallSheet(draft: draft, writesOpen: view == "integrations-install-open") { _ in }
                     .background(Theme.surface)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))

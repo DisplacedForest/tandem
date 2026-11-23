@@ -115,6 +115,10 @@ extension SelfTest {
         try require(IntegrationsText.scopes(["focused", "assistant"]).plain(name: "Ada") == "Focused chats, Ada", "The scope list names the companion")
         try require(IntegrationsText.scopes(["focused", "assistant"]).plain(name: nil) == "Focused chats, your companion", "The scope list reads plainly unnamed")
         try require(IntegrationsText.scopes(["assistant"]).plain(name: nil) == "Your companion", "A lone companion scope starts with a capital")
-        try require(IntegrationsText.scopes(["focused", "worker"]) == .literal("Focused chats, Research and documents"), "A list without the companion is finished text")
+        try require(IntegrationsText.scopes(["focused", IntegrationsText.ownWorkScope]).plain(name: "Ada") == "Focused chats, Work Ada does on its own", "Work done alone names the companion")
+        try require(IntegrationsText.scopes([IntegrationsText.ownWorkScope]).plain(name: nil) == "Work your companion does on its own", "Work done alone reads plainly unnamed")
+        try require(IntegrationsText.scopes(["focused"]) == .literal("Focused chats"), "A list without the companion is finished text")
+        try require(IntegrationsText.scopeOrder(CompanionSubject(nil)).last?.title == "Work your companion does on its own"
+                    && IntegrationsText.scopeOrder(CompanionSubject("Ada")).last?.title == "Work Ada does on its own", "The checkbox reads the same")
     }
 }
