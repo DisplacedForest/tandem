@@ -43,6 +43,7 @@ enum NativeMCPTransportError: Error, Sendable, Equatable {
 }
 
 actor NativeMCPSDKConnection: NativeMCPConnection {
+    static let responseBytes = 1_048_576
     private let endpoint: URL
     private let timeout: TimeInterval
     private let maximumResponseBytes: Int
@@ -55,11 +56,8 @@ actor NativeMCPSDKConnection: NativeMCPConnection {
     private var busy = false
     private var generation = 0
 
-    init(endpoint: URL, timeout: TimeInterval = 20, maximumResponseBytes: Int = 1_048_576, authorization: NativeMCPAuthorization? = nil, serverID: String? = nil) throws {
-        guard let host = endpoint.host, !host.isEmpty,
-              endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil,
-              endpoint.query == nil,
-              endpoint.scheme == "https" || (endpoint.scheme == "http" && ["localhost", "127.0.0.1", "[::1]"].contains(host)),
+    init(endpoint: URL, timeout: TimeInterval = 20, maximumResponseBytes: Int = NativeMCPSDKConnection.responseBytes, authorization: NativeMCPAuthorization? = nil, serverID: String? = nil) throws {
+        guard (try? NativeMCPAddress.validate(endpoint, personSupplied: true)) != nil,
               timeout.isFinite, timeout > 0, timeout <= 300,
               maximumResponseBytes > 0, maximumResponseBytes <= 8_000_000 else {
             throw NativeMCPTransportError.invalidEndpoint
@@ -409,7 +407,7 @@ private final class NativeMCPBoundedURLProtocol: URLProtocol, URLSessionDataDele
         guard let response else { finish(NativeMCPTransportError.malformedResponse); return }
         guard String(data: body, encoding: .utf8) != nil else { guardrail?.fail(.malformedResponse); finish(NativeMCPTransportError.malformedResponse); return }
         if response.mimeType == "application/json", !body.isEmpty,
-           (try? JSONSerialization.jsonObject(with: body)) == nil {
+           (try? JSONSerialization.jsonObject(with: NativeMCPWireJSON.preserving(body, maximumBytes: guardrail?.maximumBytes ?? NativeMCPSDKConnection.responseBytes))) == nil {
             guardrail?.fail(.malformedResponse)
             finish(NativeMCPTransportError.malformedResponse)
             return
@@ -473,10 +471,11 @@ private actor NativeMCPValidatingTransport: Transport {
                 do {
                     for try await data in await underlying.receive() {
                         try Task.checkCancellation()
+                        let exact: Data
                         do {
-                            try NativeMCPWireJSON.validate(data, maximumBytes: boundary.maximumBytes)
-                            try boundary.authorization?.validateResponse(data, endpoint: boundary.endpoint, includingDecodedJSON: true)
-                            _ = try JSONSerialization.jsonObject(with: data)
+                            exact = try NativeMCPWireJSON.preserving(data, maximumBytes: boundary.maximumBytes)
+                            try boundary.authorization?.validateResponse(exact, endpoint: boundary.endpoint, includingDecodedJSON: true)
+                            _ = try JSONSerialization.jsonObject(with: exact)
                         } catch {
                             boundary.fail(.malformedResponse)
                             continuation.finish(throwing: NativeMCPTransportError.malformedResponse)
@@ -484,7 +483,7 @@ private actor NativeMCPValidatingTransport: Transport {
                             await onFailure()
                             return
                         }
-                        continuation.yield(data)
+                        continuation.yield(exact)
                     }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }

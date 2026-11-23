@@ -118,7 +118,7 @@ Memory can be scoped too. Facts suggested from a conversation inside a project a
 
 **Public** is a bundled starter list of well-known remote HTTP MCP servers, each with its name, publisher, description, category, endpoint and whether it needs no sign-in, an access token or an account sign-in. Search it or browse by category. **Install** opens a review of the endpoint, the proposed read tools (any of which you can leave off) and the scopes. Confirming creates your personal entry and continues with the usual connect or sign-in step. An entry you already installed shows Installed. Listing a publisher is not a verification of the service, so review each one before you connect it.
 
-**Manage** opens a sheet with the entry's name, endpoint, read tools, scopes, authentication and timeout, plus **Remove**. Removing a server disconnects it, and its tools stop being available everywhere at once. Local stdio servers are not supported. See [Connected service tools](docs/MCP.md) for authentication, limits and the configuration file.
+**Manage** opens a sheet with the entry's name, endpoint, read tools, scopes, authentication and timeout, plus **Remove**. Removing a server disconnects it, and its tools stop being available everywhere at once. A token you enter is kept in your Mac's keychain until you disconnect, remove the service or change its address, and the service reconnects by itself after a restart. Plain http addresses work only on your own network. Local stdio servers are not supported. See [Connected service tools](docs/MCP.md) for authentication, limits and the configuration file.
 
 ### The dot
 

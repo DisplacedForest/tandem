@@ -53,9 +53,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
-        if self.path == '/bearer-redirect':
+        if self.path in ['/bearer-redirect', '/bearer-redirect-away']:
             self.send_response(307)
-            self.send_header('Location', '/forbidden')
+            self.send_header('Location', '/forbidden' if self.path == '/bearer-redirect' else 'http://localhost:%d/forbidden' % self.server.server_port)
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
@@ -120,6 +120,11 @@ class Handler(BaseHTTPRequestHandler):
             body = body.replace(b'"capabilities":', b'"unsupportedPrecision":9007199254740993,"capabilities":')
         if self.path == '/decimal':
             body = body.replace(b'"capabilities":', b'"unsupportedPrecision":0.10000000000000001,"capabilities":')
+        if self.path == '/bearer-echo-number':
+            escaped = ''.join('\\u%04x' % ord(char) for char in synthetic_token).encode()
+            body = body.replace(synthetic_token.encode(), escaped).replace(b'"count": 1', b'"count": ' + b'7' * 400)
+        if self.path == '/exact' and method == 'tools/call':
+            body = body.replace(b'"count": 1', b'"count": 9007199254740993, "huge": ' + b'7' * 400 + b', "level": 21.299999999999997')
         if self.path == '/remote-error':
             body = json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'error': {'code': -32099, 'message': 'fixture error'}}).encode()
         if self.path == '/canonical':
@@ -128,7 +133,7 @@ class Handler(BaseHTTPRequestHandler):
             body = body.replace(b'"protocolVersion":', b'"protocolVersion":"2025-11-25","protocolVersion":')
         if self.path == '/invalid-utf8':
             body = body.replace(b'synthetic', b'synthetic\xff')
-        if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8', '/bearer-echo-sse']:
+        if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8', '/bearer-echo-sse', '/bearer-echo-number']:
             body = b'data: ' + body + b'\n\n'
         if self.path == '/malformed':
             body = b'{broken'
@@ -137,7 +142,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ['/large', '/chunked']:
             body = b'x' * 40000
         self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream' if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8', '/bearer-echo-sse'] else 'application/json')
+        self.send_header('Content-Type', 'text/event-stream' if self.path in ['/sse', '/duplicate-sse', '/invalid-utf8', '/bearer-echo-sse', '/bearer-echo-number'] else 'application/json')
         if self.path == '/bearer-echo-header':
             self.send_header('MCP-Session-Id', synthetic_token)
         self.send_header('Set-Cookie', 'fixture=must-not-persist')

@@ -351,7 +351,7 @@ actor NativeMCPOAuthSession: CustomStringConvertible, CustomDebugStringConvertib
         guard remaining > 0 else { throw NativeMCPOAuthError.expired }
         let expiry = min(consent.expiresAt, Date().addingTimeInterval(min(lifetime.doubleValue, remaining, 3600)))
         let lease: NativeMCPAuthorization
-        do { lease = try NativeMCPAuthorization(serverID: consent.serverID, endpoint: consent.resource, token: token, expiresAt: expiry, allowLoopbackFixture: consent.allowLoopbackFixture) }
+        do { lease = try NativeMCPAuthorization(serverID: consent.serverID, endpoint: consent.resource, token: token, expiresAt: expiry) }
         catch { throw NativeMCPOAuthError.invalidToken }
         do {
             try validate(generation)

@@ -67,7 +67,7 @@ enum NativeMCPTransportSelftest {
         try await client.connect()
         _ = try await client.listTools(cursor: nil)
         await client.disconnect()
-        for (path, expected) in [("auth", NativeMCPTransportError.authenticationRequired), ("redirect", .redirectDenied), ("version", .unsupportedProtocol), ("large", .responseTooLarge), ("chunked", .responseTooLarge), ("malformed", .malformedResponse), ("shape", .malformedResponse), ("slow", .timeout), ("remote-error", .remoteFailure), ("disconnect", .network), ("duplicate", .malformedResponse), ("duplicate-sse", .malformedResponse), ("canonical", .malformedResponse), ("numeric", .malformedResponse), ("decimal", .malformedResponse), ("invalid-utf8", .malformedResponse)] {
+        for (path, expected) in [("auth", NativeMCPTransportError.authenticationRequired), ("redirect", .redirectDenied), ("version", .unsupportedProtocol), ("large", .responseTooLarge), ("chunked", .responseTooLarge), ("malformed", .malformedResponse), ("shape", .malformedResponse), ("slow", .timeout), ("remote-error", .remoteFailure), ("disconnect", .network), ("duplicate", .malformedResponse), ("duplicate-sse", .malformedResponse), ("canonical", .malformedResponse), ("invalid-utf8", .malformedResponse)] {
             let candidate = try connection(path, timeout: 0.5)
             do {
                 try await candidate.connect()
@@ -102,6 +102,17 @@ enum NativeMCPTransportSelftest {
         do { _ = try await dataResult.call(name: "fixture_read", arguments: [:]); throw Failure.assertion("Data URL result was silently rewritten") }
         catch NativeMCPTransportError.malformedResponse {}
         await dataResult.disconnect()
+        for path in ["numeric", "decimal"] {
+            let precise = try connection(path)
+            try await precise.connect()
+            await precise.disconnect()
+        }
+        let exact = try connection("exact")
+        try await exact.connect()
+        let precise = try await exact.call(name: "fixture_read", arguments: [:])
+        try require(precise.pi("structuredContent").pi("count") == .string("9007199254740993") && precise.pi("structuredContent").pi("level") == .number(21.299999999999997),
+                    "A long number changed or was refused")
+        await exact.disconnect()
         let sse = try connection("sse")
         try await sse.connect()
         _ = try await sse.listTools(cursor: nil)

@@ -733,4 +733,4 @@ For a direct ChatGPT connection, the optional `HOUSEHOLD_PUBLIC_ORIGIN` setting 
 
 ## Remote service tools
 
-Native MCP connections are explicitly configured and connected from Settings, Tools. No service is enabled by default. Tools stay off until you approve each one as a read or as a change, and changes follow the Make changes through connected services rule. See [connected service tools](MCP.md) for approved reads and changes, schema support, reconnect behavior, the HTTPS boundary, temporary Bearer tokens and explicit OAuth sign-in.
+Native MCP connections are explicitly configured and connected from Settings, Tools. No service is enabled by default. Tools stay off until you approve each one as a read or as a change, and changes follow the Make changes through connected services rule. See [connected service tools](MCP.md) for approved reads and changes, schema support, reconnect behavior, the address rule, saved Bearer tokens and explicit OAuth sign-in. A token you enter for a service is kept in the macOS keychain until you disconnect or remove the service or change its address. Plain http addresses work only on your own network.

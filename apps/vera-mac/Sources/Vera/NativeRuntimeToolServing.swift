@@ -33,6 +33,7 @@ struct PiRuntimeToolSnapshot: Equatable, Sendable {
 }
 
 enum PiRuntimeTools {
+    static let resultBytes = 8_192
     static func validate(_ schemas: [NativeToolSchema]) throws {
         try piCheck(schemas.count <= 16)
         var names = Set<String>()
@@ -57,7 +58,7 @@ extension PiModelLedger {
                 try piCheck(savedDigest == digest, .duplicate)
                 try piCheck(state == "completed", .uncertain)
                 guard case .blob(let data) = resultValue.storage else { throw PiBrokerError.storage }
-                try piCheck(data.count <= 8192, .storage)
+                try piCheck(data.count <= PiRuntimeTools.resultBytes, .storage)
                 return try PiValue.piRead(data)
             }
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM runtime_tools WHERE subject=?", arguments: [scope.subject]) ?? 0

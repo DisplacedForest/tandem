@@ -87,7 +87,7 @@ final class NativeMCPReadTestController: ObservableObject, Identifiable {
                 let value = try await definition.execute(arguments)
                 try Task.checkCancellation()
                 guard let self, self.current, self.generation == generation else { return }
-                let result = try Self.render(value, source: self.record.server.endpoint.absoluteString)
+                let result = try Self.render(value, source: self.record.server.source)
                 guard self.current, self.generation == generation else { return }
                 self.storedResult = result
                 self.running = false
@@ -145,7 +145,7 @@ final class NativeMCPReadTestController: ObservableObject, Identifiable {
     }
 
     static func render(_ value: NativeJSONValue, source: String) throws -> NativeMCPReadTestResult {
-        guard (try value.piData()).count <= 4096, case .object(let wrapped) = value,
+        guard case .object(let wrapped) = value,
               Set(wrapped.keys) == ["source", "content"], wrapped["source"] == .string(source), let content = wrapped["content"] else { throw NativeToolError.unavailable }
         let text: String
         if case .array(let blocks) = content.pi("content") {

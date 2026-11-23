@@ -28,7 +28,8 @@ enum IntegrationsShotFixture {
     static func store(variant: String) -> Seeded {
         let store = ChatStore()
         store.section = .integrations
-        let changes = variant == "integrations-changes" || variant == "integrations-manage"
+        let manage = variant.hasPrefix("integrations-manage")
+        let changes = variant == "integrations-changes" || manage
         let rows: [[String: Any]] = variant == "integrations-empty" ? [] : changes ? [codeRow] : [
             [
                 "id": wikiID, "name": "DeepWiki", "url": "https://mcp.deepwiki.com/mcp",
@@ -45,7 +46,11 @@ enum IntegrationsShotFixture {
         ]
         let disk = Disk(rows.isEmpty ? [:] : ["native_mcp_servers": rows])
         let (servers, _) = NativeMCPServerConfiguration.load(disk.contents)
-        let manager = NativeMCPManager(servers: servers)
+        let keys = NativeCredentialFixtureStore()
+        if variant == "integrations-manage", let code = servers.first(where: { $0.id == codeID }) {
+            try? NativeMCPTokenKeeper(store: keys).save("synthetic-shot-token", server: code)
+        }
+        let manager = NativeMCPManager(servers: servers, tokens: keys, reconnectDelays: [])
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { disk.contents },
                                  nativeMCP: manager, writeConfiguration: { disk.contents = $0 })
         if let wiki = servers.first(where: { $0.id == wikiID }),

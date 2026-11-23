@@ -147,6 +147,7 @@ extension NativeMCPManager {
 
     @discardableResult
     func applyConfigurationSynchronously(_ servers: [NativeMCPServerConfiguration]) -> [String: UUID] {
+        try? forgetTokens(leaving: servers)
         let stale = authority.access.reconcileServers(servers)
         let current = Set(servers.map(\.id))
         for id in Set(oauthReviews.keys).union(oauthFlows.keys) where stale[id] != nil || !current.contains(id) { cancelOAuthLocally(id) }
@@ -169,6 +170,7 @@ extension NativeMCPManager {
         let generation = configurationGeneration
         defer { if configurationGeneration == generation { replacingConfiguration = false } }
         for id in Set(oauthReviews.keys).union(oauthFlows.keys) { cancelOAuthLocally(id) }
+        try? forgetTokens(leaving: servers)
         for server in authority.access.snapshot() {
             await authority.disconnect(server.id)
             guard configurationGeneration == generation else { return }

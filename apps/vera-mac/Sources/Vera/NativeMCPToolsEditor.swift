@@ -43,7 +43,7 @@ struct NativeMCPReadTestEditor: View {
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text("Source").font(.caption).foregroundStyle(Theme.textSecondary)
-                Text(verbatim: controller.record.server.endpoint.absoluteString)
+                Text(verbatim: controller.record.server.source)
                     .font(.caption).textSelection(.enabled).accessibilityIdentifier("mcp-read-source")
             }
             HStack {
@@ -93,7 +93,7 @@ struct NativeMCPOAuthReviewEditor: View {
                     }
                 }
             }
-            Text("A private browser session is requested. Tandem keeps authorization only in memory, for up to one hour. Disconnect ends this connection's access.")
+            Text("A private browser session is requested. Tandem keeps this sign-in only in memory, and it ends after a while or when Tandem quits. Disconnect ends it right away.")
                 .font(.caption).foregroundStyle(Theme.textSecondary)
             if let progress = manager.oauthProgress[review.configuration.id] { Text(progress).font(.callout) }
             if let browser = manager.oauthFlows[review.configuration.id]?.browser as? NativeMCPOAuthFixtureBrowser {

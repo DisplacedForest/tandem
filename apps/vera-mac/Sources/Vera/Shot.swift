@@ -379,7 +379,7 @@ enum Shot {
                     .environment(\.colorScheme, .dark)
                     .foregroundStyle(Theme.textPrimary)
             )
-        } else if view == "integrations-manage", let seed = integrationsSeed {
+        } else if view.hasPrefix("integrations-manage"), let seed = integrationsSeed {
             content = AnyView(
                 IntegrationsManageSheet(target: IntegrationsManageTarget(id: IntegrationsShotFixture.codeID, existing: true),
                                         filled: IntegrationsShotFixture.codeRow) { _ in }

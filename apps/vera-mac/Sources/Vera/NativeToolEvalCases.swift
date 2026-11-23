@@ -283,7 +283,7 @@ enum NativeToolEvalCases {
             return started(id, objective: "A document of the week's garden plans built from the seven notes.", title: "Garden plans this week",
                            deliverables: ownerDeliverables)
         case "repair-oversized":
-            let everything = Array(repeating: weeklyInputs.joined(separator: " "), count: 5).joined(separator: " ")
+            let everything = Array(repeating: weeklyInputs.joined(separator: " "), count: 80).joined(separator: " ")
             return NativeToolEvalScript(rounds: [
                 start(id + "-1", objective: "One document of every plan written down this season.", title: "Season plans", deliverables: [everything]),
                 say("That was more than one document can hold, so nothing was started."),

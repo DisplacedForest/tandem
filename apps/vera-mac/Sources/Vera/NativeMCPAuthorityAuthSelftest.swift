@@ -59,7 +59,7 @@ enum NativeMCPAuthorityAuthSelftest {
         throw NativeToolError.failed("An MCP authorization fixture did not reach its expected state")
     }
     private static func lease(_ server: NativeMCPServerConfiguration, duration: TimeInterval = 30) throws -> NativeMCPAuthorization {
-        try NativeMCPAuthorization(serverID: server.id, endpoint: server.endpoint, token: "temporary-fixture-value", expiresAt: Date().addingTimeInterval(duration), allowLoopbackFixture: server.allowsLoopbackFixture)
+        try NativeMCPAuthorization(serverID: server.id, endpoint: server.endpoint, token: "temporary-fixture-value", expiresAt: Date().addingTimeInterval(duration))
     }
     private static func scope(_ role: String = "foreground", mode: String = "assistant") throws -> PiModelScope {
         try PiModelScope(.object(["subject": .string(UUID().uuidString.lowercased()), "assistant": .string(UUID().uuidString.lowercased()), "conversation": .string(UUID().uuidString.lowercased()), "role": .string(role), "mode": .string(mode)]), profile: "fixture")
@@ -83,8 +83,10 @@ enum NativeMCPAuthorityAuthSelftest {
             let result = NativeMCPServerConfiguration.load(["native_mcp_servers": [invalidRow]])
             try check(result.0.isEmpty && result.1 != nil, "Persistent credential configuration was accepted")
         }
-        var insecure = configured; insecure["url"] = "http://127.0.0.1:49152/mcp"
-        try check(NativeMCPServerConfiguration.load(["native_mcp_servers": [insecure]]).1 != nil, "Production configuration enabled insecure bearer transport")
+        var insecure = configured; insecure["url"] = "http://example.com/mcp"
+        try check(NativeMCPServerConfiguration.load(["native_mcp_servers": [insecure]]).1 == NativeMCPAddress.publicNeedsHTTPS, "A public http address was accepted or refused without a plain reason")
+        insecure["url"] = "http://127.0.0.1:49152/mcp"
+        try check(NativeMCPServerConfiguration.load(["native_mcp_servers": [insecure]]).1 == nil, "An address on this Mac was refused")
         let name = server.toolID("read")
         let counter = NativeMCPAuthFactoryCounter()
         let fixture = NativeMCPAuthConnection()
@@ -184,7 +186,7 @@ enum NativeMCPAuthorityAuthSelftest {
         await restricted.connect(unapproved.id, token: "temporary-fixture-value")
         try check(restricted.authority.definitions(scope: "focused").isEmpty && restricted.authority.definitions(scope: "worker").isEmpty, "Authentication expanded approved tools or scopes")
         await restricted.disconnect(unapproved.id)
-        let loopback = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Explicit loopback fixture", endpoint: URL(string: "http://127.0.0.1:49152/mcp")!, readTools: ["read"], authentication: .bearer, allowLoopbackFixture: true)
+        let loopback = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Explicit loopback fixture", endpoint: URL(string: "http://127.0.0.1:49152/mcp")!, readTools: ["read"], authentication: .bearer)
         let loopbackManager = NativeMCPManager(servers: [loopback], authenticatedFactory: { config, authorization in
             guard authorization?.isValid(serverID: config.id, endpoint: config.endpoint) == true else { throw NativeMCPTransportError.authenticationRequired }
             return fixture
