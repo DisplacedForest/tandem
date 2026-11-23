@@ -5,7 +5,6 @@
 7 apps/vera-mac/Sources/Vera/CardShots.swift
 9 apps/vera-mac/Sources/Vera/CompanionAskedWorkSelftest.swift
 2 apps/vera-mac/Sources/Vera/CompanionNameSelftest.swift
-1 apps/vera-mac/Sources/Vera/CompanionNameStylingSelftest.swift
 10 apps/vera-mac/Sources/Vera/CompanionOverviewSelftest.swift
 1 apps/vera-mac/Sources/Vera/CompanionPresenceSelftest.swift
 4 apps/vera-mac/Sources/Vera/CompanionRetiredSettingSelftest.swift
@@ -17,7 +16,7 @@
 24 apps/vera-mac/Sources/Vera/EngineLifecycle.swift
 6 apps/vera-mac/Sources/Vera/EngineManager.swift
 2 apps/vera-mac/Sources/Vera/IntegrationsShotFixture.swift
-2 apps/vera-mac/Sources/Vera/IntegrationsView.swift
+1 apps/vera-mac/Sources/Vera/IntegrationsView.swift
 4 apps/vera-mac/Sources/Vera/MessageActionsSelftest.swift
 4 apps/vera-mac/Sources/Vera/MessageReactionsSelftest.swift
 2 apps/vera-mac/Sources/Vera/NativeCardChoicesSelftest.swift
@@ -107,7 +106,6 @@
 1 apps/vera-mac/Sources/Vera/OngoingWorkPanel.swift
 3 apps/vera-mac/Sources/Vera/OngoingWorkSelftest.swift
 4 apps/vera-mac/Sources/Vera/RefusalSelftest.swift
-1 apps/vera-mac/Sources/Vera/Resources/mcp-starter-catalog.json
 8 apps/vera-mac/Sources/Vera/RuleRowsSelftest.swift
 4 apps/vera-mac/Sources/Vera/RulesAdvancedSelftest.swift
 21 apps/vera-mac/Sources/Vera/SavedWording.swift

@@ -11,55 +11,62 @@ enum NativeMCPStarterCatalogSelftest {
 
     static func run() throws {
         let catalog = try NativeMCPStarterCatalog.bundled()
-        try check(catalog.entries.count == 10, "bundled catalogue should list ten entries, found \(catalog.entries.count)")
-        try check(catalog.skipped.isEmpty, "bundled catalogue skipped \(catalog.skipped)")
-        try check(Set(catalog.entries.map(\.id)).count == 10, "bundled ids should be unique")
-        try check(catalog.categories == catalog.categories.sorted() && Set(catalog.categories).count == catalog.categories.count, "categories should be sorted and distinct")
-        try check(catalog.categories.count == 6, "bundled catalogue should span six categories")
-        try check(catalog.entries.allSatisfy { $0.url.scheme == "https" && $0.sourceURL.scheme == "https" }, "every bundled address should be https")
-
-        try check(catalog.matching(query: "", category: nil).count == 10, "empty query should match everything")
-        try check(catalog.matching(query: "upstash", category: nil).map(\.id) == ["context7"], "publisher search should find Context7")
-        try check(catalog.matching(query: "SPACES", category: nil).map(\.id) == ["hugging-face"], "description search should be case insensitive")
-        let documentation = catalog.matching(query: "", category: "Documentation")
-        try check(documentation.count == 5 && documentation.allSatisfy { $0.category == "Documentation" }, "category filter should keep only documentation entries")
+        try check(catalog.entries.map(\.id) == ["home-assistant", "github"], "the list should hold exactly two entries, found \(catalog.entries.map(\.id))")
+        try check(catalog.skipped.isEmpty, "bundled list skipped \(catalog.skipped)")
+        try check(catalog.categories == ["Code hosting", "Home"], "categories should come from the entries")
+        try check(catalog.entries.allSatisfy { $0.sourceURL?.scheme == "https" && !$0.url.hasPrefix("http:") }, "every bundled address should be https")
+        for entry in catalog.entries {
+            let icon = (entry.icon ?? "") as NSString
+            try check(VeraResources.url(icon.deletingPathExtension, ext: icon.pathExtension) != nil, "\(entry.name) should have a bundled icon")
+        }
+        guard let file = VeraResources.url(NativeMCPStarterCatalog.resourceName, ext: "json"),
+              let rows = (try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])?["entries"] as? [[String: Any]] else { throw Failure(description: "the list could not be read") }
+        try check(rows.allSatisfy { !$0.keys.contains { $0.contains("tool") } }, "an entry should say nothing about tools")
+        try check(catalog.matching(query: "", category: nil).count == 2, "empty query should match everything")
+        try check(catalog.matching(query: "CONTROL IT", category: nil).map(\.id) == ["home-assistant"], "description search should be case insensitive")
         try check(catalog.matching(query: "github", category: "Code hosting").map(\.id) == ["github"], "query and category should combine")
         try check(catalog.matching(query: "nothing like this", category: nil).isEmpty, "unmatched query should return nothing")
 
         let mixed = """
         {"entries": [
-          {"id": "good", "name": "Good", "publisher": "Example", "description": "Fine.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "none", "read_tools": ["search"], "source_url": "https://example.com/docs"},
-          {"id": "plain", "name": "Plain", "publisher": "Example", "description": "Insecure.", "category": "Documentation", "url": "http://mcp.example.com/mcp", "authentication": "none", "read_tools": ["search"], "source_url": "https://example.com/docs"},
-          {"id": "empty", "name": "Empty", "publisher": "Example", "description": "No tools.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "none", "read_tools": [], "source_url": "https://example.com/docs"},
-          {"id": "good", "name": "Twin", "publisher": "Example", "description": "Duplicate.", "category": "Documentation", "url": "https://twin.example.com/mcp", "authentication": "none", "read_tools": ["search"], "source_url": "https://example.com/docs"},
-          {"id": "query", "name": "Query", "publisher": "Example", "description": "Query string.", "category": "Documentation", "url": "https://mcp.example.com/mcp?key=1", "authentication": "none", "read_tools": ["search"], "source_url": "https://example.com/docs"},
-          {"id": "auth", "name": "Auth", "publisher": "Example", "description": "Unknown sign-in.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "password", "read_tools": ["search"], "source_url": "https://example.com/docs"},
-          {"id": "control", "name": "Control", "publisher": "Example", "description": "Control character.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "none", "read_tools": ["bad\\u0007"], "source_url": "https://example.com/docs"},
-          {"id": "nameless", "name": " ", "publisher": "Example", "description": "No name.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "none", "read_tools": ["search"], "source_url": "https://example.com/docs"}
+          {"id": "good", "name": "Good", "publisher": "Example", "description": "Fine.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "none", "source_url": "https://example.com/docs"},
+          {"id": "plain", "name": "Plain", "publisher": "Example", "description": "Insecure.", "category": "Documentation", "url": "http://mcp.example.com/mcp", "authentication": "none", "source_url": "https://example.com/docs"},
+          {"id": "good", "name": "Twin", "publisher": "Example", "description": "Duplicate.", "category": "Documentation", "url": "https://twin.example.com/mcp", "authentication": "none", "source_url": "https://example.com/docs"},
+          {"id": "query", "name": "Query", "publisher": "Example", "description": "Query string.", "category": "Documentation", "url": "https://mcp.example.com/mcp?key=1", "authentication": "none", "source_url": "https://example.com/docs"},
+          {"id": "auth", "name": "Auth", "publisher": "Example", "description": "Unknown sign-in.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "password", "source_url": "https://example.com/docs"},
+          {"id": "nowhere", "name": "Nowhere", "publisher": "Example", "description": "No gap.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "none", "fields": [{"id": "address", "label": "Address", "secret": false, "target": "address"}], "source_url": "https://example.com/docs"},
+          {"id": "unused", "name": "Unused", "publisher": "Example", "description": "No sign-in.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "none", "fields": [{"id": "token", "label": "Token", "secret": true, "target": "credential"}], "source_url": "https://example.com/docs"},
+          {"id": "open", "name": "Open", "publisher": "Example", "description": "Visible token.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "bearer", "fields": [{"id": "token", "label": "Token", "secret": false, "target": "credential"}], "source_url": "https://example.com/docs"},
+          {"id": "tokenless", "name": "Tokenless", "publisher": "Example", "description": "Asks for no token.", "category": "Documentation", "url": "{address}", "authentication": "bearer", "fields": [{"id": "address", "label": "Address", "secret": false, "target": "address"}], "source_url": "https://example.com/docs"},
+          {"id": "tokenless2", "name": "Tokenless", "publisher": "Example", "description": "Asks for nothing.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "bearer", "source_url": "https://example.com/docs"},
+          {"id": "optional", "name": "Optional", "publisher": "Example", "description": "Address may be empty.", "category": "Documentation", "url": "{address}", "authentication": "none", "fields": [{"id": "address", "label": "Address", "secret": false, "optional": true, "target": "address"}], "source_url": "https://example.com/docs"},
+          {"id": "gap", "name": "Gap", "publisher": "Example", "description": "Unfilled gap.", "category": "Documentation", "url": "https://{site}.example.com/mcp", "authentication": "none", "source_url": "https://example.com/docs"},
+          {"id": "target", "name": "Target", "publisher": "Example", "description": "Unknown place.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "none", "fields": [{"id": "x", "label": "X", "secret": false, "target": "header"}], "source_url": "https://example.com/docs"},
+          {"id": "new", "name": "New", "publisher": "Example", "description": "Fine.", "category": "Weather and tides", "url": "https://tides.example.com/mcp", "authentication": "none", "source_url": "https://example.com/docs"},
+          {"id": "nameless", "name": " ", "publisher": "Example", "description": "No name.", "category": "Documentation", "url": "https://mcp.example.com/mcp", "authentication": "none", "source_url": "https://example.com/docs"}
         ]}
         """
         let partial = try NativeMCPStarterCatalog.load(Data(mixed.utf8))
-        try check(partial.entries.map(\.id) == ["good"], "only the valid entry should load, found \(partial.entries.map(\.id))")
-        try check(partial.skipped.map(\.id) == ["plain", "empty", "good", "query", "auth", "control", "nameless"], "every invalid entry should be skipped, found \(partial.skipped.map(\.id))")
+        try check(partial.entries.map(\.id) == ["good", "new"], "only the valid entries should load, found \(partial.entries.map(\.id))")
+        try check(partial.skipped.map(\.id) == ["plain", "good", "query", "auth", "nowhere", "unused", "open", "tokenless", "tokenless2", "optional", "gap", "target", "nameless"], "every invalid entry should be skipped, found \(partial.skipped.map(\.id))")
         try check(partial.skipped.allSatisfy { !$0.reason.isEmpty }, "every skip should carry a reason")
+        try check(partial.categories == ["Documentation", "Weather and tides"], "a category the code has never named should still be listed")
+        try check(partial.matching(query: "", category: "Weather and tides").map(\.id) == ["new"], "an entry should appear under its own category")
         do {
             _ = try NativeMCPStarterCatalog.load(Data("[]".utf8))
             throw Failure(description: "a file without entries should fail")
         } catch is NativeToolError {}
 
-        guard let github = catalog.entries.first(where: { $0.id == "github" }),
-              let deepwiki = catalog.entries.first(where: { $0.id == "deepwiki" }) else { throw Failure(description: "expected entries are missing") }
-        let row = catalog.configurationRow(for: github, readTools: Array(github.readTools.prefix(3)), scopes: ["focused", "worker"])
-        let open = catalog.configurationRow(for: deepwiki, readTools: deepwiki.readTools, scopes: ["focused"])
+        guard let github = catalog.entries.first(where: { $0.id == "github" }), let address = URL(string: github.url) else { throw Failure(description: "GitHub is missing") }
+        let row = catalog.configurationRow(for: github, endpoint: address, authentication: .bearer, scopes: ["focused", "worker"])
+        let open = catalog.configurationRow(for: github, endpoint: address, authentication: .none, scopes: ["focused"])
+        try check(Set(row.keys) == ["id", "name", "url", "scopes", "timeout_seconds", "publisher", "source_url", "authentication"], "a row should hold no tool list")
         try check(open["authentication"] == nil, "authentication should be omitted for open services")
-        try check(row["authentication"] as? String == "bearer", "authentication should be kept for token services")
         try check((row["id"] as? String) != (open["id"] as? String), "each row should get a fresh id")
         let (servers, failure) = NativeMCPServerConfiguration.load(["native_mcp_servers": [row, open]])
         try check(failure == nil && servers.count == 2, "configuration rows should pass the loader, failure \(failure ?? "none")")
         let server = servers[0]
-        try check(server.id == row["id"] as? String && server.id == server.id.lowercased(), "row id should be a lowercase uuid")
-        try check(server.name == "GitHub" && server.endpoint == github.url, "name and address should be preserved")
-        try check(server.readTools == Set(github.readTools.prefix(3)), "chosen read tools should be preserved")
+        try check(server.id == row["id"] as? String && server.name == "GitHub" && server.endpoint == address, "id, name and address should be preserved")
         try check(server.scopes == ["focused", "worker"] && server.timeout == 20, "scopes and timeout should be preserved")
         try check(server.authentication == .bearer && servers[1].authentication == .none, "authentication should round trip")
         try check(server.publisher == "GitHub" && server.sourceURL == github.sourceURL, "publisher and source address should be preserved")

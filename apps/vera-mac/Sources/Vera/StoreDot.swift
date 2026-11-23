@@ -45,6 +45,7 @@ extension ChatStore {
             dotProfile = NativeDotProfile()
         }
         dotProfileLoaded = true
+        followServiceReports()
     }
 
     func saveDotProfile(_ mutate: (inout NativeDotProfile) -> Void) {
@@ -59,6 +60,41 @@ extension ChatStore {
         }
         dotProfile = next
         resolveCompanionConfigurationError(CompanionErrorCopy.saveLead)
+    }
+
+    func followServiceReports() {
+        serviceReports = nativeMCP?.$servers.sink { [weak self] servers in
+            MainActor.assumeIsolated { self?.connectReportedTools(servers) }
+        }
+    }
+
+    func connectAddedService(_ serverID: String, scopes: Set<String>) {
+        guard !scopes.isDisjoint(with: IntegrationsText.companionScopes),
+              let saved = try? nativeDotProfileStore?.load(), saved.connectedToolIDs != nil else { return }
+        saveDotProfile { $0.connectedToolIDs?.insert(Self.serviceMarker(serverID)) }
+        connectReportedTools(nativeMCP?.servers ?? [])
+    }
+
+    func connectReportedTools(_ servers: [NativeMCPServerState]) {
+        guard let connected = dotProfile.connectedToolIDs else { return }
+        var joined = connected
+        for server in servers where server.connected && Self.chosen(server, in: connected) {
+            joined.insert(Self.serviceMarker(server.id))
+            joined.formUnion(server.tools.map(\.id))
+        }
+        guard joined != connected else { return }
+        saveDotProfile { $0.connectedToolIDs = joined }
+    }
+
+    private static func serviceMarker(_ id: String) -> String { "service:" + id }
+
+    private static func ownedToolIDs(_ server: NativeMCPServerState) -> Set<String> {
+        let declared = server.configuration.readTools.union(server.configuration.actTools).map(server.configuration.toolID)
+        return Set(server.tools.map(\.id)).union(declared)
+    }
+
+    private static func chosen(_ server: NativeMCPServerState, in connected: Set<String>) -> Bool {
+        connected.contains(serviceMarker(server.id)) || !connected.isDisjoint(with: ownedToolIDs(server))
     }
 
     func completeDotSetup(connectedToolIDs: Set<String>?) {
@@ -151,12 +187,30 @@ extension ChatStore {
 
     func dotSelectedServices(_ options: [NativeDotServiceOption]) -> Set<String> {
         guard let connected = dotProfile.connectedToolIDs else { return Set(options.map(\.id)) }
-        return Set(options.filter { !$0.toolIDs.isDisjoint(with: connected) }.map(\.id))
+        return Set(options.filter { connected.contains($0.id) || !$0.toolIDs.isDisjoint(with: connected) }.map(\.id))
     }
 
     func dotConnectedToolIDs(selected: Set<String>, options: [NativeDotServiceOption]) -> Set<String>? {
-        if options.allSatisfy({ selected.contains($0.id) }) { return nil }
-        return options.filter { selected.contains($0.id) }.reduce(into: Set<String>()) { $0.formUnion($1.toolIDs) }
+        let picked = options.filter { selected.contains($0.id) }
+        let visible = Set(options.map(\.id))
+        let hidden = (nativeMCP?.servers ?? []).filter { !visible.contains(Self.serviceMarker($0.id)) }
+        let saved = dotProfile.connectedToolIDs
+        let kept = hidden.filter { server in saved.map { Self.chosen(server, in: $0) } ?? true }
+        if picked.count == options.count, kept.count == hidden.count { return nil }
+        var result = Set<String>()
+        for server in kept {
+            result.insert(Self.serviceMarker(server.id))
+            result.formUnion(Self.ownedToolIDs(server).intersection(saved ?? []))
+        }
+        if !hidden.isEmpty, let saved {
+            let shown = options.reduce(into: Set<String>()) { $0.formUnion($1.toolIDs) }
+            result.formUnion(saved.subtracting(shown).filter { !$0.hasPrefix("mcp_") && !$0.hasPrefix("service:") })
+        }
+        for option in picked {
+            if option.id.hasPrefix("service:") { result.insert(option.id) }
+            result.formUnion(option.toolIDs)
+        }
+        return result
     }
 
     func dotRemovalSummary() -> NativeDotRemovalSummary {

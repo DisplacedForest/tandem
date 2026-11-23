@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -194,6 +195,7 @@ final class ChatStore: ObservableObject {
     let turnDeclineSource = NativeDeclineSource()
     private(set) var nativeMemoryService: (any NativeMemoryServing)?
     let nativeMCP: NativeMCPManager?
+    var serviceReports: AnyCancellable?
     private var nativeToolRegistry: NativeToolRegistry
     private var askedSystemAccess: Set<String> = []
     var asksForSystemAccess = false

@@ -42,7 +42,7 @@ enum IntegrationsShotFixture {
 
     static func changeDefinition(_ store: ChatStore) -> NativeToolDefinition {
         let seeded = self.store(variant: "integrations-reports")
-        return seeded.config.nativeMCP.authority.definitions(scope: "focused").first { $0.title.hasSuffix("HassTurnOff") }!
+        return seeded.config.nativeMCP.authority.definitions(scope: "focused").first { $0.title.hasSuffix("remove_item") }!
     }
 
     static func store(variant: String) -> Seeded {
@@ -118,7 +118,7 @@ enum IntegrationsShotFixture {
             manager.refresh()
         }
         if let reports = servers.first(where: { $0.reportsTools }), var state = manager.authority.access.snapshot().first(where: { $0.id == reports.id }) {
-            let tools: [(String, String, Bool)] = [("GetLiveContext", "See what's on and what the sensors read.", true), ("HassTurnOn", "Turn something on.", false), ("HassTurnOff", "Turn something off.", false)]
+            let tools: [(String, String, Bool)] = [("read_items", "Reads every item.", true), ("update_item", "Changes one item.", false), ("remove_item", "Removes an item.", false)]
             state.connected = true
             state.status = "Connected"
             state.tools = tools.map { name, description, readOnly in
@@ -140,10 +140,32 @@ enum IntegrationsShotFixture {
         case "integrations-reports", "integrations-manage-reports", "integrations-signed-in":
             return Seeded(store: store, config: config, tab: .personal, search: "", selection: nil)
         case "integrations-public":
-            return Seeded(store: store, config: config, tab: .catalogue, search: "documentation", selection: "deepwiki")
+            return Seeded(store: store, config: config, tab: .catalogue, search: "", selection: "home-assistant")
         default:
             return Seeded(store: store, config: config, tab: .personal, search: "", selection: rows.isEmpty ? nil : changes ? codeID : wikiID)
         }
+    }
+
+    static func installDraft(_ view: String) -> NativeMCPInstallDraft? {
+        if view == "integrations-install-own" { return NativeMCPInstallDraft(entry: .own) }
+        let id = view == "integrations-install-github" ? "github" : "home-assistant"
+        guard let entry = (try? IntegrationsCatalogue.loaded.get())?.entries.first(where: { $0.id == id }) else { return nil }
+        guard view.hasPrefix("integrations-install-review") || view == "integrations-install-open" else {
+            let draft = NativeMCPInstallDraft(entry: entry)
+            if view == "integrations-install-filled" { draft.values = ["address": "http://homeassistant.local:8123/api/mcp", "token": "fixture"] }
+            return draft
+        }
+        let tools: [(String, String, Bool)] = [
+            ("update_item", "Changes one item.", true),
+            ("update_items", "Changes several items at once.", true),
+            ("create_item", "Adds an item.", true),
+            ("remove_item", "Removes an item.", true),
+            ("run_routine", "Runs a routine by name.", true),
+            ("find_items", "Finds items by name.", false),
+            ("read_item", "Reads one item.", false),
+            ("read_history", "Reads how an item changed over a period of time.", false),
+        ]
+        return NativeMCPInstallDraft(reviewing: entry, offers: tools.map { NativeMCPInstallOffer(name: $0.0, label: $0.0, detail: $0.1, change: $0.2, usable: true) })
     }
 
     private static let schema: NativeJSONValue = .object([

@@ -30,7 +30,7 @@ A reviewed connection can be declared in `native_mcp_servers` in the existing co
 }
 ```
 
-This example is not a deployed service. Use the reviewed server's real endpoint and exact approved tool names. `act_tools` is optional; leave it out to approve only reads. Leave out both lists to use every tool the service reports. An empty list is refused. Tandem adds `asks_tools` itself when a service marks an approved read as changing things, so that read keeps asking first even if the service later stops saying so. Removing the tool from the reads, or moving it to changes, clears it. Do not put credentials in its URL or this declaration. You can edit the file by hand, or let the Integrations destination write the same list when you install, edit or remove a server. Changes made in the app take effect immediately. Open Integrations, Personal, then Connect. Enable the discovered tool and Save. A service with a saved token reconnects by itself after a restart or a dropped connection. Other connections are not reopened automatically. Disconnect or disable a tool to revoke active access, and Remove under Manage disconnects a server and withdraws its tools from every scope at once. Worker access requires an explicit `worker` scope in addition to the existing task approval.
+This example is not a deployed service. Use the reviewed server's real endpoint and exact approved tool names. `act_tools` is optional; leave it out to approve only reads. Leave out both lists to use every tool the service reports. An empty list is refused. Tandem adds `asks_tools` itself when a service marks an approved read as changing things, so that read keeps asking first even if the service later stops saying so. Removing the tool from the reads, or moving it to changes, clears it. Do not put credentials in its URL or this declaration. You can edit the file by hand, or let the Integrations destination write the same list when you install, edit or remove a server. Changes made in the app take effect immediately. Open Integrations, Personal, then Connect. Enable the discovered tool and Save. A service with a saved token reconnects by itself after a restart or a dropped connection. Other connections are not reopened automatically. Disconnect or disable a tool to revoke active access, and Remove under Manage disconnects a server and withdraws its tools from every scope at once. The `worker` scope covers work your companion does on its own, handed off or scheduled. A service added in the app starts with all three scopes; a row in the file without `scopes` has focused and assistant only.
 
 For a reviewed service that accepts a preissued Bearer token, add `"authentication": "bearer"` to its declaration. In Integrations, Personal, enter that service's token in the secure field and explicitly connect. Use a token issued for that exact service with only its required read permissions. Never reuse a model provider key. Once the service connects, Tandem saves the token in the macOS keychain together with the service's address, and never writes it to the configuration file, chat records or logs. It stays until you choose Disconnect or Remove, change the address or turn off the token sign-in, each of which deletes it. Manage shows that a token is saved and offers Replace and Disconnect. If the service can't be reached, Tandem keeps trying, waiting longer each time, up to five minutes. If the service rejects the token, Tandem stops trying and asks for a new one. Disconnecting locally does not revoke a token at its issuer.
 
@@ -68,26 +68,43 @@ The persistent workspace offers only reads, never changes. A task whose MCP auth
 
 A change runs only as the Make changes through connected services rule allows, with the same cards and refusals as other changes, and is never sent twice on its own. Changing a provider or execution path does not authorize a different tool, create a memory store, or replace the Python task authority.
 
-## Starter list
+## The list in Public
 
-Integrations, Public is a bundled list of well-known remote HTTP MCP servers, shipped as a JSON resource in the app. It has search and categories. Install opens a review of the endpoint, the proposed read tools (each can be left off) and the scopes, then creates the personal entry and continues with the usual connect or sign-in step. An installed entry shows Installed. Manage lists the entry's name, endpoint, approved reads and changes, scopes, authentication and timeout, with Remove.
+Plugins, Public is a short list the project maintains, shipped in the app as `mcp-starter-catalog.json`. It holds Home Assistant and GitHub. Nothing is fetched, and nothing on it is installed or callable until you install it. An installed service is your own copy: a later version that edits or drops a listing leaves it as it was.
 
-The first list:
+An entry looks like this:
 
-- DeepWiki (Cognition)
-- Context7 (Upstash)
-- Microsoft Learn (Microsoft)
-- Cloudflare Docs (Cloudflare)
-- Astro Docs (Astro)
-- Semgrep (Semgrep)
-- Globalping (jsDelivr)
-- GitHub (GitHub), access token
-- Sentry (Sentry), access token
-- Hugging Face (Hugging Face), access token
+```json
+{
+  "id": "example",
+  "name": "Example",
+  "publisher": "Example Project",
+  "description": "What it does.",
+  "category": "Home",
+  "icon": "example.png",
+  "url": "{address}",
+  "authentication": "bearer",
+  "fields": [
+    { "id": "address", "label": "Address of your server", "secret": false, "target": "address" },
+    { "id": "token", "label": "Access token", "secret": true, "optional": true, "target": "credential" }
+  ],
+  "source_url": "https://example.com/docs"
+}
+```
 
-Entries are remote HTTP servers only and record the publisher and the publisher's page. Tool names are the publishers' current names and are reviewed before Install. If a publisher renames a tool, the old name stops working and the new one shows as Not approved on the service's page until you correct it under Manage. Listing a publisher is not a verification of the service. The list does not supply OAuth client details, so an OAuth entry still needs the publisher's preregistered public client in its configuration as described above.
+- An entry is only a connector. It names no tools and says nothing about which are reads.
+- Each field has a `label`, whether it's `secret`, and a `target`: `address` or `credential`. `placeholder`, `help` and `optional` can be left out. There can be one of each target.
+- An `address` value is the whole address, so `url` must be the field's id in braces. It can't be secret or optional. Without one, `url` must be a plain https address.
+- A `credential` value is handed to the connection as its token. It must be secret and the entry must use `bearer`. It is never written to the configuration. An optional one left empty connects without signing in.
+- `category` is any text and appears as written. `icon` is a bundled image. An SVG is drawn in the text color.
 
-A row written from the starter list may carry two optional keys, `publisher` and `source_url`. They are informational and a hand-written declaration can omit them.
+An entry that breaks these rules is skipped with a reason and can't be installed.
+
+Installing checks the address, then connects once to ask the server what it offers. Nothing is saved at that point. The sheet shows every tool with the server's own name and description. A tool the server marks as read-only is a read, and anything else is a write. Install connects all of them: reads run, and writes follow the Make changes through connected services rule.
+
+Entries are remote HTTP servers only. Listing a publisher is not a verification of the service. The list does not supply OAuth client details, so an OAuth entry still needs the publisher's preregistered public client in its configuration as described above.
+
+A row written from the list may carry two optional keys, `publisher` and `source_url`. They are informational and a hand-written declaration can omit them.
 
 Local stdio servers, a remote registry fetch, plugin packages and publisher verification are not part of this.
 
