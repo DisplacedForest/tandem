@@ -9,8 +9,8 @@ enum NativeMCPAuthorizationError: Error, Sendable, Equatable {
 final class NativeMCPAuthorization: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
     private let serverID: String
     private let endpoint: URL
-    private let expiresAt: Date
-    private let monotonicDeadline: ContinuousClock.Instant
+    private let expiresAt: Date?
+    private let monotonicDeadline: ContinuousClock.Instant?
     private struct State {
         var token: String?
         var observers: [UUID: @Sendable () -> Void] = [:]
@@ -18,22 +18,25 @@ final class NativeMCPAuthorization: Sendable, CustomStringConvertible, CustomDeb
     }
     private let state: Mutex<State>
 
-    init(serverID: String, endpoint: URL, token: String, expiresAt: Date, allowLoopbackFixture: Bool = false) throws {
+    init(serverID: String, endpoint: URL, token: String, expiresAt: Date? = nil) throws {
         guard !serverID.isEmpty, serverID.utf8.count <= 256,
-              let host = endpoint.host, !host.isEmpty,
-              endpoint.user == nil, endpoint.password == nil, endpoint.query == nil, endpoint.fragment == nil,
-              endpoint.scheme == "https" || (allowLoopbackFixture && endpoint.scheme == "http" && ["127.0.0.1", "[::1]"].contains(host)) else {
+              (try? NativeMCPAddress.validate(endpoint, personSupplied: true)) != nil else {
             throw NativeMCPAuthorizationError.invalidBinding
         }
         let punctuation = Set("-._~+/=".utf8)
         guard !token.isEmpty, token.utf8.count <= 8192, token.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || punctuation.contains($0) }) else {
             throw NativeMCPAuthorizationError.invalidCredential
         }
-        let duration = expiresAt.timeIntervalSinceNow
-        guard duration.isFinite, duration > 0, duration <= 3600 else { throw NativeMCPAuthorizationError.expired }
         self.serverID = serverID
         self.endpoint = endpoint
         self.expiresAt = expiresAt
+        guard let expiresAt else {
+            monotonicDeadline = nil
+            state = Mutex(State(token: token))
+            return
+        }
+        let duration = expiresAt.timeIntervalSinceNow
+        guard duration.isFinite, duration > 0, duration <= 3600 else { throw NativeMCPAuthorizationError.expired }
         monotonicDeadline = ContinuousClock.now.advanced(by: .seconds(duration))
         state = Mutex(State(token: token))
         let task = Task { [weak self] in
@@ -92,7 +95,14 @@ final class NativeMCPAuthorization: Sendable, CustomStringConvertible, CustomDeb
         }
     }
 
-    private var expired: Bool { Date() >= expiresAt || ContinuousClock.now >= monotonicDeadline }
+    private var expired: Bool { hasExpired(at: Date(), instant: .now) }
+
+    func hasExpired(at date: Date, instant: ContinuousClock.Instant) -> Bool {
+        guard let expiresAt, let monotonicDeadline else { return false }
+        return date >= expiresAt || instant >= monotonicDeadline
+    }
+
+    var revoked: Bool { state.withLock { $0.token == nil } }
 
     func validateResponse(_ data: Data, endpoint: URL, includingDecodedJSON: Bool = false) throws {
         guard isValid(serverID: serverID, endpoint: endpoint) else { throw NativeMCPTransportError.authenticationRequired }
@@ -101,8 +111,12 @@ final class NativeMCPAuthorization: Sendable, CustomStringConvertible, CustomDeb
         if String(data: data, encoding: .utf8)?.contains(token) == true {
             throw NativeMCPTransportError.malformedResponse
         }
-        if includingDecodedJSON, let object = try? JSONSerialization.jsonObject(with: data), Self.contains(token, in: object) {
-            throw NativeMCPTransportError.malformedResponse
+        if includingDecodedJSON {
+            guard let object = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed), !Self.contains(token, in: object),
+                  let native = try? NativeJSONValue.piDecode(object), let emitted = try? native.piData(),
+                  String(decoding: emitted, as: UTF8.self).contains(token) == false else {
+                throw NativeMCPTransportError.malformedResponse
+            }
         }
     }
 

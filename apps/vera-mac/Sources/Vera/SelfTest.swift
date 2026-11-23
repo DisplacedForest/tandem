@@ -549,6 +549,8 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: mcp starter catalog \(error)"); exit(1) }
         do { try await NativeMCPInstallSelftest.run() }
         catch { print("SELFTEST ERROR: mcp install \(error)"); exit(1) }
+        do { try await NativeMCPSavedTokenSelftest.run() }
+        catch { print("SELFTEST ERROR: mcp saved token \(error)"); exit(1) }
         do { try await NativeMCPChangesSelftest.run() }
         catch { print("SELFTEST ERROR: mcp changes \(error)"); exit(1) }
         do { try runComposerMentions() }

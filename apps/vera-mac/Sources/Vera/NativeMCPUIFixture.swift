@@ -9,7 +9,7 @@ final class NativeMCPUIFixture {
     private init(endpoint: URL, oauth: Bool) throws {
         let oauthConfiguration = oauth ? try NativeMCPOAuthUIFixtureTransport.configuration(resource: endpoint, allowLoopbackFixture: true) : nil
         let server = try NativeMCPServerConfiguration(id: "b3a0c29f-142b-4fb0-a12f-1393fc83239f", name: oauth ? "Synthetic OAuth test service" : "Synthetic test service", endpoint: endpoint,
-            readTools: ["fixture_read"], scopes: ["focused", "assistant", "worker"], authentication: oauth ? .oauth : endpoint.path == "/bearer" ? .bearer : .none, allowLoopbackFixture: true, oauth: oauthConfiguration)
+            readTools: ["fixture_read"], scopes: ["focused", "assistant", "worker"], authentication: oauth ? .oauth : endpoint.path == "/bearer" ? .bearer : .none, oauth: oauthConfiguration)
         let name = server.toolID("fixture_read")
         manager = NativeMCPManager(servers: [server], oauthTransport: NativeMCPOAuthUIFixtureTransport(resource: endpoint), oauthBrowserFactory: { NativeMCPOAuthFixtureBrowser() })
         model = PiToolModelFixture(toolName: name, toolArguments: .object(["rows": .array([.object(["n": .number(1)])])]))

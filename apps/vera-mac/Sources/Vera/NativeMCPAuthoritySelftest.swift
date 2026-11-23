@@ -181,7 +181,8 @@ enum NativeMCPAuthoritySelftest {
         try check(authority.definitions(scope: "focused").isEmpty, "Failed connection remained advertised")
         await fixture.configure(result: .string(String(repeating: "x", count: 5000)))
         await manager.connect(server.id)
-        try await reject { _ = try await authority.call(scope: assistant, id: UUID().uuidString, name: name, arguments: args) }
+        let long = try await authority.call(scope: assistant, id: UUID().uuidString, name: name, arguments: args)
+        try check(long.pi("content") == .string(String(repeating: "x", count: 5000)), "A long answer was refused or changed")
         await manager.disconnect(server.id)
         try check(authority.definitions(scope: "focused").isEmpty, "Disconnected catalog remained callable")
         let restarted = NativeMCPManager(servers: [server], enabled: [name], factory: { _ in fixture })

@@ -217,7 +217,8 @@ enum NativeMCPJSONSchemaSelftest {
             previous = name
         }
         try fails(.resourceLimit) {
-            _ = try NativeMCPJSONSchema(.object(["$defs": .object(definitions), "$ref": .string("#/$defs/" + previous)]))
+            let layered = try NativeMCPJSONSchema(.object(["$defs": .object(definitions), "$ref": .string("#/$defs/" + previous)]))
+            try layered.validate(.null)
         }
         let expensive = try NativeMCPJSONSchema(.object(["items": .object(["allOf": .array(Array(repeating: .bool(true), count: 64))])]))
         try fails(.resourceLimit) { try expensive.validate(.array(Array(repeating: .null, count: 1_000))) }

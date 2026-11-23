@@ -9,7 +9,7 @@ enum NativeMCPAuthorizationSelftest {
     static func run(port: String, counterFile: URL) async throws {
         func url(_ path: String) -> URL { URL(string: "http://127.0.0.1:\(port)/\(path)")! }
         func lease(_ path: String = "bearer", seconds: TimeInterval = 60, value: String = token) throws -> NativeMCPAuthorization {
-            try NativeMCPAuthorization(serverID: "fixture", endpoint: url(path), token: value, expiresAt: Date().addingTimeInterval(seconds), allowLoopbackFixture: true)
+            try NativeMCPAuthorization(serverID: "fixture", endpoint: url(path), token: value, expiresAt: Date().addingTimeInterval(seconds))
         }
         func connection(_ path: String, _ authorization: NativeMCPAuthorization) throws -> NativeMCPSDKConnection {
             try NativeMCPSDKConnection(endpoint: url(path), timeout: 2, maximumResponseBytes: 8192, authorization: authorization, serverID: "fixture")
@@ -33,9 +33,12 @@ enum NativeMCPAuthorizationSelftest {
             catch NativeMCPAuthorizationError.invalidCredential {}
         }
         do {
-            _ = try NativeMCPAuthorization(serverID: "fixture", endpoint: url("bearer"), token: token, expiresAt: Date().addingTimeInterval(60))
-            throw Failure.assertion("Production HTTP credential accepted")
+            _ = try NativeMCPAuthorization(serverID: "fixture", endpoint: URL(string: "http://example.com/mcp")!, token: token)
+            throw Failure.assertion("Public HTTP credential accepted")
         } catch NativeMCPAuthorizationError.invalidBinding {}
+        let lasting = try NativeMCPAuthorization(serverID: "fixture", endpoint: url("bearer"), token: token)
+        try require(!lasting.hasExpired(at: Date().addingTimeInterval(90_000), instant: .now.advanced(by: .seconds(90_000))), "A saved token's lease ran out")
+        try require(try lease().hasExpired(at: Date().addingTimeInterval(7200), instant: .now), "A timed lease never ran out")
         do { _ = try lease(seconds: 3601); throw Failure.assertion("Long lease accepted") }
         catch NativeMCPAuthorizationError.expired {}
         let held = try lease()
@@ -69,12 +72,15 @@ enum NativeMCPAuthorizationSelftest {
         do { try await anonymous.connect(); throw Failure.assertion("Anonymous protected connect accepted") }
         catch NativeMCPTransportError.authenticationRequired {}
         await anonymous.disconnect()
-        let redirected = try lease("bearer-redirect")
-        let redirectClient = try connection("bearer-redirect", redirected)
-        do { try await redirectClient.connect(); throw Failure.assertion("Bearer redirect followed") }
-        catch NativeMCPTransportError.redirectDenied {}
-        await redirectClient.disconnect()
-        for path in ["bearer-echo", "bearer-echo-escaped", "bearer-echo-sse", "bearer-echo-schema", "bearer-echo-header"] {
+        for path in ["bearer-redirect", "bearer-redirect-away"] {
+            let redirected = try lease(path)
+            let redirectClient = try connection(path, redirected)
+            do { try await redirectClient.connect(); throw Failure.assertion("Bearer redirect followed") }
+            catch NativeMCPTransportError.redirectDenied {}
+            await redirectClient.disconnect()
+        }
+        try require(try count("forbidden", "initialize") == 0, "A redirect carried the token to another address")
+        for path in ["bearer-echo", "bearer-echo-escaped", "bearer-echo-sse", "bearer-echo-number", "bearer-echo-schema", "bearer-echo-header"] {
             let protected = try lease(path)
             let client = try connection(path, protected)
             do {

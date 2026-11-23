@@ -11,6 +11,7 @@ actor NativeMCPChangesConnection: NativeMCPConnection {
     private var tools: [NativeMCPDiscoveredTool]
     private var reply = "ok"
     private var full: NativeJSONValue?
+    private var failure: NativeMCPTransportError?
     private var holding = false
     private var held: CheckedContinuation<Void, Never>?
     nonisolated let log = NativeMCPChangesLog()
@@ -20,6 +21,7 @@ actor NativeMCPChangesConnection: NativeMCPConnection {
     func call(name: String, arguments: [String: NativeJSONValue]) async throws -> NativeJSONValue {
         log.add(name)
         if holding { await withCheckedContinuation { held = $0 } }
+        if let failure { throw failure }
         if let full { return full }
         return .object(["content": .array([.object(["type": .string("text"), "text": .string(reply)])])])
     }
@@ -27,6 +29,7 @@ actor NativeMCPChangesConnection: NativeMCPConnection {
     func set(_ next: [NativeMCPDiscoveredTool]) { tools = next }
     func answer(_ text: String) { reply = text; full = nil }
     func respond(_ value: NativeJSONValue) { full = value }
+    func fail(_ error: NativeMCPTransportError?) { failure = error }
     func hold() { holding = true }
     func release() { holding = false; held?.resume(); held = nil }
     nonisolated func count(_ name: String) -> Int { log.count(name) }
@@ -95,7 +98,7 @@ enum NativeMCPChangesSelftest {
                     for openWorld in values {
                         let hints = NativeMCPToolHints(readOnly: readOnly, destructive: destructive, idempotent: idempotent, openWorld: openWorld)
                         let label = "readOnly \(String(describing: readOnly)) destructive \(String(describing: destructive)) idempotent \(String(describing: idempotent)) openWorld \(String(describing: openWorld))"
-                        let careful = readOnly == false || destructive == true
+                        let careful = readOnly == false || (readOnly != true && destructive == true)
                         try require(server.state(of: "reads", hints: hints) == (careful ? .change : .read), "A read is a change only when the service says so: \(label)")
                         try require(server.state(of: "acts", hints: hints) == .change, "An approved change stays a change: \(label)")
                         try require(server.state(of: "both", hints: hints) == .change, "A name on both lists is a change: \(label)")
@@ -135,10 +138,8 @@ enum NativeMCPChangesSelftest {
         try require(NativeMCPServerConfiguration.load(["native_mcp_servers": [control]]).1 != nil, "A change name is checked like a read name")
         var full = plain
         full["read_tools"] = (0..<40).map { "read_\($0)" }
-        full["act_tools"] = (0..<24).map { "act_\($0)" }
-        try require(NativeMCPServerConfiguration.load(["native_mcp_servers": [full]]).1 == nil, "Sixty-four names across both lists load")
-        full["act_tools"] = (0..<25).map { "act_\($0)" }
-        try require(NativeMCPServerConfiguration.load(["native_mcp_servers": [full]]).1 != nil, "More than sixty-four names across both lists are refused")
+        full["act_tools"] = (0..<300).map { "act_\($0)" }
+        try require(NativeMCPServerConfiguration.load(["native_mcp_servers": [full]]).1 == nil, "Lists of any length load")
 
         final class Disk { var contents: [String: Any] = [:] }
         let disk = Disk()
@@ -368,7 +369,7 @@ enum NativeMCPChangesSelftest {
         wrong["asks_tools"] = ["bad\u{7}"]
         try require(NativeMCPServerConfiguration.load(["native_mcp_servers": [wrong]]).1 != nil, "A remembered name is checked like a read name")
         wrong["asks_tools"] = ["lookup"] + (0..<64).map { "extra_\($0)" }
-        try require(NativeMCPServerConfiguration.load(["native_mcp_servers": [wrong]]).1 != nil, "A remembered list cannot pass the name limit")
+        try require(NativeMCPServerConfiguration.load(["native_mcp_servers": [wrong]]).1 == nil, "A remembered list of any length loads")
 
         let disk = Disk()
         let manager = NativeMCPManager(servers: [])
@@ -602,19 +603,33 @@ enum NativeMCPChangesSelftest {
 
     static func oversized() async throws {
         let (manager, connection, server) = try await connected([tool("lookup"), tool("post_update")], reads: ["lookup"], acts: ["post_update"])
-        await connection.answer(String(repeating: "x", count: 6000))
         guard let change = definition(manager, server, "post_update"), let read = definition(manager, server, "lookup") else {
             throw NativeToolError.failed("The approved tools are offered")
         }
+        let long = String(repeating: "x", count: 200_000)
+        await connection.answer(long)
+        for tool in [read, change] {
+            let answer = try await tool.execute(call)
+            try require(try answer.piData().count > long.utf8.count, "A long answer arrives whole from the service")
+            let shown = try NativeToolResultBudget.serialized(answer, maximumBytes: tool.resultByteBudget)
+            try require(shown.utf8.count <= tool.resultByteBudget && shown.contains("\"truncated\":true"), "A long answer is shortened for the model and marked as shortened")
+        }
+        let scope = try NativeMCPAuthoritySelftest.scope(mode: "assistant")
+        let shared = try await manager.authority.call(scope: scope, id: UUID().uuidString, name: server.toolID("lookup"), arguments: .object(call),
+                                                      expectedRevision: try await manager.authority.revision(scope: scope))
+        try require(try shared.piData().count <= PiRuntimeTools.resultBytes && shared.pi("truncated") == .bool(true), "A long answer fits the shared runtime")
+        await connection.fail(.responseTooLarge)
         var changeError: Error?
         do { _ = try await change.execute(call) } catch { changeError = error }
-        try require(changeError as? NativeToolError == .failed("The service replied, but its reply is too large to show. The change may have been made, so check before trying it again."),
+        try require(changeError as? NativeToolError == .failed("The service's reply is over 1,048,576 bytes, the most Tandem takes in one reply. The change may have been made, so check before trying it again."),
                     "An oversized reply to a change says it may have happened: \(changeError.map { $0.localizedDescription } ?? "none")")
         try require(changeError.map { !NativeCompanionWorker.definite($0) } == true, "An oversized reply to a change is unsure")
+        await manager.connect(server.id)
+        guard let again = definition(manager, server, "lookup") else { throw NativeToolError.failed("The service reconnects") }
         var readError: Error?
-        do { _ = try await read.execute(call) } catch { readError = error }
-        try require(readError as? NativeToolError == .failed("The service result is too large. Ask for a narrower read."), "An oversized read asks for a narrower read")
-        try require(manager.servers.first?.connected == true, "An oversized reply keeps the service connected")
+        do { _ = try await again.execute(call) } catch { readError = error }
+        try require(readError as? NativeToolError == .failed("The service's reply is over 1,048,576 bytes, the most Tandem takes in one reply. Ask for a narrower read."), "An oversized read asks for a narrower read")
+        await manager.connect(server.id)
         let harness = try worker(manager, server.toolID("post_update"))
         let task = try harness.create("Post the update")
         try asksWhetherItHappened(harness, task, try await harness.runUntilSettled(), "oversized")
@@ -682,7 +697,7 @@ enum NativeMCPChangesSelftest {
         let matching = reply(.object(["count": .number(3)]))
         await connection.respond(matching)
         let value = try await read.execute(call)
-        try require(value == .object(["source": .string(endpoint.absoluteString), "content": matching]), "A result that matches its declared shape passes through as before")
+        try require(value == .object(["source": .string("https://fixture.invalid"), "content": matching]), "A result that matches its declared shape passes through as before")
         await connection.respond(reply(nil))
         try require(await failure(read) == nil, "A result without structured content is passed as before")
         let wrong = reply(.object(["count": .string("three")]))

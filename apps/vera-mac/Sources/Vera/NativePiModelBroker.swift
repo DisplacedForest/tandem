@@ -434,7 +434,7 @@ actor NativePiModelBroker {
             let current = try await toolSnapshot(scope)
             try piCheck(!canceled.contains(id) && !operation.isCancelled, .canceled)
             try piCheck(current == snapshot, .unauthorized)
-            try piCheck(try result.piData().count <= 8192)
+            try piCheck(try result.piData().count <= PiRuntimeTools.resultBytes)
             try ledger.settleTool(scope: scope, id: callID, result: result)
             return .object(["value": result])
         } catch {

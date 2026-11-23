@@ -36,11 +36,20 @@ enum IntegrationsText {
         }
     }
 
-    static func state(_ server: NativeMCPServerState, signingIn: Bool) -> String {
+    static func state(_ server: NativeMCPServerState, signingIn: Bool, reconnecting: Bool = false) -> String {
         if signingIn { return "Signing in" }
+        if reconnecting { return "Reconnecting" }
         if server.connecting { return "Connecting" }
         if server.connected { return server.configuration.authentication == .oauth ? "Signed in" : "Connected" }
         return "Not connected"
+    }
+
+    static let tokenNote = "Kept in your Mac's keychain until you disconnect or remove this service, or change its address."
+    static let tokenSaved = "Token saved"
+
+    static func footer(_ authentication: NativeMCPServerConfiguration.Authentication) -> String {
+        let approved = "Only what you approve is available, and a service cannot give itself more."
+        return authentication == .bearer ? approved : approved + " Connections end when Tandem quits."
     }
 
     static let accountSignInNote = "Account sign-in needs details from the publisher in the configuration file; see the setup guide."
@@ -92,7 +101,7 @@ private struct IntegrationsDestination: View {
     @State private var managing: IntegrationsManageTarget?
     @State private var oauthReview: NativeMCPOAuthReview?
     @State private var readTest: NativeMCPReadTestController?
-    @State private var temporaryTokens: [String: String] = [:]
+    @State private var enteredTokens: [String: String] = [:]
     @State private var consentError: String?
 
     init(manager: NativeMCPManager, initialTab: IntegrationsTab, initialSearch: String, initialSelection: String?) {
@@ -149,7 +158,7 @@ private struct IntegrationsDestination: View {
         }
         .onDisappear {
             guard !renderSafe else { return }
-            temporaryTokens.removeAll()
+            enteredTokens.removeAll()
             manager.cancelPendingOAuth()
             readTest?.close()
             readTest = nil
@@ -180,7 +189,7 @@ private struct IntegrationsDestination: View {
                     let selected = server.id == selectedServer?.id
                     Button { selectedServerID = server.id } label: {
                         IntegrationsServerRow(name: server.configuration.name,
-                                              state: IntegrationsText.state(server, signingIn: manager.oauthProgress[server.id] != nil),
+                                              state: IntegrationsText.state(server, signingIn: manager.oauthProgress[server.id] != nil, reconnecting: reconnects(server)),
                                               live: server.connected, selected: selected)
                             .contentShape(Rectangle())
                     }
@@ -274,7 +283,7 @@ private struct IntegrationsDestination: View {
     private func serverCard(_ server: NativeMCPServerState) -> some View {
         let configuration = server.configuration
         let progress = manager.oauthProgress[server.id]
-        let state = IntegrationsText.state(server, signingIn: progress != nil)
+        let state = IntegrationsText.state(server, signingIn: progress != nil, reconnecting: reconnects(server))
         let detail = progress ?? (server.status == state || server.status.hasPrefix("Connected") ? nil : server.status)
         let reads = server.tools.filter { $0.state == .read || $0.asksBecauseOfService }
         let changes = server.tools.filter { $0.state == .change && !$0.asksBecauseOfService }
@@ -306,11 +315,11 @@ private struct IntegrationsDestination: View {
                 Text(detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if configuration.authentication == .bearer && !server.connected && !server.connecting {
+            if configuration.authentication == .bearer && !server.connected && !server.connecting && !reconnects(server) {
                 VStack(alignment: .leading, spacing: 6) {
-                    IntegrationsSecureField(placeholder: "Temporary access token", text: Binding(
-                        get: { temporaryTokens[server.id] ?? "" }, set: { temporaryTokens[server.id] = $0 }))
-                    Text("Used only for this connection. Forgotten on disconnect or after one hour. Enter it again after reopening Tandem.")
+                    IntegrationsSecureField(placeholder: "Access token", text: Binding(
+                        get: { enteredTokens[server.id] ?? "" }, set: { enteredTokens[server.id] = $0 }))
+                    Text(IntegrationsText.tokenNote)
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -321,7 +330,6 @@ private struct IntegrationsDestination: View {
                     IntegrationsAction(title: "Refresh sign-in", symbol: "arrow.clockwise") {
                         Task { await manager.refreshOAuth(server.id) }
                     }
-                    Text("Sign-in lasts up to one hour.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
             }
             IntegrationsSection(title: "Available in") {
@@ -357,18 +365,21 @@ private struct IntegrationsDestination: View {
             if let source = configuration.sourceURL {
                 IntegrationsLink(title: "Publisher's page", url: source)
             }
-            Text("Only what you approve is available, and a service cannot give itself more. Connections end when Tandem quits.")
+            Text(IntegrationsText.footer(configuration.authentication))
                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
+    private func reconnects(_ server: NativeMCPServerState) -> Bool { manager.reconnects(server) }
+
     @ViewBuilder
     private func primaryAction(_ server: NativeMCPServerState, progress: String?) -> some View {
-        if server.connected || server.connecting || progress != nil {
-            let pending = server.connecting || progress != nil
+        let saved = manager.hasSavedToken(server.id)
+        if server.connected || server.connecting || progress != nil || reconnects(server) {
+            let pending = !saved && (server.connecting || progress != nil)
             IntegrationsAction(title: pending ? "Cancel connection" : "Disconnect", symbol: "xmark", prominent: true) {
-                temporaryTokens.removeValue(forKey: server.id)
+                enteredTokens.removeValue(forKey: server.id)
                 manager.cancelOAuthLocally(server.id)
                 Task { await manager.disconnect(server.id) }
             }
@@ -378,7 +389,7 @@ private struct IntegrationsDestination: View {
             }
         } else {
             IntegrationsAction(title: "Connect", symbol: "link", prominent: true) {
-                let token = temporaryTokens.removeValue(forKey: server.id)
+                let token = enteredTokens.removeValue(forKey: server.id).flatMap { $0.isEmpty ? nil : $0 }
                 Task { await manager.connect(server.id, token: token) }
             }
         }
@@ -572,6 +583,12 @@ struct IntegrationsManageSheet: View {
         config.nativeMCPServerRows.first { ($0["id"] as? String)?.lowercased() == target.id }
     }
 
+    private var addressChanged: Bool {
+        guard let row = existingRow else { return false }
+        return row["authentication"] as? String != NativeMCPServerConfiguration.Authentication.bearer.rawValue
+            || row["url"] as? String != endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var hasSignInDetails: Bool {
         target.existing && existingRow?["oauth"] != nil
     }
@@ -631,6 +648,9 @@ struct IntegrationsManageSheet: View {
                             .accessibilityLabel("Timeout in seconds")
                     }
                 }
+            }
+            if target.existing, authentication == .bearer {
+                IntegrationsTokenField(manager: config.nativeMCP, id: target.id, addressChanged: addressChanged)
             }
             if let error { Text(error).font(.callout).foregroundStyle(Theme.accent).fixedSize(horizontal: false, vertical: true) }
             HStack {
@@ -726,6 +746,70 @@ struct IntegrationsManageSheet: View {
             dismiss()
         } catch {
             self.error = IntegrationsText.message(error)
+        }
+    }
+}
+
+private struct IntegrationsTokenField: View {
+    @ObservedObject var manager: NativeMCPManager
+    let id: String
+    let addressChanged: Bool
+    @State private var token = ""
+    @State private var replacing = false
+    @State private var working = false
+    @State private var error: String?
+
+    private var server: NativeMCPServerState? { manager.servers.first { $0.id == id } }
+    private var saved: Bool { manager.hasSavedToken(id) }
+
+    var body: some View {
+        IntegrationsField(label: "Access token") {
+            VStack(alignment: .leading, spacing: 6) {
+                if addressChanged {
+                    Text(saved ? "Saving this address removes the saved token." : "Save first, then enter the token.")
+                        .font(.caption).foregroundStyle(Theme.textSecondary)
+                } else if saved && !replacing {
+                    HStack(spacing: 14) {
+                        Label(IntegrationsText.tokenSaved, systemImage: "checkmark").font(.system(size: 13))
+                        IntegrationsAction(title: "Replace", symbol: "arrow.triangle.2.circlepath") { replacing = true }
+                        IntegrationsAction(title: "Disconnect", symbol: "xmark") { disconnect() }
+                    }
+                } else {
+                    HStack(spacing: 10) {
+                        IntegrationsSecureField(placeholder: "Access token", text: $token)
+                        IntegrationsAction(title: saved ? "Replace" : "Connect", symbol: "link", disabled: working || token.isEmpty) { submit() }
+                        if saved { IntegrationsAction(title: "Cancel", symbol: "xmark", disabled: working) { token = ""; replacing = false } }
+                    }
+                    Text(IntegrationsText.tokenNote).font(.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let error { Text(error).font(.callout).foregroundStyle(Theme.accent).fixedSize(horizontal: false, vertical: true) }
+            }
+        }
+    }
+
+    private func submit() {
+        let entered = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        token = ""
+        working = true
+        error = nil
+        Task {
+            if saved {
+                error = await manager.replaceToken(id, with: entered)
+            } else {
+                await manager.connect(id, token: entered)
+                error = server?.connected == true ? nil : server?.status
+            }
+            working = false
+            replacing = false
+        }
+    }
+
+    private func disconnect() {
+        error = nil
+        Task {
+            await manager.disconnect(id)
+            error = saved ? NativeMCPManager.tokenUnremoved : nil
         }
     }
 }

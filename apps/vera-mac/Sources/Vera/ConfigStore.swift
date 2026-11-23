@@ -40,6 +40,7 @@ final class ConfigStore: ObservableObject {
     @Published var companionActiveShortcut: CompanionShortcut?
     private var nativeMCPReplacement: Task<Void, Never>?
     static let nativeMCPServerLimit = 8
+    static let tokenLost = "The change couldn't be saved, and the service's token couldn't be put back in your keychain. The service needs its token again."
     @Published private var nativeAPIKeys: [String: String]
     @Published var visionBridgeAPIKey: String {
         didSet {
@@ -121,7 +122,7 @@ final class ConfigStore: ObservableObject {
         let migratedMemoryEndpoint = NativeChatSettings.needsMemoryEndpointMigration(loaded) && settings.memoryEndpoint.isConfigured
         if cleaned.count != loaded.count && cleansRetiredKeys { try? writeConfiguration(cleaned) }
         raw = cleaned
-        nativeMCP = injectedMCP ?? NativeMCPManager(raw: cleaned, enabled: settings.enabledToolIDs)
+        nativeMCP = injectedMCP ?? NativeMCPManager(raw: cleaned, enabled: settings.enabledToolIDs, tokens: credentialStore)
         nativeSettings = settings
         nativeAPIKeys = keys
         savedCredentials = keys
@@ -230,8 +231,19 @@ final class ConfigStore: ObservableObject {
             nativeChat["enabledToolIDs"] = saved.filter { !stale.contains($0) }
             updated["native_chat"] = nativeChat
         }
+        let removed: [String: String]
+        do { removed = try nativeMCP.tokens(leaving: servers) }
+        catch { throw NativeToolError.failed("The saved token couldn't be read from your keychain, so nothing was changed. Disconnect the service first, then try again.") }
+        do { try nativeMCP.forgetTokens(leaving: servers) }
+        catch {
+            guard nativeMCP.restoreTokens(removed) else { throw NativeToolError.failed(Self.tokenLost) }
+            throw NativeToolError.failed("The saved token couldn't be removed from your keychain, so nothing was changed. Try again.")
+        }
         do { try writeConfiguration(updated) }
-        catch { throw NativeToolError.failed("The connected services could not be saved. Try again.") }
+        catch {
+            guard nativeMCP.restoreTokens(removed) else { throw NativeToolError.failed(Self.tokenLost) }
+            throw NativeToolError.failed("The connected services could not be saved. Try again.")
+        }
         raw = updated
         nativeMCPConfigurationError = nil
         let pruned = stale.intersection(nativeSettings.enabledToolIDs)

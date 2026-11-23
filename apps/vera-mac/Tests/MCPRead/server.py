@@ -50,6 +50,8 @@ class Handler(BaseHTTPRequestHandler):
                 text = 'x' * 5000
             if self.path == '/wire-large':
                 text = 'x' * 300000
+            if self.path == '/beyond':
+                text = 'x' * 1100000
             result = {'content': [{'type': 'text', 'text': text}], 'isError': False}
         else:
             self.send_response(404)

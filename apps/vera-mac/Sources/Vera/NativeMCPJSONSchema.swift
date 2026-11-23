@@ -27,10 +27,12 @@ struct NativeMCPJSONSchema: Sendable {
     private static let annotations: Set<String> = ["title", "description", "$comment", "default", "examples", "deprecated", "readOnly", "writeOnly"]
     private static let keywords: Set<String> = ["$schema", "$defs", "$ref", "type", "properties", "required", "additionalProperties", "items", "prefixItems", "enum", "const", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties", "uniqueItems", "allOf", "anyOf", "oneOf", "not"]
 
+    private static let largestValue = 1_048_576
+
     init(_ schema: NativeJSONValue) throws {
         var nodes = 0
         var bytes = 0
-        try Self.measure(schema, depth: 0, nodes: &nodes, bytes: &bytes)
+        try Self.measure(schema, depth: 0, nodes: &nodes, bytes: &bytes, limit: Self.largestValue)
         self.schema = schema
         if case .object(let root) = schema, let declaration = root["$schema"] {
             guard case .string(let identifier) = declaration, let dialect = Dialect(rawValue: identifier) else { throw Failure.unsupportedSchema }
@@ -43,8 +45,9 @@ struct NativeMCPJSONSchema: Sendable {
         } else {
             definitions = [:]
         }
-        var budget = 50_000
-        try inspect(schema, depth: 0, references: [], budget: &budget)
+        var budget = 50_000 + nodes
+        var inspected: Set<String> = []
+        try inspect(schema, depth: 0, references: [], inspected: &inspected, budget: &budget)
     }
 
     func validate(_ value: NativeJSONValue) throws {
@@ -54,6 +57,28 @@ struct NativeMCPJSONSchema: Sendable {
         var budget = 50_000
         guard try matches(value, schema: schema, depth: 0, budget: &budget) else {
             throw Failure.invalidArguments
+        }
+    }
+
+    func validateResult(_ value: NativeJSONValue) throws {
+        guard !Self.holdsLongNumber(value) else { return }
+        do { try validate(value) } catch Failure.resourceLimit { return }
+    }
+
+    private static func holdsLongNumber(_ value: NativeJSONValue) -> Bool {
+        switch value {
+        case .string(let text): return NativeMCPWireJSON.carries(text)
+        case .array(let items): return items.contains(where: holdsLongNumber)
+        case .object(let fields): return fields.values.contains(where: holdsLongNumber)
+        default: return false
+        }
+    }
+
+    private static func bound(_ value: NativeJSONValue?) -> Double? {
+        switch value {
+        case .number(let number): return number
+        case .string(let text) where NativeMCPWireJSON.carries(text): return Double(text)
+        default: return nil
         }
     }
 
@@ -322,23 +347,23 @@ struct NativeMCPJSONSchema: Sendable {
         number.rounded(.towardZero) == number && abs(number) < 1e18 ? String(Int(number)) : String(number)
     }
 
-    private static func measure(_ value: NativeJSONValue, depth: Int, nodes: inout Int, bytes: inout Int) throws {
+    private static func measure(_ value: NativeJSONValue, depth: Int, nodes: inout Int, bytes: inout Int, limit: Int = 32_768) throws {
         nodes += 1
-        guard depth <= 48, nodes <= 32_768, bytes <= 1_048_576 else { throw Failure.resourceLimit }
+        guard depth <= 48, nodes <= limit, bytes <= largestValue else { throw Failure.resourceLimit }
         switch value {
         case .object(let object):
             for (key, item) in object {
                 bytes += key.utf8.count
-                try measure(item, depth: depth + 1, nodes: &nodes, bytes: &bytes)
+                try measure(item, depth: depth + 1, nodes: &nodes, bytes: &bytes, limit: limit)
             }
         case .array(let array):
-            for item in array { try measure(item, depth: depth + 1, nodes: &nodes, bytes: &bytes) }
+            for item in array { try measure(item, depth: depth + 1, nodes: &nodes, bytes: &bytes, limit: limit) }
         case .string(let string): bytes += string.utf8.count
         case .number(let number):
             guard number.isFinite else { throw Failure.resourceLimit }
         case .bool, .null: break
         }
-        guard bytes <= 1_048_576 else { throw Failure.resourceLimit }
+        guard bytes <= largestValue else { throw Failure.resourceLimit }
     }
 
     private func spend(_ budget: inout Int, depth: Int) throws {
@@ -369,7 +394,7 @@ struct NativeMCPJSONSchema: Sendable {
         return (name, target)
     }
 
-    private func inspect(_ value: NativeJSONValue, depth: Int, references: Set<String>, budget: inout Int) throws {
+    private func inspect(_ value: NativeJSONValue, depth: Int, references: Set<String>, inspected: inout Set<String>, budget: inout Int) throws {
         try spend(&budget, depth: depth)
         if case .bool = value { return }
         guard case .object(let object) = value,
@@ -381,13 +406,16 @@ struct NativeMCPJSONSchema: Sendable {
                 guard case .string(let identifier) = value, identifier == dialect.rawValue, depth == 0 else { throw Failure.unsupportedSchema }
             case "$defs":
                 guard depth == 0, case .object(let definitions) = value else { throw Failure.unsupportedSchema }
-                for (name, definition) in definitions {
-                    try inspect(definition, depth: depth + 1, references: references.union([name]), budget: &budget)
+                for (name, definition) in definitions where !inspected.contains(name) {
+                    try inspect(definition, depth: depth + 1, references: references.union([name]), inspected: &inspected, budget: &budget)
+                    inspected.insert(name)
                 }
             case "$ref":
                 let (name, target) = try reference(value)
                 guard !references.contains(name) else { throw Failure.unsupportedSchema }
-                try inspect(target, depth: depth + 1, references: references.union([name]), budget: &budget)
+                if inspected.contains(name) { continue }
+                try inspect(target, depth: depth + 1, references: references.union([name]), inspected: &inspected, budget: &budget)
+                inspected.insert(name)
             case "type":
                 let names: [String]
                 if case .string(let name) = value { names = [name] }
@@ -395,21 +423,21 @@ struct NativeMCPJSONSchema: Sendable {
                 guard !names.isEmpty, Set(names).count == names.count, Set(names).isSubset(of: Self.types) else { throw Failure.unsupportedSchema }
             case "properties":
                 guard case .object(let properties) = value else { throw Failure.unsupportedSchema }
-                for property in properties.values { try inspect(property, depth: depth + 1, references: references, budget: &budget) }
+                for property in properties.values { try inspect(property, depth: depth + 1, references: references, inspected: &inspected, budget: &budget) }
             case "required":
                 let names = try strings(value)
                 guard Set(names).count == names.count else { throw Failure.unsupportedSchema }
             case "additionalProperties", "items", "not":
-                try inspect(value, depth: depth + 1, references: references, budget: &budget)
+                try inspect(value, depth: depth + 1, references: references, inspected: &inspected, budget: &budget)
             case "prefixItems", "allOf", "anyOf", "oneOf":
                 guard case .array(let children) = value, !children.isEmpty else { throw Failure.unsupportedSchema }
-                for child in children { try inspect(child, depth: depth + 1, references: references, budget: &budget) }
+                for child in children { try inspect(child, depth: depth + 1, references: references, inspected: &inspected, budget: &budget) }
             case "enum":
                 guard case .array(let choices) = value, !choices.isEmpty, Set(choices.map(ExactValue.init)).count == choices.count else { throw Failure.unsupportedSchema }
             case "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum":
-                guard case .number = value else { throw Failure.unsupportedSchema }
+                guard Self.bound(value) != nil else { throw Failure.unsupportedSchema }
             case "minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties":
-                guard case .number(let number) = value, number >= 0, number.rounded(.towardZero) == number else { throw Failure.unsupportedSchema }
+                guard let number = Self.bound(value), number >= 0, number.rounded(.towardZero) == number else { throw Failure.unsupportedSchema }
             case "uniqueItems", "deprecated", "readOnly", "writeOnly":
                 guard case .bool = value else { throw Failure.unsupportedSchema }
             case "title", "description", "$comment":
@@ -439,8 +467,8 @@ struct NativeMCPJSONSchema: Sendable {
     }
 
     private func within(_ number: Double, _ object: [String: NativeJSONValue], min: String, max: String) -> Bool {
-        if case .number(let bound)? = object[min], number < bound { return false }
-        if case .number(let bound)? = object[max], number > bound { return false }
+        if let bound = Self.bound(object[min]), number < bound { return false }
+        if let bound = Self.bound(object[max]), number > bound { return false }
         return true
     }
 
@@ -559,8 +587,8 @@ struct NativeMCPJSONSchema: Sendable {
             if !within(Double(string.unicodeScalars.count), object, min: "minLength", max: "maxLength") { return false }
         case .number(let number):
             if !within(number, object, min: "minimum", max: "maximum") { return false }
-            if case .number(let bound)? = object["exclusiveMinimum"], number <= bound { return false }
-            if case .number(let bound)? = object["exclusiveMaximum"], number >= bound { return false }
+            if let bound = Self.bound(object["exclusiveMinimum"]), number <= bound { return false }
+            if let bound = Self.bound(object["exclusiveMaximum"]), number >= bound { return false }
         case .bool, .null: break
         }
         return true

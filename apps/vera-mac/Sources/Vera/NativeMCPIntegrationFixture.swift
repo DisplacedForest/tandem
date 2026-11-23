@@ -41,7 +41,7 @@ enum NativeMCPIntegrationFixture {
         print("NATIVE MCP SHARED AUTHENTICATED AND ANONYMOUS SDK HTTP AND PI CONTRACT OK")
     }
     static func sharedContract(_ arguments: [String], endpoint: URL, authenticated: Bool) async throws {
-        let configuration = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic MCP service", endpoint: endpoint, readTools: ["fixture_read"], scopes: ["focused", "assistant", "worker"], authentication: authenticated ? .bearer : .none, allowLoopbackFixture: true)
+        let configuration = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic MCP service", endpoint: endpoint, readTools: ["fixture_read"], scopes: ["focused", "assistant", "worker"], authentication: authenticated ? .bearer : .none)
         let name = configuration.toolID("fixture_read")
         let manager = NativeMCPManager(servers: [configuration], enabled: [name])
         await manager.connect(configuration.id, token: authenticated ? "vera-synthetic-bearer-proof-7GkN4" : nil)
@@ -79,7 +79,7 @@ enum NativeMCPIntegrationFixture {
         }
     }
     static func errorContract(_ arguments: [String], endpoint: URL) async throws {
-        let configuration = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic error service", endpoint: endpoint, readTools: ["fixture_read"], allowLoopbackFixture: true)
+        let configuration = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic error service", endpoint: endpoint, readTools: ["fixture_read"])
         let name = configuration.toolID("fixture_read")
         let manager = NativeMCPManager(servers: [configuration], enabled: [name])
         await manager.connect(configuration.id)

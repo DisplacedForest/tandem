@@ -61,7 +61,7 @@ enum NativeMCPReadTestSelftest {
         controller.updateInput("https://example.invalid/page")
         controller.run()
         try await wait { !controller.running }
-        try require(controller.result?.source == record.server.endpoint.absoluteString && controller.result?.text.hasPrefix("<b>Plain text</b>") == true, "Result must retain exact source and literal text")
+        try require(controller.result?.source == record.server.source && controller.result?.text.hasPrefix("<b>Plain text</b>") == true, "Result must retain exact source and literal text")
         try require(await connection.calls == 1, "One explicit read must invoke the shared authority once")
         controller.updateInput("https://example.invalid/another")
         try require(controller.result == nil, "Editing arguments must clear the previous result")
@@ -224,8 +224,8 @@ enum NativeMCPReadTestSelftest {
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: portFile.path + ".counts.json")), let counts = try? JSONDecoder().decode([String: Int].self, from: data) else { return 0 }
             return counts["/" + path + "|tools/call"] ?? 0
         }
-        for path in ["ok", "large", "wire-large", "slow", "held"] {
-            let server = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic SDK service", endpoint: URL(string: "http://127.0.0.1:\(port)/\(path)")!, readTools: ["fixture_read"], timeout: path == "slow" ? 2 : 5, allowLoopbackFixture: true)
+        for path in ["ok", "large", "wire-large", "beyond", "slow", "held"] {
+            let server = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic SDK service", endpoint: URL(string: "http://127.0.0.1:\(port)/\(path)")!, readTools: ["fixture_read"], timeout: path == "slow" ? 2 : 5)
             let manager = NativeMCPManager(servers: [server], enabled: [server.toolID("fixture_read")])
             await manager.connect(server.id)
             guard let record = manager.servers.first?.tools.first, let controller = NativeMCPReadTestController(manager: manager, record: record) else { throw NativeToolError.failed("SDK read fixture did not connect") }
@@ -243,7 +243,9 @@ enum NativeMCPReadTestSelftest {
             try await wait { !controller.running }
             try require(calls(path) == 1, "Each explicit SDK test must make exactly one tool request")
             if path == "ok" {
-                try require(controller.result?.text.hasPrefix("<b>Plain synthetic response</b>") == true && controller.result?.source == server.endpoint.absoluteString, "SDK read must preserve plain content and exact source")
+                try require(controller.result?.text.hasPrefix("<b>Plain synthetic response</b>") == true && controller.result?.source == server.source, "SDK read must preserve plain content and exact source")
+            } else if path == "large" || path == "wire-large" {
+                try require(controller.result?.text.count == (path == "large" ? 5_000 : 300_000), "A long SDK read must arrive whole")
             } else {
                 try require(controller.result == nil, "Oversize, timeout, and disabled SDK reads must not publish")
             }
@@ -251,7 +253,7 @@ enum NativeMCPReadTestSelftest {
             controller.close()
             await manager.disconnect(server.id)
         }
-        let server = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic cancellation", endpoint: URL(string: "http://127.0.0.1:\(port)/held")!, readTools: ["fixture_read"], allowLoopbackFixture: true)
+        let server = try NativeMCPServerConfiguration(id: UUID().uuidString, name: "Synthetic cancellation", endpoint: URL(string: "http://127.0.0.1:\(port)/held")!, readTools: ["fixture_read"])
         let manager = NativeMCPManager(servers: [server], enabled: [server.toolID("fixture_read")])
         await manager.connect(server.id)
         let record = manager.servers[0].tools[0]
