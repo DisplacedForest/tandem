@@ -280,7 +280,7 @@ private struct IntegrationsDestination: View {
             Image(systemName: AppSection.integrations.icon).font(.system(size: 30, weight: .light))
                 .foregroundStyle(Theme.textSecondary)
             Text("No connected services yet.").font(.system(size: 20, weight: .semibold))
-            Text("Browse Public to install one, or add your own with Manage.")
+            Text("Browse Public to install one, or add your own.")
                 .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 380)
             IntegrationsAction(title: "Add your own…", symbol: "plus", prominent: true) {
