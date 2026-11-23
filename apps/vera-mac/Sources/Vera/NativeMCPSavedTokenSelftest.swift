@@ -58,6 +58,10 @@ enum NativeMCPSavedTokenSelftest {
         throw NativeToolError.failed(message)
     }
 
+    static func tokens(_ keys: NativeCredentialFixtureStore) -> [String: String] {
+        keys.values.filter { !$0.key.hasPrefix("connected-service-address") }
+    }
+
     static func connected(_ manager: NativeMCPManager) -> Bool { manager.servers.first?.connected == true }
 
     static func run() async throws {
@@ -114,7 +118,7 @@ enum NativeMCPSavedTokenSelftest {
         let config = ConfigStore(credentialStore: keys, readConfiguration: { disk }, nativeMCP: first, writeConfiguration: { disk = $0 })
         try check(!connected(first) && service.count == 0, "A service with no saved token connects by itself")
         await first.connect(id, token: token)
-        try check(connected(first) && first.hasSavedToken(id) && keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil, "A token that connects is saved")
+        try check(connected(first) && first.hasSavedToken(id) && tokens(keys).count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil, "A token that connects is saved")
         try config.save()
         let written = String(describing: disk)
         try check(!written.contains(token), "The token is written to the configuration file")
@@ -151,25 +155,25 @@ enum NativeMCPSavedTokenSelftest {
             let manager = try self.manager([row()], service, keys)
             let config = ConfigStore(credentialStore: keys, readConfiguration: { disk.contents }, nativeMCP: manager, writeConfiguration: { disk.contents = $0 })
             await manager.connect(id, token: token)
-            try check(connected(manager) && keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil, "The fixture service is connected and saved")
+            try check(connected(manager) && tokens(keys).count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil, "The fixture service is connected and saved")
             return (manager, config)
         }
         let disk = NativeMCPInstallSelftest.Disk()
         var (manager, config) = try await opened(disk)
         await manager.disconnect(id)
-        try check(keys.values.isEmpty && !manager.hasSavedToken(id) && !connected(manager), "Disconnect deletes the token")
+        try check(tokens(keys).isEmpty && !manager.hasSavedToken(id) && !connected(manager), "Disconnect deletes the token")
         let count = service.count
         await manager.connect(id)
         try check(service.count == count && !connected(manager) && manager.servers[0].status == NativeMCPAuthority.tokenNeeded, "Reconnecting asks for the token again")
 
         (manager, config) = try await opened(disk)
         try config.removeNativeMCPServer(id: id)
-        try check(keys.values.isEmpty && manager.servers.isEmpty, "Remove deletes the token")
+        try check(tokens(keys).isEmpty && manager.servers.isEmpty, "Remove deletes the token")
         await config.settleNativeMCP()
 
         (manager, config) = try await opened(disk)
         try config.updateNativeMCPServer(row("http://\(home).1.4:8123/api/mcp"))
-        try check(keys.values.isEmpty && !manager.hasSavedToken(id), "An address change deletes the token")
+        try check(tokens(keys).isEmpty && !manager.hasSavedToken(id), "An address change deletes the token")
         await config.settleNativeMCP()
         try check(!connected(manager), "A moved service waits for a token")
 
@@ -177,7 +181,7 @@ enum NativeMCPSavedTokenSelftest {
         var plain = row()
         plain.removeValue(forKey: "authentication")
         try config.updateNativeMCPServer(plain)
-        try check(keys.values.isEmpty, "Turning off the token deletes it")
+        try check(tokens(keys).isEmpty, "Turning off the token deletes it")
         await config.settleNativeMCP()
 
         (manager, config) = try await opened(disk)
@@ -185,7 +189,7 @@ enum NativeMCPSavedTokenSelftest {
         renamed["name"] = "Home"
         renamed["timeout_seconds"] = 6.0
         try config.updateNativeMCPServer(renamed)
-        try check(keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil, "Other edits keep the token")
+        try check(tokens(keys).count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil, "Other edits keep the token")
         try await wait("The service reconnects after another edit") { connected(manager) }
 
         keys.failWrites = true
@@ -198,7 +202,7 @@ enum NativeMCPSavedTokenSelftest {
         try check(!connected(manager), "A disconnected service stays disconnected")
         keys.failWrites = false
         await manager.disconnect(id)
-        try check(keys.values.isEmpty, "Disconnecting again removes the token")
+        try check(tokens(keys).isEmpty, "Disconnecting again removes the token")
 
         (manager, config) = try await opened(disk)
         let saved = keys.values
@@ -206,7 +210,7 @@ enum NativeMCPSavedTokenSelftest {
         try check(keys.values == saved, "A configuration that couldn't be read keeps its tokens")
         keys.values = saved
         let emptied = NativeMCPManager(servers: [], tokens: keys, prunesTokens: true)
-        try check(keys.values.isEmpty && emptied.savedTokens.isEmpty, "A token whose service is gone is deleted at launch")
+        try check(tokens(keys).isEmpty && emptied.savedTokens.isEmpty, "A token whose service is gone is deleted at launch")
         keys.values = saved
         keys.failWrites = true
         let stuck = try self.manager([row("http://\(home).1.4:8123/api/mcp")], service, keys)
@@ -217,19 +221,19 @@ enum NativeMCPSavedTokenSelftest {
         try await wait("A token that couldn't be removed after a late read says so") { late.servers[0].status == NativeMCPManager.tokenUnremoved }
         keys.failWrites = false
         let moved = try self.manager([row("http://\(home).1.4:8123/api/mcp")], service, keys)
-        try check(keys.values.isEmpty && !moved.hasSavedToken(id), "A token never follows a hand-edited address")
+        try check(tokens(keys).isEmpty && !moved.hasSavedToken(id), "A token never follows a hand-edited address")
         await manager.disconnect(id)
 
         (manager, config) = try await opened(disk)
         keys.denied = [NativeMCPTokenKeeper.account(id)]
         do { try config.removeNativeMCPServer(id: id); throw NativeMCPTransportError.network }
         catch is NativeToolError {}
-        try check(keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil && config.nativeMCPServerRows.count == 1, "A token that can't be read back is never deleted by a removal")
+        try check(tokens(keys).count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil && config.nativeMCPServerRows.count == 1, "A token that can't be read back is never deleted by a removal")
         keys.denied = []
         let refusing = ConfigStore(credentialStore: keys, readConfiguration: { disk.contents }, nativeMCP: manager, writeConfiguration: { _ in throw NativeMCPTransportError.network })
         do { try refusing.removeNativeMCPServer(id: id); throw NativeMCPTransportError.network }
         catch is NativeToolError {}
-        try check(keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil && manager.hasSavedToken(id) && connected(manager), "A removal that can't be written keeps the token")
+        try check(tokens(keys).count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil && manager.hasSavedToken(id) && connected(manager), "A removal that can't be written keeps the token")
         await manager.disconnect(id)
     }
 
@@ -238,10 +242,10 @@ enum NativeMCPSavedTokenSelftest {
         let manager = try self.manager([row()], service, keys)
         service.refuse(other)
         await manager.connect(id, token: other)
-        try check(!connected(manager) && keys.values.isEmpty && manager.servers[0].refused, "A refused token is not saved")
+        try check(!connected(manager) && tokens(keys).isEmpty && manager.servers[0].refused, "A refused token is not saved")
         service.setDown(true)
         await manager.connect(id, token: token)
-        try check(keys.values.isEmpty, "A token that never connected is not saved")
+        try check(tokens(keys).isEmpty, "A token that never connected is not saved")
         service.setDown(false)
         keys.failWrites = true
         await manager.connect(id, token: token)
@@ -276,7 +280,7 @@ enum NativeMCPSavedTokenSelftest {
         try check(!connected(locked) && locked.hasSavedToken(id) && service.count == count, "An unreadable saved token is kept and not used")
         keys.denied = []
         await locked.disconnect(id)
-        try check(keys.values.isEmpty, "A saved token that couldn't be read can still be removed")
+        try check(tokens(keys).isEmpty, "A saved token that couldn't be read can still be removed")
         await manager.disconnect(id)
     }
 
@@ -291,7 +295,7 @@ enum NativeMCPSavedTokenSelftest {
             await seeded.disconnect(id)
             try await Task.sleep(for: .milliseconds(12))
             seeded.refresh()
-            try check(!connected(seeded) && keys.values.isEmpty, "A reconnect outlived Disconnect")
+            try check(!connected(seeded) && tokens(keys).isEmpty, "A reconnect outlived Disconnect")
         }
         for delay in 0..<20 {
             await seeded.connect(id, token: token)
@@ -301,7 +305,7 @@ enum NativeMCPSavedTokenSelftest {
             _ = await replacing.value
             try await Task.sleep(for: .milliseconds(12))
             seeded.refresh()
-            if !connected(seeded) { try check(keys.values.isEmpty, "Replace outlived Disconnect") }
+            if !connected(seeded) { try check(tokens(keys).isEmpty, "Replace outlived Disconnect") }
             else { try check(delay == 0, "Replace reconnected after Disconnect") }
             await seeded.disconnect(id)
         }
@@ -310,7 +314,7 @@ enum NativeMCPSavedTokenSelftest {
         await Task.yield()
         await seeded.reconcileConfiguration(moved)
         await opening.value
-        try check(keys.values.isEmpty && !connected(seeded), "A token typed for the old address reached the new one")
+        try check(tokens(keys).isEmpty && !connected(seeded), "A token typed for the old address reached the new one")
     }
 
     static func discovery() async throws {

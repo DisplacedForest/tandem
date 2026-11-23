@@ -555,6 +555,8 @@ enum SelfTest {
         catch { print("SELFTEST ERROR: mcp reported tools \(error)"); exit(1) }
         do { try await NativeMCPLaunchSelftest.run() }
         catch { print("SELFTEST ERROR: mcp launch \(error)"); exit(1) }
+        do { try await NativeMCPAddressBookSelftest.run() }
+        catch { print("SELFTEST ERROR: mcp address book \(error)"); exit(1) }
         do { try await NativeMCPChangesSelftest.run() }
         catch { print("SELFTEST ERROR: mcp changes \(error)"); exit(1) }
         do { try runComposerMentions() }

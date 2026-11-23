@@ -316,7 +316,7 @@ private struct IntegrationsDestination: View {
                 Text(detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if configuration.authentication == .bearer && !server.connected && !server.connecting && !reconnects(server) {
+            if configuration.authentication == .bearer && !server.connected && !server.connecting && !reconnects(server) && !configuration.locked {
                 VStack(alignment: .leading, spacing: 6) {
                     IntegrationsSecureField(placeholder: "Access token", text: Binding(
                         get: { enteredTokens[server.id] ?? "" }, set: { enteredTokens[server.id] = $0 }))
@@ -565,6 +565,8 @@ struct IntegrationsManageSheet: View {
     @State private var loaded = false
     @State private var name = ""
     @State private var endpoint = ""
+    @State private var changingAddress = false
+    @State private var newAddress = ""
     @State private var reads = ""
     @State private var acts = ""
     @State private var scopes: Set<String> = ["focused", "assistant"]
@@ -600,7 +602,7 @@ struct IntegrationsManageSheet: View {
     private var addressChanged: Bool {
         guard let row = existingRow else { return false }
         return row["authentication"] as? String != NativeMCPServerConfiguration.Authentication.bearer.rawValue
-            || row["url"] as? String != endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+            || changingAddress
     }
 
     private var hasSignInDetails: Bool {
@@ -616,7 +618,14 @@ struct IntegrationsManageSheet: View {
                 }
             }
             IntegrationsField(label: "Service address") {
-                if renderSafe { IntegrationsStaticField(text: endpoint) } else {
+                if target.existing, !changingAddress {
+                    HStack(spacing: 10) {
+                        IntegrationsStaticField(text: NativeMCPAddressBook.origin(endpoint) ?? endpoint)
+                        IntegrationsAction(title: "Change", symbol: "pencil") { changingAddress = true; newAddress = "" }
+                    }
+                } else if target.existing {
+                    TextField("https://", text: $newAddress).textFieldStyle(.roundedBorder).accessibilityLabel("New service address")
+                } else if renderSafe { IntegrationsStaticField(text: endpoint) } else {
                     TextField("https://", text: $endpoint).textFieldStyle(.roundedBorder).accessibilityLabel("Service address")
                 }
             }
@@ -754,7 +763,15 @@ struct IntegrationsManageSheet: View {
             error = IntegrationsText.accountSignInNote
             return
         }
-        let row = Self.row(target.existing ? (existingRow ?? [:]) : [:], id: target.id, name: name, endpoint: endpoint, reads: reads, acts: acts,
+        var existing = target.existing ? (existingRow ?? [:]) : [:]
+        if changingAddress {
+            guard !newAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                error = NativeMCPAddress.unreadable
+                return
+            }
+            existing.removeValue(forKey: NativeMCPAddressBook.marker)
+        }
+        let row = Self.row(existing, id: target.id, name: name, endpoint: changingAddress ? newAddress : existing["url"] as? String ?? endpoint, reads: reads, acts: acts,
                            scopes: scopes, seconds: seconds, authentication: authentication)
         do {
             if target.existing { try config.updateNativeMCPServer(row) } else { try config.addNativeMCPServer(row) }

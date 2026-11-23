@@ -6,7 +6,7 @@ final class PiCandidateCredentials: NativeCredentialStore {
     var reads = 0
     init(profile: String) { values = [profile: Self.key] }
     func read(for profileID: String) throws -> String? {
-        if profileID != NativeMCPTokenKeeper.holders { reads += 1 }
+        if profileID != NativeMCPTokenKeeper.holders, profileID != NativeMCPAddressBook.holders { reads += 1 }
         return values[profileID]
     }
     func set(_ value: String?, for profileID: String) throws { values[profileID] = value }

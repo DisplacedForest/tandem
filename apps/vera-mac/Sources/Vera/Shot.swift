@@ -697,7 +697,7 @@ enum Shot {
                  "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
                  "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow", "artifacts-collapsed": section = .artifacts
             case "scheduled", "scheduled-paused", "scheduled-caught-up", "scheduled-anything": section = .scheduled
-            case "integrations", "integrations-public", "integrations-empty", "integrations-changes", "integrations-reports", "integrations-reconnecting", "integrations-failed", "integrations-signed-in": section = .integrations
+            case "integrations", "integrations-public", "integrations-empty", "integrations-changes", "integrations-reports", "integrations-reconnecting", "integrations-failed", "integrations-signed-in", "integrations-locked": section = .integrations
             case "memory": section = .memory
             case "companion-connection":
                 section = .vera

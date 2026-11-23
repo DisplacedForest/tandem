@@ -67,7 +67,7 @@ enum NativeMCPInstallSelftest {
         } catch let error as NativeToolError {
             try check(!(error.errorDescription ?? "").isEmpty, "the refusal should carry a message")
         }
-        try check((disk.contents["native_mcp_servers"] as? [[String: Any]])?.first?["url"] as? String == entry.url.absoluteString, "a refused update should not be written")
+        try check(config.nativeMCPServerRows.first?["url"] as? String == entry.url.absoluteString, "a refused update should not be kept")
 
         try config.removeNativeMCPServer(id: id)
         try check(disk.contents["native_mcp_servers"] == nil, "removal should delete the row")
