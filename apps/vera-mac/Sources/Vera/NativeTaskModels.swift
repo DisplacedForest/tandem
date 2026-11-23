@@ -261,10 +261,10 @@ struct NativeCompanionTaskPayload: Codable, Equatable, Hashable, Sendable {
             throw NativeTaskError.invalidRequest("This must start manually, on a schedule or on its own.")
         }
         if let connectedToolIDs {
-            guard connectedToolIDs.count <= 64, Set(connectedToolIDs).count == connectedToolIDs.count,
+            guard Set(connectedToolIDs).count == connectedToolIDs.count,
                   connectedToolIDs.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128
                       && $0.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) } }) else {
-                throw NativeTaskError.invalidRequest("Connected services must be a short list of distinct names.")
+                throw NativeTaskError.invalidRequest("Connected services must be a list of distinct names.")
             }
         }
         guard NativeRunOrigin.validSchedule(scheduleID), scheduleID == nil || mode == "scheduled" else {

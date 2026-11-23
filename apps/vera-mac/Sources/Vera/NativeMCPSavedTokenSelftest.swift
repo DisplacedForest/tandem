@@ -76,7 +76,7 @@ enum NativeMCPSavedTokenSelftest {
 
     static func addresses() throws {
         let local = ["http://\(home).1.4:8123/api/mcp", "http://\(ten).0.0.8/mcp", "http://\(middle).16.0.1/mcp", "http://\(middle).31.255.254/mcp", "http://169.254.7.1/mcp",
-                     "http://127.0.0.1:9/mcp", "http://localhost/mcp", "http://[::1]/mcp", "http://[fe80::1]/mcp", "http://homeassistant.local:8123/api/mcp", "http://HOME.LOCAL./mcp"]
+                     "http://127.0.0.1:9/mcp", "http://localhost/mcp", "http://[::1]/mcp", "http://[fe80::1]/mcp", "http://homeassistant.local:8123/api/mcp", "http://HOME.LOCAL./mcp", "http://homeassistant:8123/mcp", "http://home-pi.lan/mcp", "http://server.home.arpa/mcp", "http://[fd00::1]/mcp", "http://[fc00::1]/mcp"]
         for text in local {
             let url = URL(string: text)!
             try NativeMCPAddress.validate(url, personSupplied: true)
@@ -91,8 +91,8 @@ enum NativeMCPSavedTokenSelftest {
             }
         }
         let open = ["http://example.com/mcp", "http://8.8.8.8/mcp", "http://172.32.0.1/mcp", "http://172.15.0.1/mcp", "http://192.169.0.1/mcp", "http://11.0.0.1/mcp", "http://169.253.0.1/mcp",
-                    "http://local/mcp", "http://notlocal/mcp", "http://evil-local.com/mcp", "http://homeassistant.local.example.com/mcp", "http://\(ten).0.0.1.example.com/mcp",
-                    "http://010.0.0.1/mcp", "http://0127.0.0.1/mcp", "http://192.0168.1.1/mcp", "http://\(ten).1/mcp", "http://167772161/mcp", "http://0x0a000001/mcp", "http://[2001:db8::1]/mcp", "http://[fec0::1]/mcp", "http://[::ffff:8.8.8.8]/mcp"]
+                    "http://evil-local.com/mcp", "http://homeassistant.local.example.com/mcp", "http://\(ten).0.0.1.example.com/mcp",
+                    "http://010.0.0.1/mcp", "http://0127.0.0.1/mcp", "http://192.0168.1.1/mcp", "http://\(ten).1/mcp", "http://167772161/mcp", "http://0x0a000001/mcp", "http://[2001:db8::1]/mcp", "http://[fec0::1]/mcp", "http://lan.example.com/mcp", "http://evil.lan.example.com/mcp", "http://0x7f/mcp", "http://1/mcp", "http://evil%E3%80%82com/mcp", "http://[::ffff:8.8.8.8]/mcp"]
         for text in open {
             let url = URL(string: text)!
             let (servers, failure) = NativeMCPServerConfiguration.load(["native_mcp_servers": [row(text)]])
@@ -114,7 +114,7 @@ enum NativeMCPSavedTokenSelftest {
         let config = ConfigStore(credentialStore: keys, readConfiguration: { disk }, nativeMCP: first, writeConfiguration: { disk = $0 })
         try check(!connected(first) && service.count == 0, "A service with no saved token connects by itself")
         await first.connect(id, token: token)
-        try check(connected(first) && first.hasSavedToken(id) && keys.values.count == 1, "A token that connects is saved")
+        try check(connected(first) && first.hasSavedToken(id) && keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil, "A token that connects is saved")
         try config.save()
         let written = String(describing: disk)
         try check(!written.contains(token), "The token is written to the configuration file")
@@ -151,7 +151,7 @@ enum NativeMCPSavedTokenSelftest {
             let manager = try self.manager([row()], service, keys)
             let config = ConfigStore(credentialStore: keys, readConfiguration: { disk.contents }, nativeMCP: manager, writeConfiguration: { disk.contents = $0 })
             await manager.connect(id, token: token)
-            try check(connected(manager) && keys.values.count == 1, "The fixture service is connected and saved")
+            try check(connected(manager) && keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil, "The fixture service is connected and saved")
             return (manager, config)
         }
         let disk = NativeMCPInstallSelftest.Disk()
@@ -185,7 +185,7 @@ enum NativeMCPSavedTokenSelftest {
         renamed["name"] = "Home"
         renamed["timeout_seconds"] = 6.0
         try config.updateNativeMCPServer(renamed)
-        try check(keys.values.count == 1, "Other edits keep the token")
+        try check(keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil, "Other edits keep the token")
         try await wait("The service reconnects after another edit") { connected(manager) }
 
         keys.failWrites = true
@@ -201,6 +201,13 @@ enum NativeMCPSavedTokenSelftest {
         try check(keys.values.isEmpty, "Disconnecting again removes the token")
 
         (manager, config) = try await opened(disk)
+        let saved = keys.values
+        _ = NativeMCPManager(servers: [], tokens: keys)
+        try check(keys.values == saved, "A configuration that couldn't be read keeps its tokens")
+        keys.values = saved
+        let emptied = NativeMCPManager(servers: [], tokens: keys, prunesTokens: true)
+        try check(keys.values.isEmpty && emptied.savedTokens.isEmpty, "A token whose service is gone is deleted at launch")
+        keys.values = saved
         keys.failWrites = true
         let stuck = try self.manager([row("http://\(home).1.4:8123/api/mcp")], service, keys)
         try check(stuck.servers[0].status == NativeMCPManager.tokenUnremoved && stuck.hasSavedToken(id) && !stuck.reconnects(stuck.servers[0]), "A token that couldn't be removed after a hand edit says so")
@@ -217,12 +224,12 @@ enum NativeMCPSavedTokenSelftest {
         keys.denied = [NativeMCPTokenKeeper.account(id)]
         do { try config.removeNativeMCPServer(id: id); throw NativeMCPTransportError.network }
         catch is NativeToolError {}
-        try check(keys.values.count == 1 && config.nativeMCPServerRows.count == 1, "A token that can't be read back is never deleted by a removal")
+        try check(keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil && config.nativeMCPServerRows.count == 1, "A token that can't be read back is never deleted by a removal")
         keys.denied = []
         let refusing = ConfigStore(credentialStore: keys, readConfiguration: { disk.contents }, nativeMCP: manager, writeConfiguration: { _ in throw NativeMCPTransportError.network })
         do { try refusing.removeNativeMCPServer(id: id); throw NativeMCPTransportError.network }
         catch is NativeToolError {}
-        try check(keys.values.count == 1 && manager.hasSavedToken(id) && connected(manager), "A removal that can't be written keeps the token")
+        try check(keys.values.count == 2 && keys.values[NativeMCPTokenKeeper.account(id)] != nil && manager.hasSavedToken(id) && connected(manager), "A removal that can't be written keeps the token")
         await manager.disconnect(id)
     }
 
@@ -242,6 +249,12 @@ enum NativeMCPSavedTokenSelftest {
         keys.failWrites = false
         await manager.connect(id, token: token)
         try check(connected(manager), "The service connects once the token saves")
+        let before = keys.values
+        keys.denied = [NativeMCPTokenKeeper.holders]
+        let untracked = await manager.replaceToken(id, with: "synthetic-fourth-token-value")
+        try check(untracked == NativeMCPManager.tokenUnused && keys.values == before, "A list that can't be read is never written over")
+        keys.denied = []
+        try await wait("The saved token is used once the list reads") { connected(manager) }
         let kept = keys.values
         let failed = await manager.replaceToken(id, with: other)
         try check(failed == NativeMCPManager.tokenUnused && keys.values == kept, "A replacement that fails keeps the saved token")

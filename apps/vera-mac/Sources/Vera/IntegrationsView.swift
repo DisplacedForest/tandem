@@ -45,10 +45,11 @@ enum IntegrationsText {
     }
 
     static let tokenNote = "Kept in your Mac's keychain until you disconnect or remove this service, or change its address."
+    static let disconnectNote = "Disconnecting removes the saved token."
     static let tokenSaved = "Token saved"
 
-    static func footer(_ authentication: NativeMCPServerConfiguration.Authentication) -> String {
-        let approved = "Only what you approve is available, and a service cannot give itself more."
+    static func footer(_ authentication: NativeMCPServerConfiguration.Authentication, reports: Bool = false) -> String {
+        let approved = reports ? "The service decides which tools it offers and which of them only read. You can turn any of them off." : "Only what you approve is available, and a service cannot give itself more."
         return authentication == .bearer ? approved : approved + " Connections end when Tandem quits."
     }
 
@@ -284,7 +285,7 @@ private struct IntegrationsDestination: View {
         let configuration = server.configuration
         let progress = manager.oauthProgress[server.id]
         let state = IntegrationsText.state(server, signingIn: progress != nil, reconnecting: reconnects(server))
-        let detail = progress ?? (server.status == state || server.status.hasPrefix("Connected") ? nil : server.status)
+        let detail = reconnects(server) ? nil : progress ?? (server.status == state || server.status.hasPrefix("Connected") ? nil : server.status)
         let reads = server.tools.filter { $0.state == .read || $0.asksBecauseOfService }
         let changes = server.tools.filter { $0.state == .change && !$0.asksBecauseOfService }
         let unapproved = server.tools.filter { $0.state == .unapproved }
@@ -319,9 +320,6 @@ private struct IntegrationsDestination: View {
                 VStack(alignment: .leading, spacing: 6) {
                     IntegrationsSecureField(placeholder: "Access token", text: Binding(
                         get: { enteredTokens[server.id] ?? "" }, set: { enteredTokens[server.id] = $0 }))
-                    Text(IntegrationsText.tokenNote)
-                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: 420, alignment: .leading)
             }
@@ -330,6 +328,7 @@ private struct IntegrationsDestination: View {
                     IntegrationsAction(title: "Refresh sign-in", symbol: "arrow.clockwise") {
                         Task { await manager.refreshOAuth(server.id) }
                     }
+                    Text("Sign-in lasts up to one hour.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
             }
             IntegrationsSection(title: "Available in") {
@@ -362,10 +361,14 @@ private struct IntegrationsDestination: View {
                     }
                 }
             }
+            ForEach(server.notes, id: \.self) { note in
+                Text(note).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let source = configuration.sourceURL {
                 IntegrationsLink(title: "Publisher's page", url: source)
             }
-            Text(IntegrationsText.footer(configuration.authentication))
+            Text(IntegrationsText.footer(configuration.authentication, reports: configuration.reportsTools))
                 .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -378,7 +381,7 @@ private struct IntegrationsDestination: View {
         let saved = manager.hasSavedToken(server.id)
         if server.connected || server.connecting || progress != nil || reconnects(server) {
             let pending = !saved && (server.connecting || progress != nil)
-            IntegrationsAction(title: pending ? "Cancel connection" : "Disconnect", symbol: "xmark", prominent: true) {
+            IntegrationsAction(title: pending ? "Cancel connection" : "Disconnect", symbol: "xmark", prominent: true, help: saved ? IntegrationsText.disconnectNote : nil) {
                 enteredTokens.removeValue(forKey: server.id)
                 manager.cancelOAuthLocally(server.id)
                 Task { await manager.disconnect(server.id) }
@@ -396,12 +399,12 @@ private struct IntegrationsDestination: View {
     }
 
     private func toolRow(_ tool: NativeMCPToolRecord, warning: String?, described: Bool = false) -> some View {
-        let enabled = config.nativeSettings.enabledToolIDs.contains(tool.id)
+        let enabled = manager.authority.access.isOn(tool)
         let tryable = tool.state == .read
         let canTry = !renderSafe && NativeMCPReadTestController.scope(authority: manager.authority, record: tool) != nil
         return HStack(alignment: .top, spacing: 10) {
             if !described {
-                IntegrationsSwitch(isOn: Binding(get: { enabled }, set: { setTool(tool.id, enabled: $0) }),
+                IntegrationsSwitch(isOn: Binding(get: { enabled }, set: { setTool(tool, enabled: $0) }),
                                    label: tool.remoteName, disabled: !tool.callable)
             }
             VStack(alignment: .leading, spacing: 3) {
@@ -430,7 +433,13 @@ private struct IntegrationsDestination: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
     }
 
-    private func setTool(_ id: String, enabled: Bool) {
+    private func setTool(_ tool: NativeMCPToolRecord, enabled: Bool) {
+        if tool.server.reportsTools {
+            do { try config.setNativeMCPTool(tool, enabled: enabled); consentError = nil }
+            catch { consentError = "The change couldn't be saved: \(IntegrationsText.message(error))" }
+            return
+        }
+        let id = tool.id
         let previous = config.nativeSettings.enabledToolIDs.contains(id)
         config.setNativeTool(id, enabled: enabled)
         store.updateNativeToolConsent(config.nativeSettings.enabledToolIDs)
@@ -583,6 +592,11 @@ struct IntegrationsManageSheet: View {
         config.nativeMCPServerRows.first { ($0["id"] as? String)?.lowercased() == target.id }
     }
 
+    private var reportsTools: Bool {
+        guard target.existing, let row = existingRow else { return false }
+        return row["read_tools"] == nil && row["act_tools"] == nil
+    }
+
     private var addressChanged: Bool {
         guard let row = existingRow else { return false }
         return row["authentication"] as? String != NativeMCPServerConfiguration.Authentication.bearer.rawValue
@@ -606,6 +620,7 @@ struct IntegrationsManageSheet: View {
                     TextField("https://", text: $endpoint).textFieldStyle(.roundedBorder).accessibilityLabel("Service address")
                 }
             }
+            if !reportsTools {
             IntegrationsField(label: "Approved reads, one per line") {
                 if renderSafe { IntegrationsStaticField(text: reads, lines: true) } else {
                     TextEditor(text: $reads).font(.system(.body, design: .monospaced))
@@ -621,6 +636,7 @@ struct IntegrationsManageSheet: View {
                         .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.hairline, lineWidth: 1))
                         .accessibilityLabel("Approved changes, one per line")
                 }
+            }
             }
             IntegrationsField(label: "Available in") {
                 IntegrationsScopeToggles(scopes: $scopes)
@@ -687,6 +703,9 @@ struct IntegrationsManageSheet: View {
         row["id"] = id
         row["name"] = name.trimmingCharacters(in: .whitespacesAndNewlines)
         row["url"] = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if existing["id"] != nil, existing["read_tools"] == nil, existing["act_tools"] == nil, reads.isEmpty, acts.isEmpty {
+            return signed(row, scopes: scopes, seconds: seconds, authentication: authentication)
+        }
         var changed = Set<String>()
         let changes = acts.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -699,6 +718,12 @@ struct IntegrationsManageSheet: View {
         if changes.isEmpty { row.removeValue(forKey: "act_tools") } else { row["act_tools"] = changes }
         let asks = (row["asks_tools"] as? [String] ?? []).filter(kept.contains)
         if asks.isEmpty { row.removeValue(forKey: "asks_tools") } else { row["asks_tools"] = asks }
+        return signed(row, scopes: scopes, seconds: seconds, authentication: authentication)
+    }
+
+    private static func signed(_ filled: [String: Any], scopes: Set<String>, seconds: Double,
+                               authentication: NativeMCPServerConfiguration.Authentication) -> [String: Any] {
+        var row = filled
         row["scopes"] = IntegrationsText.scopeKeys.filter { scopes.contains($0) }
         row["timeout_seconds"] = seconds
         if authentication == .none { row.removeValue(forKey: "authentication") } else { row["authentication"] = authentication.rawValue }
@@ -772,7 +797,7 @@ private struct IntegrationsTokenField: View {
                     HStack(spacing: 14) {
                         Label(IntegrationsText.tokenSaved, systemImage: "checkmark").font(.system(size: 13))
                         IntegrationsAction(title: "Replace", symbol: "arrow.triangle.2.circlepath") { replacing = true }
-                        IntegrationsAction(title: "Disconnect", symbol: "xmark") { disconnect() }
+                        IntegrationsAction(title: "Disconnect", symbol: "xmark", help: IntegrationsText.disconnectNote) { disconnect() }
                     }
                 } else {
                     HStack(spacing: 10) {
@@ -780,8 +805,6 @@ private struct IntegrationsTokenField: View {
                         IntegrationsAction(title: saved ? "Replace" : "Connect", symbol: "link", disabled: working || token.isEmpty) { submit() }
                         if saved { IntegrationsAction(title: "Cancel", symbol: "xmark", disabled: working) { token = ""; replacing = false } }
                     }
-                    Text(IntegrationsText.tokenNote).font(.caption).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let error { Text(error).font(.callout).foregroundStyle(Theme.accent).fixedSize(horizontal: false, vertical: true) }
             }
@@ -919,6 +942,7 @@ private struct IntegrationsSecureField: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline, lineWidth: 1))
         } else {
             SecureField(placeholder, text: $text).textFieldStyle(.roundedBorder).accessibilityLabel(placeholder)
+                .help(IntegrationsText.tokenNote)
         }
     }
 }
@@ -951,6 +975,7 @@ private struct IntegrationsAction: View {
     let symbol: String
     var prominent = false
     var disabled = false
+    var help: String? = nil
     let action: () -> Void
 
     var body: some View {
@@ -969,11 +994,13 @@ private struct IntegrationsAction: View {
                 .buttonStyle(.borderedProminent).controlSize(.small).font(.system(size: 12))
                 .disabled(disabled)
                 .accessibilityLabel(title)
+                .help(help ?? "")
         } else {
             Button(action: action) { Label(title, systemImage: symbol) }
                 .buttonStyle(.borderless).font(.system(size: 12))
                 .disabled(disabled)
                 .accessibilityLabel(title)
+                .help(help ?? "")
         }
     }
 }

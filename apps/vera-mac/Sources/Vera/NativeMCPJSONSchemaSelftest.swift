@@ -203,7 +203,7 @@ enum NativeMCPJSONSchemaSelftest {
         var deepArgument: NativeJSONValue = .null
         for _ in 0..<50 { deepArgument = .array([deepArgument]) }
         try fails(.resourceLimit) { try permissive.validate(deepArgument) }
-        try fails(.resourceLimit) { try permissive.validate(.array(Array(repeating: .null, count: 32_768))) }
+        try fails(.resourceLimit) { try permissive.validate(.array(Array(repeating: .null, count: 1_048_576))) }
         try fails(.resourceLimit) { _ = try NativeMCPJSONSchema(.object(["description": .string(String(repeating: "a", count: 1_048_577))])) }
         try fails(.resourceLimit) { try permissive.validate(.string(String(repeating: "a", count: 1_048_577))) }
         try fails(.resourceLimit) { _ = try NativeMCPJSONSchema(.object(["minimum": .number(.infinity)])) }
@@ -220,7 +220,7 @@ enum NativeMCPJSONSchemaSelftest {
             let layered = try NativeMCPJSONSchema(.object(["$defs": .object(definitions), "$ref": .string("#/$defs/" + previous)]))
             try layered.validate(.null)
         }
-        let expensive = try NativeMCPJSONSchema(.object(["items": .object(["allOf": .array(Array(repeating: .bool(true), count: 64))])]))
+        let expensive = try NativeMCPJSONSchema(.object(["items": .object(["allOf": .array(Array(repeating: .bool(true), count: 256))])]))
         try fails(.resourceLimit) { try expensive.validate(.array(Array(repeating: .null, count: 1_000))) }
     }
 }

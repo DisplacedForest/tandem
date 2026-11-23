@@ -5,7 +5,10 @@ final class PiCandidateCredentials: NativeCredentialStore {
     private var values: [String: String]
     var reads = 0
     init(profile: String) { values = [profile: Self.key] }
-    func read(for profileID: String) throws -> String? { reads += 1; return values[profileID] }
+    func read(for profileID: String) throws -> String? {
+        if profileID != NativeMCPTokenKeeper.holders { reads += 1 }
+        return values[profileID]
+    }
     func set(_ value: String?, for profileID: String) throws { values[profileID] = value }
     func addIfAbsent(_ value: String, for profileID: String) throws {
         if values[profileID] == nil { values[profileID] = value }

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 final class NativeToolRepairPrompts: @unchecked Sendable {
     private let lock = NSLock()
@@ -676,8 +677,8 @@ extension SelfTest {
         let unsupported = NativeJSONValue.string(NativeToolCallFault.unsupportedValue.rawValue)
         let refusal = NativeToolError.invalidArguments(NativeToolRepair.unsupportedDetail).localizedDescription
         let repeatedName = "{\"packet\":\"a\",\"packet\":\"b\"}"
-        let oversized = "{\"packet\":\"" + String(repeating: "a", count: 17000) + "\"}"
-        try require(oversized.utf8.count > 16384, "The oversized fixture is over the connected-service limit")
+        let oversized = "{\"packet\":\"" + String(repeating: "a", count: NativeMCPSDKConnection.responseBytes) + "\"}"
+        try require(oversized.utf8.count > NativeMCPSDKConnection.responseBytes, "The oversized fixture is over the connected-service limit")
         for (label, raw) in [("Repeated names", repeatedName), ("Oversized arguments", oversized)] {
             log.clear()
             let (refused, refusedTransport) = try await repairLoop(registry, rounds: [call("svc-1", "service_lookup", raw), reply("No shelf.")],
@@ -991,7 +992,7 @@ extension SelfTest {
         let call = NativeWebToolsSelftest.call
         let reply = NativeWebToolsSelftest.reply
         let log = NativeToolExtensionLog()
-        let asked = NativeChatRulesCounter()
+        let asked = Mutex<[String]>([])
         let label = NativeToolDefinition(
             id: "repair-sign", name: "print_sign", title: "Print a sign",
             description: "Prints a sign for a greenhouse shelf. When to use: the person asks for a sign to be printed.",
@@ -1009,26 +1010,24 @@ extension SelfTest {
             call("d-3", "print_sign", #"{"text":"Peas"}"#),
             reply("Nothing was printed."),
         ])
-        let loop = NativeToolLoop(transport: transport, registry: NativeToolRegistry(definitions: [label]), confirm: { _ in
-            asked.hit()
+        let loop = NativeToolLoop(transport: transport, registry: NativeToolRegistry(definitions: [label]), confirm: { request in
+            asked.withLock { $0.append(request.id) }
             return false
         })
         var final: NativeToolTurnSnapshot?
-        var askedAfterRound: [Int] = []
         for try await snapshot in loop.stream(messages: [NativeChatMessage(role: "user", content: "Print a sign for the beans")],
                                               model: "local-model", enabledToolIDs: [label.id]) {
             final = snapshot
-            let settled = snapshot.activities.filter { $0.result != nil }.count
-            if askedAfterRound.count < settled { askedAfterRound.append(asked.count) }
         }
         let results = repairResults(transport)
         let declined = NativeJSONValue.string(NativeToolLoop.declinedMessage)
         try require(repairFields(results["d-1"])["error"] == declined && repairFields(results["d-2"])["error"] == declined
                     && repairFields(results["d-3"])["error"] == declined,
                     "Every declined call is answered as not approved: \(results)")
-        try require(askedAfterRound == [1, 1, 2] && asked.count == 2 && log.all.isEmpty
+        let askedFor = asked.withLock { $0 }
+        try require(askedFor == ["d-1", "d-3"] && log.all.isEmpty
                     && final?.activities.allSatisfy { $0.state == .failed } == true && final?.content == "Nothing was printed.",
-                    "A declined call sent again unchanged is not asked again, while different arguments are: \(askedAfterRound)")
+                    "A declined call sent again unchanged is not asked again, while different arguments are: \(askedFor)")
         let repository = try LocalChatRepository(inMemory: true)
         let ledger = NativeEffectLedgerStore(database: repository.database)
         let (_, turn) = try chatLedgerTurn(repository)

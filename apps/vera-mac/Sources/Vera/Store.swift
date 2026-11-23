@@ -2365,7 +2365,7 @@ final class ChatStore: ObservableObject {
     }
 
     func turnToolIDs(for text: String) -> Set<String> {
-        nativeEnabledToolIDs.union(mentionedToolIDs(in: text))
+        enabledNativeToolIDs.union(mentionedToolIDs(in: text))
     }
 
     func turnToolAuthority(for turn: NativeConversationTurn) -> (NativeTurnToolAuthority, Set<String>) {
@@ -2374,7 +2374,7 @@ final class ChatStore: ObservableObject {
         return (NativeTurnToolAuthority(mentions: mentions, companion: isVeraThread(turn.conversationID)), turnConsentedToolIDs(conversationID: turn.conversationID, mentions: mentions))
     }
 
-    var enabledNativeToolIDs: Set<String> { nativeEnabledToolIDs }
+    var enabledNativeToolIDs: Set<String> { nativeEnabledToolIDs.union(nativeMCP?.startedToolIDs ?? []) }
 
     func toolAccess(_ id: String) -> NativeToolAccess? {
         nativeToolRegistry.definitions.first { $0.id == id && $0.access != nil }?.access

@@ -19,11 +19,15 @@ final class NativeMCPTokenKeeper {
 
     static func account(_ id: String) -> String { "connected-service." + id }
 
-    func load(_ servers: [NativeMCPServerConfiguration]) {
+    nonisolated static let holders = "connected-services"
+
+    func load(_ servers: [NativeMCPServerConfiguration], prunes: Bool) {
+        if prunes { forgetStrays(Set(servers.filter { $0.authentication == .bearer }.map(\.id))) }
         for server in servers where server.authentication == .bearer {
             do {
                 guard let value = try store.readForStartup(for: Self.account(server.id)) else { continue }
                 saved.insert(server.id)
+                try? remember(server.id)
                 if Self.token(value, for: server) == nil { discard(server.id) }
             } catch { saved.insert(server.id) }
         }
@@ -44,6 +48,28 @@ final class NativeMCPTokenKeeper {
         } catch { return nil }
     }
 
+    private func held() throws -> Set<String> {
+        guard let value = try store.readForStartup(for: Self.holders) else { return [] }
+        return try JSONDecoder().decode(Set<String>.self, from: Data(value.utf8))
+    }
+
+    private func hold(_ ids: Set<String>) throws {
+        let data = try JSONEncoder().encode(ids.sorted())
+        try store.set(ids.isEmpty ? nil : String(decoding: data, as: UTF8.self), for: Self.holders)
+    }
+
+    private func remember(_ id: String) throws {
+        let ids = try held()
+        if !ids.contains(id) { try hold(ids.union([id])) }
+    }
+
+    private func forgetStrays(_ kept: Set<String>) {
+        guard let ids = try? held(), !ids.isEmpty else { return }
+        var left = ids
+        for id in ids.subtracting(kept) where (try? store.set(nil, for: Self.account(id))) != nil { left.remove(id) }
+        if left != ids { try? hold(left) }
+    }
+
     private func discard(_ id: String) {
         do { try forget(id) } catch { unremoved.insert(id) }
     }
@@ -54,6 +80,7 @@ final class NativeMCPTokenKeeper {
         var restored = true
         for (id, value) in values {
             do {
+                try remember(id)
                 try store.set(value, for: Self.account(id))
                 saved.insert(id)
                 paused.remove(id)
@@ -64,6 +91,7 @@ final class NativeMCPTokenKeeper {
 
     func save(_ token: String, server: NativeMCPServerConfiguration) throws {
         let value = try JSONEncoder().encode(Saved(endpoint: server.endpoint.absoluteString, token: token))
+        try remember(server.id)
         try store.set(String(decoding: value, as: UTF8.self), for: Self.account(server.id))
         saved.insert(server.id)
     }
@@ -72,6 +100,7 @@ final class NativeMCPTokenKeeper {
         pause(id)
         guard saved.contains(id) else { return }
         try store.set(nil, for: Self.account(id))
+        if let ids = try? held(), ids.contains(id) { try? hold(ids.subtracting([id])) }
         saved.remove(id)
         unremoved.remove(id)
     }

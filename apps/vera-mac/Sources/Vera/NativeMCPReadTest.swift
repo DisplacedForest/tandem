@@ -58,9 +58,9 @@ final class NativeMCPReadTestController: ObservableObject, Identifiable {
         guard !closed else { return }
         if !inputRejected && value.utf8.elementsEqual(input.utf8) { return }
         cancelOperation()
-        guard value.utf8.count <= (usesPageURL ? 2048 : 16384) else {
+        guard value.utf8.count <= (usesPageURL ? 2048 : NativeMCPSDKConnection.responseBytes) else {
             inputRejected = true
-            error = usesPageURL ? "Use a shorter page URL." : "Arguments must fit within 16 KB."
+            error = usesPageURL ? "Use a shorter page URL." : "Use shorter arguments."
             return
         }
         inputRejected = false
@@ -135,7 +135,7 @@ final class NativeMCPReadTestController: ObservableObject, Identifiable {
             object = ["url": .string(text)]
         } else {
             let data = Data(input.utf8)
-            try NativeMCPWireJSON.validate(data, maximumBytes: 16384)
+            try NativeMCPWireJSON.validate(data, maximumBytes: NativeMCPSDKConnection.responseBytes)
             guard let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw NativeToolError.unavailable }
             object = try parsed.mapValues { try NativeJSONValue.piDecode($0) }
         }

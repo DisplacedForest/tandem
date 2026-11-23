@@ -171,15 +171,13 @@ class AppModelTransport:
     async def tools(self, subject: str, role: str, mode: str) -> list[dict[str, Any]]:
         result = await self.tool_request('tool_catalog', subject, role, mode)
         catalog = result.get('tools')
-        if not isinstance(catalog, list) or len(catalog) > 16:
+        if not isinstance(catalog, list):
             raise PiFailure('app_catalog')
         names = set()
         for tool in catalog:
             if not isinstance(tool, dict) or set(tool) != {'name', 'description', 'parameters'} or not isinstance(tool['name'], str) or not re.fullmatch(r'mcp_[a-f0-9]{40}', tool['name']) or tool['name'] in names or not isinstance(tool['description'], str) or not isinstance(tool['parameters'], dict):
                 raise PiFailure('app_catalog')
             names.add(tool['name'])
-        if len(json.dumps(catalog, separators=(',', ':'), ensure_ascii=False).encode()) > 8192:
-            raise PiFailure('app_catalog')
         return catalog
 
     async def tool_call(self, event: dict[str, Any], subject: str, role: str, mode: str) -> Any:

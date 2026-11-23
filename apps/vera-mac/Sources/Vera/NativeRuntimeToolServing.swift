@@ -35,14 +35,12 @@ struct PiRuntimeToolSnapshot: Equatable, Sendable {
 enum PiRuntimeTools {
     static let resultBytes = 8_192
     static func validate(_ schemas: [NativeToolSchema]) throws {
-        try piCheck(schemas.count <= 16)
         var names = Set<String>()
         for schema in schemas {
             try piCheck(schema.name.utf8.count == 44 && schema.name.range(of: #"^mcp_[a-f0-9]{40}$"#, options: .regularExpression) != nil && names.insert(schema.name).inserted)
-            try piCheck(schema.description.utf8.count <= 2048 && schema.parameters.pi("type") == .string("object"))
+            try piCheck(schema.parameters.pi("type") == .string("object"))
             _ = try NativeMCPJSONSchema(schema.parameters)
         }
-        try piCheck(try wire(schemas).piData().count <= 8192)
     }
     static func wire(_ schemas: [NativeToolSchema]) -> PiValue {
         .array(schemas.map { .object(["name": .string($0.name), "description": .string($0.description), "parameters": $0.parameters]) })

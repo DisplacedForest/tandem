@@ -30,7 +30,7 @@ enum CardShot {
         let content: AnyView
         switch variant {
         case "card-command", "card-folder-edit", "card-once-only", "card-send", "card-reminder", "card-schedule", "card-schedule-companion", "card-schedule-anything", "card-schedule-anything-own", "card-send-companion",
-             "card-send-recipient", "card-send-unknown", "card-send-fixed":
+             "card-send-recipient", "card-send-unknown", "card-send-fixed", "card-service", "card-service-companion":
             let chat = self.chat(variant, store: store)
             content = AnyView(ShotView(store: store, section: .chat, cardChat: chat, width: size.width))
         case "card-command-menus", "card-folder-edit-menus", "card-send-menus", "card-reminder-menus",
@@ -175,7 +175,7 @@ enum CardShot {
     static func chat(_ variant: String, store: ChatStore) -> CardShotChat {
         let conversation = Conversation(id: "card-chat", title: "Greenhouse notes", messages: [], updatedAt: Date())
         let conversationID: String
-        if variant == "card-send-companion" || variant.hasPrefix("card-schedule-anything") {
+        if variant.hasSuffix("-companion") && variant != "card-schedule-companion" || variant.hasPrefix("card-schedule-anything") {
             store.dotProfile = NativeDotProfile(state: .active, setupCompleted: true)
             store.openVeraThread()
             conversationID = store.veraThreadID ?? conversation.id
@@ -238,6 +238,10 @@ enum CardShot {
             activity = NativeToolActivity(id: "card-notify", toolID: "workshop-notify", name: "notify_workshop", title: "Notify the workshop", round: 1,
                                           request: "{\"message\":\"The order is ready.\"}", result: nil, state: .pending, confirmationRequired: true)
             subject = NativeCardSubject(action: .networkSends, toolID: "workshop-notify", toolTitle: "Notify the workshop")
+        case "card-service", "card-service-companion":
+            ask = "Turn off the porch light."
+            let service = IntegrationsShotFixture.changeDefinition(store)
+            (activity, subject) = ruledActivity(service, rules: .defaults, id: "card-service", request: "{\"name\":\"Porch light\"}", ask: ask, conversationID: conversationID)
         case "card-send-fixed":
             ask = "Note that I watered the tomato bed twice today."
             activity = NativeToolActivity(id: "card-fixed", toolID: "garden-log-fixed", name: "garden_log_post", title: "Post to the garden log", round: 1,

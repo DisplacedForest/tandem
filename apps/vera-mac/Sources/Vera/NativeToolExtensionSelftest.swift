@@ -328,14 +328,12 @@ extension SelfTest {
         let shelf = extensionShelf(log)
         let wordy = extensionShelf(log, name: "shelf_wordy", id: "extension-wordy",
                                    description: String(repeating: "Reads a shelf. ", count: 300))
-        try require(wordy.description.utf8.count > NativeTaskGenerationJob.maximumToolDescriptionBytes,
-                    "The wordy fixture is longer than handed-off work can carry")
         let call = { (id: String, name: String, arguments: String) in NativeTaskGenerationToolCall(id: id, name: name, arguments: arguments) }
         let model = NativeToolExtensionModel(rounds: [
             [call("work-simple", "shelf_lookup", #"{"packet":"Peas"}"#)],
             [call("work-slow", "shelf_lookup", #"{"packet":"Runner beans, early","count":12,"tags":["climbing","tall"],"wait":300}"#),
              call("work-several", "shelf_lookup", #"{"packet":"Kale","tags":["winter"]}"#)],
-            [call("work-wordy", "shelf_wordy", #"{"packet":"Onions"}"#)],
+            [call("work-wordy", "shelf_missing", #"{"packet":"Onions"}"#)],
         ])
         let rig = try NativeCompanionFinishRig(tools: [shelf, wordy], model: .looping())
         _ = try rig.create("Find where the seed packets are kept")
@@ -358,8 +356,8 @@ extension SelfTest {
         }
         try require(record.state == .completed && NativeCompanionFinishRig.answeredOnce(saved),
                     "The handed-off work completes and answers every call once")
-        try require(!model.offeredNames.isEmpty && model.offeredNames.allSatisfy { $0 == ["shelf_lookup"] },
-                    "Handed-off work offers the shelf tool and withholds the one its limits cannot carry: \(model.offeredNames)")
+        try require(!model.offeredNames.isEmpty && model.offeredNames.allSatisfy { $0 == ["shelf_lookup", "shelf_wordy"] },
+                    "Handed-off work offers every tool, however long its description: \(model.offeredNames)")
         let simple: [String: NativeJSONValue] = ["packet": .string("Peas")]
         let slow: [String: NativeJSONValue] = ["packet": .string("Runner beans, early"), "count": .number(12),
                                                "tags": .array([.string("climbing"), .string("tall")]), "wait": .number(300)]
@@ -375,8 +373,8 @@ extension SelfTest {
         try require(withheldFields["error"] == NativeJSONValue.string("Unknown tool. Use only the tools offered.")
                     && withheldFields["fault"] == NativeJSONValue.string(NativeToolCallFault.unknownTool.rawValue)
                     && !log.finished.contains("Onions"),
-                    "A call to a withheld tool is refused and its handler never runs")
-        return "handed-off work keeps call ids for a simple call, a several-input call and a slower call, and a withheld tool cannot be called"
+                    "A call to a tool that was not offered is refused and nothing runs")
+        return "handed-off work keeps call ids for a simple call, a several-input call and a slower call, and a tool that was not offered cannot be called"
     }
 
     private static func extensionAdapter() throws -> String {
@@ -385,13 +383,13 @@ extension SelfTest {
         let shelf = extensionShelf(log)
         let wordy = extensionShelf(log, name: "shelf_wordy", id: "extension-wordy",
                                    description: String(repeating: "Reads a shelf. ", count: 300))
-        try require(NativeToolAdapter.unsupported(wordy, for: .handedOffWork) == .descriptionTooLong,
-                    "A description over the handed-off limit is named as too long")
-        try require(NativeToolAdapter.unsupported(wordy, for: .chat) == nil && NativeToolAdapter.unsupported(shelf, for: .handedOffWork) == nil,
-                    "Chat carries the long description and handed-off work carries the ordinary one")
+        for transport in [NativeToolTransport.chat, .handedOffWork] {
+            try require(NativeToolAdapter.unsupported(wordy, for: transport) == nil && NativeToolAdapter.unsupported(shelf, for: transport) == nil,
+                        "A long description is carried: \(transport)")
+        }
         let handed = NativeToolAdapter.offered([shelf, wordy], for: .handedOffWork)
-        try require(handed.schemas.map(\.name) == ["shelf_lookup"] && handed.withheld == [NativeToolIssue(name: "shelf_wordy", reason: .descriptionTooLong)],
-                    "Handed-off work withholds the long description and reports it")
+        try require(handed.schemas.map(\.name) == ["shelf_lookup", "shelf_wordy"] && handed.withheld.isEmpty,
+                    "Handed-off work offers both")
         let chatted = NativeToolAdapter.offered([shelf, wordy], for: .chat)
         try require(chatted.schemas.map(\.name) == ["shelf_lookup", "shelf_wordy"] && chatted.withheld.isEmpty, "Chat offers both")
         try require(NativeToolAdapter.unsupported(extensionShelf(log, name: "shelf lookup"), for: .handedOffWork) == .invalidName,
@@ -405,18 +403,13 @@ extension SelfTest {
                         "With two tools of one name, the first is offered and the second is reported: \(transport)")
         }
 
-        let limit = NativeTaskGenerationJob.maximumTools
-        let many = (0..<(limit + 6)).map { extensionShelf(log, name: "shelf_row_\($0)", id: "extension-row-\($0)") }
-        let capped = NativeToolAdapter.offered(many, for: .handedOffWork)
-        try require(capped.schemas.count == limit && capped.schemas.map(\.name) == many.prefix(limit).map(\.name),
-                    "Handed-off work offers the first \(limit) tools")
-        try require(capped.withheld == many.dropFirst(limit).map { NativeToolIssue(name: $0.name, reason: .tooManyTools) },
-                    "Handed-off work reports each tool past its limit")
-        try require(NativeToolAdapter.offered(many, for: .chat).schemas.count == many.count, "Chat has no tool count limit of its own")
+        let many = (0..<200).map { extensionShelf(log, name: "shelf_row_\($0)", id: "extension-row-\($0)") }
+        for transport in [NativeToolTransport.chat, .handedOffWork] {
+            let all = NativeToolAdapter.offered(many, for: transport)
+            try require(all.schemas.map(\.name) == many.map(\.name) && all.withheld.isEmpty, "Every tool is offered: \(transport)")
+        }
         let opening = [NativeTaskGenerationMessage(role: "user", content: "Find the seed packets")]
-        try require(NativeTaskGenerationJob.validShape(opening, tools: capped.schemas, toolChoice: "auto", budget: .dot)
-                    && !NativeTaskGenerationJob.validShape(opening, tools: many.map(\.schema), toolChoice: "auto", budget: .dot),
-                    "What handed-off work offers fits its request shape, while the whole list would not")
+        try require(NativeTaskGenerationJob.validShape(opening, tools: many.map(\.schema), toolChoice: "auto", budget: .dot), "The whole list fits handed-off work's request shape")
 
         var described = extensionShelf(log)
         described.outputSchema = .object(["type": .string("object"), "properties": .object(["shelf": .object(["type": .string("string")])])])
