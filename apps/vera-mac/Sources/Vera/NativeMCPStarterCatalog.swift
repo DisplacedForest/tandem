@@ -2,21 +2,99 @@ import Foundation
 
 extension NativeMCPServerConfiguration.Authentication: Codable {}
 
+struct NativeMCPStarterField: Identifiable, Hashable, Codable, Sendable {
+    enum Target: String, Codable, Sendable { case address, credential, name }
+    var id: String
+    var label: String
+    var placeholder: String?
+    var help: String?
+    var secret: Bool
+    var optional: Bool?
+    var target: Target
+
+    var required: Bool { optional != true }
+}
+
 struct NativeMCPStarterEntry: Identifiable, Hashable, Codable, Sendable {
     var id: String
     var name: String
     var publisher: String
     var description: String
     var category: String
-    var url: URL
+    var icon: String?
+    var url: String
     var authentication: NativeMCPServerConfiguration.Authentication
-    var readTools: [String]
-    var sourceURL: URL
+    var fields: [NativeMCPStarterField]
+    var sourceURL: URL?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, publisher, description, category, url, authentication
-        case readTools = "read_tools"
+        case id, name, publisher, description, category, icon, url, authentication, fields
         case sourceURL = "source_url"
+    }
+
+    static let own = NativeMCPStarterEntry(
+        id: "own", name: "", publisher: "", description: "", category: "", icon: nil, url: "{address}", authentication: .bearer,
+        fields: [
+            NativeMCPStarterField(id: "name", label: "Name", placeholder: "What to call it", help: nil, secret: false, optional: nil, target: .name),
+            NativeMCPStarterField(id: "address", label: "Address of the tool server", placeholder: "https://", help: "The full address, the way the service shows it.", secret: false, optional: nil, target: .address),
+            NativeMCPStarterField(id: "token", label: "Access token, if it needs one", placeholder: nil, help: nil, secret: true, optional: true, target: .credential),
+        ], sourceURL: nil)
+
+    private init(id: String, name: String, publisher: String, description: String, category: String, icon: String?, url: String,
+                 authentication: NativeMCPServerConfiguration.Authentication, fields: [NativeMCPStarterField], sourceURL: URL?) {
+        self.id = id
+        self.name = name
+        self.publisher = publisher
+        self.description = description
+        self.category = category
+        self.icon = icon
+        self.url = url
+        self.authentication = authentication
+        self.fields = fields
+        self.sourceURL = sourceURL
+    }
+
+    var isOwn: Bool { id == Self.own.id }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        publisher = try values.decode(String.self, forKey: .publisher)
+        description = try values.decode(String.self, forKey: .description)
+        category = try values.decode(String.self, forKey: .category)
+        icon = try values.decodeIfPresent(String.self, forKey: .icon)
+        url = try values.decode(String.self, forKey: .url)
+        authentication = try values.decode(NativeMCPServerConfiguration.Authentication.self, forKey: .authentication)
+        fields = try values.decodeIfPresent([NativeMCPStarterField].self, forKey: .fields) ?? []
+        sourceURL = try values.decode(URL.self, forKey: .sourceURL)
+    }
+
+    var addressField: NativeMCPStarterField? { fields.first { $0.target == .address } }
+    var nameField: NativeMCPStarterField? { fields.first { $0.target == .name } }
+    var credentialField: NativeMCPStarterField? { fields.first { $0.target == .credential } }
+
+    func matches(_ server: NativeMCPServerConfiguration) -> Bool {
+        if addressField == nil { return server.endpoint.absoluteString == url }
+        return server.sourceURL == sourceURL && server.publisher == publisher
+    }
+
+    func endpoint(_ values: [String: String]) throws -> URL {
+        guard let field = addressField else {
+            guard let fixed = URL(string: url) else { throw NativeToolError.failed("The service address must be a plain https address.") }
+            return fixed
+        }
+        let typed = (values[field.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else { throw NativeToolError.failed("Enter the address of your server.") }
+        guard !typed.contains(where: \.isWhitespace) else { throw NativeToolError.failed("An address can't have spaces in it.") }
+        let lowered = typed.lowercased()
+        guard let scheme = ["http://", "https://"].first(where: lowered.hasPrefix) else { throw NativeToolError.failed("Start the address with http:// or https://.") }
+        guard let parts = URLComponents(string: typed), parts.port.map({ (1...65535).contains($0) }) ?? true,
+              let endpoint = URL(string: scheme + typed.dropFirst(scheme.count)) else {
+            throw NativeToolError.failed("That isn't a full address. Check it and try again.")
+        }
+        try NativeMCPAddress.validate(endpoint, personSupplied: true)
+        return endpoint
     }
 }
 
@@ -27,7 +105,6 @@ struct NativeMCPStarterSkip: Hashable, Sendable {
 
 struct NativeMCPStarterCatalog: Sendable {
     static let resourceName = "mcp-starter-catalog"
-    static let knownCategories: Set<String> = ["Documentation", "Developer tools", "Code hosting", "Monitoring", "Models and datasets", "Network"]
 
     var entries: [NativeMCPStarterEntry]
     var skipped: [NativeMCPStarterSkip]
@@ -77,16 +154,36 @@ struct NativeMCPStarterCatalog: Sendable {
               !entry.publisher.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativeToolError.failed("The entry needs a name and a publisher.")
         }
-        guard knownCategories.contains(entry.category) else { throw NativeToolError.failed("The entry has an unknown category.") }
-        guard isSecure(entry.url), entry.url.query == nil, entry.url.fragment == nil else {
+        guard !entry.category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NativeToolError.failed("The entry has no category.") }
+        try checkFields(entry)
+        guard entry.id != NativeMCPStarterEntry.own.id, entry.nameField == nil else { throw NativeToolError.failed("The entry uses an id or a value that is taken.") }
+        guard entry.sourceURL.map(isSecure) == true else { throw NativeToolError.failed("The documentation address must be https.") }
+        return entry
+    }
+
+    private static func checkFields(_ entry: NativeMCPStarterEntry) throws {
+        let fields = entry.fields
+        guard fields.allSatisfy({ !$0.id.isEmpty && !$0.id.contains { "{}".contains($0) } && !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+              Set(fields.map(\.id)).count == fields.count else {
+            throw NativeToolError.failed("Each value the entry asks for needs its own id and a label.")
+        }
+        let addresses = fields.filter { $0.target == .address }
+        let credentials = fields.filter { $0.target == .credential }
+        guard addresses.count <= 1, credentials.count <= 1 else { throw NativeToolError.failed("The entry asks for the same kind of value twice.") }
+        guard addresses.allSatisfy({ !$0.secret }), credentials.allSatisfy(\.secret) else {
+            throw NativeToolError.failed("The sign-in value must be secret and the address must not be.")
+        }
+        guard credentials.isEmpty || entry.authentication == .bearer else { throw NativeToolError.failed("The entry asks for a sign-in value it has no use for.") }
+        guard entry.authentication != .bearer || !credentials.isEmpty else { throw NativeToolError.failed("The entry doesn't ask for the sign-in it needs.") }
+        if let address = addresses.first {
+            guard address.required else { throw NativeToolError.failed("The entry needs its address filled in.") }
+            guard entry.url == "{\(address.id)}" else { throw NativeToolError.failed("The entry asks for an address it has no place for.") }
+            return
+        }
+        guard !entry.url.contains("{"), !entry.url.contains("}"), let url = URL(string: entry.url), url.query == nil, url.fragment == nil,
+              (try? NativeMCPAddress.validate(url, personSupplied: false)) != nil else {
             throw NativeToolError.failed("The service address must be a plain https address.")
         }
-        guard isSecure(entry.sourceURL) else { throw NativeToolError.failed("The documentation address must be https.") }
-        guard !entry.readTools.isEmpty,
-              entry.readTools.allSatisfy({ !$0.isEmpty && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }) else {
-            throw NativeToolError.failed("The entry needs at least one valid read tool name.")
-        }
-        return entry
     }
 
     private static func isSecure(_ url: URL) -> Bool {
@@ -104,18 +201,20 @@ struct NativeMCPStarterCatalog: Sendable {
         }
     }
 
-    func configurationRow(for entry: NativeMCPStarterEntry, readTools: [String], scopes: [String]) -> [String: Any] {
+    func configurationRow(for entry: NativeMCPStarterEntry, name: String? = nil, endpoint: URL, authentication: NativeMCPServerConfiguration.Authentication, scopes: [String],
+                          id: String = UUID().uuidString.lowercased()) -> [String: Any] {
         var row: [String: Any] = [
-            "id": UUID().uuidString.lowercased(),
-            "name": entry.name,
-            "url": entry.url.absoluteString,
-            "read_tools": readTools,
+            "id": id,
+            "name": name ?? entry.name,
+            "url": endpoint.absoluteString,
             "scopes": scopes,
             "timeout_seconds": 20.0,
-            "publisher": entry.publisher,
-            "source_url": entry.sourceURL.absoluteString,
         ]
-        if entry.authentication != .none { row["authentication"] = entry.authentication.rawValue }
+        if let source = entry.sourceURL {
+            row["publisher"] = entry.publisher
+            row["source_url"] = source.absoluteString
+        }
+        if authentication != .none { row["authentication"] = authentication.rawValue }
         return row
     }
 }

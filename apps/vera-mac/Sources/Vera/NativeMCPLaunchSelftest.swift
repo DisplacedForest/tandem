@@ -176,8 +176,8 @@ enum NativeMCPLaunchSelftest {
         await waiting.settleReconnects(scope: unattended)
         try check(connected(waiting) && started.duration(to: .now) < .seconds(2), "A run tries a service that was waiting for its next turn")
         house.set(down: true)
-        await waiting.authority.disconnect(id, status: "The connection dropped")
         let count = house.count
+        await waiting.authority.disconnect(id, status: "The connection dropped")
         await waiting.settleReconnects(scope: unattended)
         try check(!connected(waiting) && house.count > count, "An unreachable service doesn't hold a run up")
         await waiting.disconnect(id)

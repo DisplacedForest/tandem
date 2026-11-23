@@ -90,7 +90,7 @@ extension SelfTest {
         let options = [NativeDotServiceOption(id: "a", name: "A", detail: "", toolIDs: ["a"]),
                        NativeDotServiceOption(id: "service:s", name: "S", detail: "", toolIDs: ["s1", "s2"])]
         try require(store.dotConnectedToolIDs(selected: ["a", "service:s"], options: options) == nil
-                    && store.dotConnectedToolIDs(selected: ["service:s"], options: options) == ["s1", "s2"], "Service choices map to tool sets")
+                    && store.dotConnectedToolIDs(selected: ["service:s"], options: options) == ["service:s", "s1", "s2"], "Service choices map to tool sets")
 
         try await checkTurnTools(store, veraID: veraID, focusedID: focused.id)
         try checkRuleDrafts(store, veraID: veraID)

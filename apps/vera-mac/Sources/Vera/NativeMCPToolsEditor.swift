@@ -103,14 +103,15 @@ struct NativeMCPOAuthReviewEditor: View {
             HStack {
                 Spacer()
                 Button("Cancel") { manager.cancelOAuthReview(review.configuration.id, reviewID: review.id); dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Sign in") {
+                    .controlSize(.small).keyboardShortcut(.cancelAction)
+                IntegrationsAction(title: "Sign in", symbol: "person.badge.key", prominent: true,
+                                   disabled: manager.oauthProgress[review.configuration.id] != nil) {
                     Task {
                         await manager.signIn(review.configuration.id, reviewID: review.id)
                         if manager.oauthReviews[review.configuration.id] == nil { dismiss() }
                     }
-                }.disabled(manager.oauthProgress[review.configuration.id] != nil)
-                    .keyboardShortcut(.defaultAction)
+                }
+                .keyboardShortcut(.defaultAction)
             }
         }.padding(24).frame(width: 520)
             .onDisappear { manager.cancelOAuthReview(review.configuration.id, reviewID: review.id) }

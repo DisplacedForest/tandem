@@ -45,6 +45,7 @@ extension ChatStore {
             dotProfile = NativeDotProfile()
         }
         dotProfileLoaded = true
+        followServiceReports()
     }
 
     func saveDotProfile(_ mutate: (inout NativeDotProfile) -> Void) {
@@ -59,6 +60,47 @@ extension ChatStore {
         }
         dotProfile = next
         resolveCompanionConfigurationError(CompanionErrorCopy.saveLead)
+    }
+
+    func followServiceReports() {
+        serviceReports = nativeMCP?.$servers.sink { [weak self] servers in
+            MainActor.assumeIsolated { self?.connectReportedTools(servers) }
+        }
+    }
+
+    func connectAddedService(_ serverID: String, scopes: Set<String>) {
+        guard !scopes.isDisjoint(with: IntegrationsText.companionScopes),
+              let saved = try? nativeDotProfileStore?.load(), saved.connectedToolIDs != nil else { return }
+        saveDotProfile {
+            $0.connectedToolIDs?.remove(Self.leftMarker(serverID))
+            $0.connectedToolIDs?.insert(Self.serviceMarker(serverID))
+        }
+        connectReportedTools(nativeMCP?.servers ?? [])
+    }
+
+    func connectReportedTools(_ servers: [NativeMCPServerState]) {
+        guard let connected = dotProfile.connectedToolIDs else { return }
+        var joined = connected
+        for server in servers where server.connected && Self.chosen(server, in: connected) {
+            joined.insert(Self.serviceMarker(server.id))
+            joined.formUnion(server.tools.map(\.id))
+        }
+        guard joined != connected else { return }
+        saveDotProfile { $0.connectedToolIDs = joined }
+    }
+
+    private static func serviceMarker(_ id: String) -> String { "service:" + id }
+
+    private static func leftMarker(_ id: String) -> String { "left:" + id }
+
+    private static func ownedToolIDs(_ server: NativeMCPServerState) -> Set<String> {
+        let declared = server.configuration.readTools.union(server.configuration.actTools).map(server.configuration.toolID)
+        return Set(server.tools.map(\.id)).union(declared)
+    }
+
+    private static func chosen(_ server: NativeMCPServerState, in connected: Set<String>) -> Bool {
+        if connected.contains(serviceMarker(server.id)) { return true }
+        return !connected.contains(leftMarker(server.id)) && !connected.isDisjoint(with: ownedToolIDs(server))
     }
 
     func completeDotSetup(connectedToolIDs: Set<String>?) {
@@ -122,7 +164,12 @@ extension ChatStore {
     }
 
     func dotToolIDs(base: Set<String>) -> Set<String> {
-        dotProfile.toolIDs(base: base)
+        guard let connected = dotProfile.connectedToolIDs else { return base }
+        var allowed = dotProfile.toolIDs(base: base)
+        for server in nativeMCP?.authority.access.snapshot() ?? [] where connected.contains(Self.leftMarker(server.id)) {
+            allowed.subtract(server.tools.map(\.id))
+        }
+        return allowed
     }
 
     func dotContext(for conversationID: String, requestText: String) -> String? {
@@ -151,12 +198,45 @@ extension ChatStore {
 
     func dotSelectedServices(_ options: [NativeDotServiceOption]) -> Set<String> {
         guard let connected = dotProfile.connectedToolIDs else { return Set(options.map(\.id)) }
-        return Set(options.filter { !$0.toolIDs.isDisjoint(with: connected) }.map(\.id))
+        let left = (nativeMCP?.servers ?? []).filter { connected.contains(Self.leftMarker($0.id)) }.map { Self.serviceMarker($0.id) }
+        return Set(options.filter { connected.contains($0.id) || (!left.contains($0.id) && !$0.toolIDs.isDisjoint(with: connected)) }.map(\.id))
     }
 
     func dotConnectedToolIDs(selected: Set<String>, options: [NativeDotServiceOption]) -> Set<String>? {
-        if options.allSatisfy({ selected.contains($0.id) }) { return nil }
-        return options.filter { selected.contains($0.id) }.reduce(into: Set<String>()) { $0.formUnion($1.toolIDs) }
+        let picked = options.filter { selected.contains($0.id) }
+        let visible = Set(options.map(\.id))
+        let hidden = (nativeMCP?.servers ?? []).filter { !visible.contains(Self.serviceMarker($0.id)) }
+        let saved = dotProfile.connectedToolIDs
+        let kept = hidden.filter { server in saved.map { Self.chosen(server, in: $0) } ?? true }
+        let unresolved = saved.map { saved in
+            hidden.contains { server in
+                !Self.chosen(server, in: saved) && !saved.contains(Self.leftMarker(server.id)) && server.configuration.reportsTools && server.tools.isEmpty
+            }
+        } ?? false
+        if picked.count == options.count, kept.count == hidden.count { return nil }
+        var result = Set<String>()
+        for server in kept {
+            result.insert(Self.serviceMarker(server.id))
+            result.formUnion(Self.ownedToolIDs(server).intersection(saved ?? []))
+        }
+        for server in hidden where saved?.contains(Self.leftMarker(server.id)) == true { result.insert(Self.leftMarker(server.id)) }
+        if !hidden.isEmpty, let saved {
+            var shown = options.reduce(into: Set<String>()) { $0.formUnion($1.toolIDs) }
+            for server in nativeMCP?.servers ?? [] { shown.formUnion(Self.ownedToolIDs(server)) }
+            result.formUnion(saved.subtracting(shown).filter { id in
+                !id.hasPrefix("service:") && !id.hasPrefix("left:") && (unresolved || !id.hasPrefix("mcp_"))
+            })
+        }
+        let servers = nativeMCP?.servers ?? []
+        for option in options where option.id.hasPrefix("service:") && !selected.contains(option.id) {
+            result.insert(Self.leftMarker(String(option.id.dropFirst("service:".count))))
+        }
+        for option in picked {
+            if option.id.hasPrefix("service:") { result.insert(option.id) }
+            result.formUnion(option.toolIDs)
+            if let server = servers.first(where: { Self.serviceMarker($0.id) == option.id }) { result.formUnion(server.tools.map(\.id)) }
+        }
+        return result
     }
 
     func dotRemovalSummary() -> NativeDotRemovalSummary {
