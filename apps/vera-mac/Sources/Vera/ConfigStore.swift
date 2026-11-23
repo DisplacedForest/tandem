@@ -160,6 +160,7 @@ final class ConfigStore: ObservableObject {
         memoryCredentialLoaded = memoryEndpointWanted && !unavailable.contains(Self.memoryCredentialID)
         memoryCredentialReadFailed = memoryEndpointWanted && unavailable.contains(Self.memoryCredentialID)
         nativeMCPConfigurationError = nativeMCP.configurationError
+        nativeMCP.keepsConnection = { [weak self] id, stays in self?.rememberNativeMCPConnection(id, stays) ?? false }
         nativeMCP.authority.access.keepMarked { [weak self] id, names in await self?.rememberNativeMCPAsks(id, names) ?? false }
     }
 
@@ -182,8 +183,21 @@ final class ConfigStore: ObservableObject {
         }
         let before = nativeMCPToolIDs(serverID: id)
         let after = Set(NativeMCPServerConfiguration.load(["native_mcp_servers": [row]]).0.flatMap { server in server.readTools.union(server.actTools).map(server.toolID) })
+        var row = row
+        if row["url"] as? String != rows[index]["url"] as? String || row["authentication"] as? String != rows[index]["authentication"] as? String {
+            row.removeValue(forKey: "stays_connected")
+        }
         rows[index] = row
         try commitNativeMCPServers(rows, pruning: before.subtracting(after))
+    }
+
+    func rememberNativeMCPConnection(_ id: String, _ stays: Bool) -> Bool {
+        var rows = nativeMCPServerRows
+        guard let index = rows.firstIndex(where: { ($0["id"] as? String)?.lowercased() == id.lowercased() }) else { return false }
+        guard (rows[index]["stays_connected"] as? Bool ?? false) != stays else { return true }
+        guard NSDictionary(dictionary: readConfiguration()).isEqual(to: raw) else { return false }
+        if stays { rows[index]["stays_connected"] = true } else { rows[index].removeValue(forKey: "stays_connected") }
+        do { try commitNativeMCPServers(rows, pruning: []); return true } catch { return false }
     }
 
     func rememberNativeMCPAsks(_ id: String, _ names: Set<String>) -> Bool {

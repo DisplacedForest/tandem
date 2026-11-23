@@ -322,6 +322,7 @@ extension ChatStore {
             return .failed("Scheduled runs aren't available right now.")
         }
         guard let nativeConfig = currentNativeConfig else { return .failed("No model is set up. Add one in Settings.") }
+        if schedule.isCompanionWork { await nativeMCP?.settleReconnects(scope: IntegrationsText.scopeKeys[2]) }
         await prepareModelContext()
         let profile = nativeTaskEnrollment ?? (try? nativeTaskConfiguration?.enroll(config: nativeConfig))
         if nativeTaskConfiguration != nil && profile == nil { return .failed("The model profile couldn't be prepared.") }

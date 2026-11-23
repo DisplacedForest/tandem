@@ -14,6 +14,7 @@ final class NativeMCPTokenKeeper {
     private var retries: [String: Task<Void, Never>] = [:]
     private var turns: [String: Int] = [:]
     private var attempts: [String: Int] = [:]
+    private var attempting: [String: UUID] = [:]
 
     init(store: any NativeCredentialStore) { self.store = store }
 
@@ -123,6 +124,7 @@ final class NativeMCPTokenKeeper {
         attempts[id] = nil
     }
 
+    func isPaused(_ id: String) -> Bool { paused.contains(id) }
     func wants(_ id: String) -> Bool { saved.contains(id) && !paused.contains(id) }
     func settled(_ id: String) { attempts[id] = nil }
     func begin(_ authorization: NativeMCPAuthorization, id: String) { opening[id] = authorization }
@@ -135,10 +137,28 @@ final class NativeMCPTokenKeeper {
         let count = attempts[id, default: 0]
         attempts[id] = count + 1
         let delay = count < delays.count ? delays[count] : last
-        retries[id] = Task { [weak self] in
-            do { try await Task.sleep(for: delay) } catch { return }
+        retries[id] = run(id, after: delay, attempt: attempt, then: then)
+    }
+
+    func runNow(_ id: String, attempt: @escaping @MainActor () async -> Void, then: @escaping @MainActor () -> Void) -> Task<Void, Never> {
+        if let pending = inFlight(id) { return pending }
+        retries.removeValue(forKey: id)?.cancel()
+        attempts[id] = max(1, attempts[id, default: 0])
+        let task = run(id, after: .zero, attempt: attempt, then: then)
+        retries[id] = task
+        return task
+    }
+
+    func inFlight(_ id: String) -> Task<Void, Never>? { attempting[id] == nil ? nil : retries[id] }
+
+    private func run(_ id: String, after delay: Duration, attempt: @escaping @MainActor () async -> Void, then: @escaping @MainActor () -> Void) -> Task<Void, Never> {
+        let mark = UUID()
+        return Task { [weak self] in
+            do { if delay > .zero { try await Task.sleep(for: delay) } } catch { return }
             guard !Task.isCancelled else { return }
+            self?.attempting[id] = mark
             await attempt()
+            if self?.attempting[id] == mark { self?.attempting.removeValue(forKey: id) }
             guard !Task.isCancelled else { return }
             self?.retries.removeValue(forKey: id)
             then()

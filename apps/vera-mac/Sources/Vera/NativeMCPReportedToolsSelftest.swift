@@ -69,7 +69,7 @@ enum NativeMCPReportedToolsSelftest {
         let (manager, config) = make(disk, connection)
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: nil, nativeMCP: manager, artifactPersistenceEnabled: false)
         await manager.connect(id)
-        try check(disk.writes == 0 && config.nativeSettings.enabledToolIDs.isEmpty, "Turning tools on writes nothing")
+        try check(disk.writes == 1 && config.nativeSettings.enabledToolIDs.isEmpty, "Connecting writes only that it was connected")
         let definitions = manager.authority.definitions(scope: "focused")
         try check(definitions.count == 201 && definitions.filter { $0.effect == .read }.count == 100, "Every tool is on straight after connecting, read or change as reported")
         try check(zip(tools, definitions).allSatisfy { $1.title == "House: " + $0.name && $1.description.hasSuffix($0.description) }, "Each keeps the service's own name and description")
