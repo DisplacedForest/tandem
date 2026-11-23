@@ -249,6 +249,7 @@ enum NativeMCPInstallSelftest {
         _ = try ChatStore.companionRequest("Check the stubs.", connectedToolIDs: store.dotProfile.connectedToolIDs?.sorted(), said: "")
 
         let marker = "service:" + kinds[0]
+        let left = "left:" + kinds[0]
         let notes = NativeDotServiceOption(id: "notes", name: "Notes", detail: "", toolIDs: ["notes"])
         await manager.disconnect(kinds[0])
         try check(store.dotConnectedToolIDs(selected: ["notes"], options: [notes]) == ["notes", marker], "saving the companion's services should keep one that isn't connected")
@@ -268,17 +269,38 @@ enum NativeMCPInstallSelftest {
         await manager.connect(kinds[0])
         try check(store.dotProfile.connectedToolIDs?.isSuperset(of: reported(0)) == true && reported(0).count == 1, "a service that renames every tool should stay chosen")
         let taken = store.dotConnectedToolIDs(selected: ["notes"], options: shown())
-        try check(taken == ["notes"], "a service taken out should leave nothing behind, found \(taken?.count ?? -1)")
+        try check(taken?.contains(left) == true && taken?.contains(marker) == false && taken?.isDisjoint(with: reported(0)) == true, "a service taken out should be recorded as out")
         store.saveDotProfile { $0.connectedToolIDs = taken }
         offered.set([tool("stub_old", readOnly: true)])
         await manager.disconnect(kinds[0])
         await manager.connect(kinds[0])
-        try check(store.dotProfile.connectedToolIDs == ["notes"], "a tool that comes back shouldn't bring its service back")
+        try check(store.dotProfile.connectedToolIDs == taken && store.dotToolIDs(base: reported(0).union(["notes"])) == ["notes"], "a tool that comes back shouldn't bring its service back")
 
         offered.set([tool("stub_old", readOnly: true)])
         store.saveDotProfile { $0.connectedToolIDs = reported(0) }
         manager.refresh()
         try check(store.dotProfile.connectedToolIDs?.contains(marker) == true, "a selection made before services were remembered should remember them")
+
+        let sheet = shown() + [NativeDotServiceOption(id: "web", name: "Web", detail: "", toolIDs: ["web"])]
+        offered.add(tool("stub_late", readOnly: true))
+        await manager.disconnect(kinds[0])
+        await manager.connect(kinds[0])
+        try check(store.dotConnectedToolIDs(selected: [marker, "notes"], options: sheet)?.isSuperset(of: reported(0)) == true && reported(0).count == 2,
+                  "saving a sheet opened before a tool arrived should keep the tool")
+
+        let legacy = reported(0)
+        await manager.disconnect(kinds[0])
+        store.saveDotProfile { $0.connectedToolIDs = legacy.union(["notes"]) }
+        let unseen = store.dotConnectedToolIDs(selected: ["notes"], options: [notes])
+        try check(unseen?.isSuperset(of: legacy) == true, "a selection from before should survive a save while its service is unreachable")
+        store.saveDotProfile { $0.connectedToolIDs = unseen }
+        await manager.connect(kinds[0])
+        try check(store.dotProfile.connectedToolIDs?.contains(marker) == true, "it should be remembered once the service reports")
+
+        store.saveDotProfile { $0.connectedToolIDs = legacy.union(["notes", left]) }
+        try check(store.dotToolIDs(base: legacy.union(["notes"])) == ["notes"] && !store.dotSelectedServices(shown()).contains(marker), "a service taken out should stay out whatever ids remain")
+        store.connectAddedService(kinds[0], scopes: Set(IntegrationsText.scopeKeys))
+        try check(store.dotProfile.connectedToolIDs?.contains(left) == false && store.dotToolIDs(base: legacy) == legacy, "adding it again should bring it back")
     }
 
     final class Offered: @unchecked Sendable {
