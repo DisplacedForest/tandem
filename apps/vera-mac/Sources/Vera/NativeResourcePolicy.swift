@@ -307,6 +307,11 @@ final class NativeModelContext {
         return profile
     }
 
+    static func room(base: URL, model: String, ceiling: Int?) -> Int? {
+        let found = [shared.tokens(base: base, model: model), ceiling].compactMap { $0 }.filter { $0 > 0 }
+        return found.min()
+    }
+
     func tokens(base: URL, model: String) -> Int? { known[Self.key(base, model)] }
 
     func record(base: URL, contexts: [String: Int]) {

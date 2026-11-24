@@ -611,8 +611,8 @@ enum NativeMCPChangesSelftest {
         for tool in [read, change] {
             let answer = try await tool.execute(call)
             try require(try answer.piData().count > long.utf8.count, "A long answer arrives whole from the service")
-            let shown = try NativeToolResultBudget.serialized(answer, maximumBytes: tool.resultByteBudget)
-            try require(shown.utf8.count <= tool.resultByteBudget && shown.contains("\"truncated\":true"), "A long answer is shortened for the model and marked as shortened")
+            let shown = try NativeToolResultBudget.serialized(answer, maximumBytes: tool.resultByteBudget ?? NativeToolResultBudget.defaultBytes)
+            try require(shown.utf8.count <= NativeToolResultBudget.defaultBytes && shown.contains("\"truncated\":true"), "A long answer is shortened for the model and marked as shortened")
         }
         let scope = try NativeMCPAuthoritySelftest.scope(mode: "assistant")
         let shared = try await manager.authority.call(scope: scope, id: UUID().uuidString, name: server.toolID("lookup"), arguments: .object(call),

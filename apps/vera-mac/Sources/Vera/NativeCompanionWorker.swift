@@ -535,9 +535,25 @@ enum NativeCompanionWorker {
         checkpoint.transcript.reduce(0) { $0 + $1.content.utf8.count + ($1.toolCalls ?? []).reduce(0) { $0 + $1.arguments.utf8.count + NativeResourcePolicy.companionCallOverheadBytes } + NativeResourcePolicy.companionMarkerBytes }
     }
 
-    static func resultLimit(_ checkpoint: NativeCompanionCheckpoint, definition: NativeToolDefinition, budget: NativeCompanionWorkerBudget) -> Int {
+    static func resultLimit(_ checkpoint: NativeCompanionCheckpoint, definition: NativeToolDefinition, budget: NativeCompanionWorkerBudget, room: NativeCompanionResultRoom = NativeCompanionResultRoom()) -> Int {
         let remaining = budget.transcriptBytes - NativeResourcePolicy.companionToolReserveBytes - transcriptBytes(checkpoint)
-        return max(NativeResourcePolicy.companionShortestResultBytes, min(definition.resultByteBudget, remaining))
+        return max(NativeResourcePolicy.companionShortestResultBytes, min(definition.resultByteBudget ?? NativeToolResultBudget.sized(contextTokens: room.contextTokens, outputTokens: room.outputTokens, used: transcriptBytes(checkpoint) + room.besideBytes), remaining))
+    }
+
+    static func fitted(_ messages: [NativeTaskGenerationMessage], room: NativeCompanionResultRoom) -> [NativeTaskGenerationMessage] {
+        guard let context = room.contextTokens, context > 0 else { return messages }
+        let limit = NativeToolResultBudget.promptRoom(context, room.outputTokens)
+        var result = messages
+        var total = room.besideBytes + messages.reduce(0) { $0 + $1.content.utf8.count + ($1.toolCalls ?? []).reduce(0) { $0 + $1.arguments.utf8.count + NativeResourcePolicy.companionCallOverheadBytes } }
+        for index in result.indices where total > limit && result[index].role == "tool" && result[index].content.utf8.count > NativeToolResultBudget.defaultBytes {
+            let before = result[index].content
+            var cut = String(decoding: Data(before.utf8.prefix(NativeToolResultBudget.defaultBytes - NativeResourcePolicy.companionMarkerBytes)), as: UTF8.self)
+            while cut.last == "\u{FFFD}" { cut.removeLast() }
+            cut += " [result truncated]"
+            total += cut.utf8.count - before.utf8.count
+            result[index] = NativeTaskGenerationMessage(role: "tool", content: cut, toolCallID: result[index].toolCallID)
+        }
+        return result
     }
 
     static func effectsLine(_ checkpoint: NativeCompanionCheckpoint) -> String {
@@ -705,6 +721,12 @@ struct NativeCompanionDeadline: Error {}
 
 struct NativeCompanionStopped: Error {}
 
+struct NativeCompanionResultRoom: Equatable, Sendable {
+    var contextTokens: Int? = nil
+    var outputTokens: Int? = nil
+    var besideBytes = 0
+}
+
 private struct NativeCompanionRun {
     let task: NativeTaskRecord
     let dot: NativeCompanionTaskPayload
@@ -768,6 +790,13 @@ private struct NativeCompanionRun {
         return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
                                  targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
                                  fixed: definition.fixedDestination, alwaysAsks: definition.demandsConfirmation)
+    }
+
+    var resultRoom: NativeCompanionResultRoom {
+        let binding = (try? JSONDecoder().decode(NativeResearchTaskPayload.self, from: task.payload))?.nativeBinding
+        let tools = NativeToolAdapter.offered(context.tools, for: .handedOffWork).schemas
+        return NativeCompanionResultRoom(contextTokens: binding?.contextTokens, outputTokens: binding?.outputTokens,
+                                         besideBytes: ((try? nativeTaskEncoded(tools))?.count ?? 0) + dot.assignment.utf8.count)
     }
 
     func cardPlace(_ authority: NativeCompanionWorkerAuthority) -> NativeCardPlace {
@@ -880,8 +909,9 @@ private struct NativeCompanionRun {
     }
 
     func messages(_ checkpoint: NativeCompanionCheckpoint, finishing: Bool) -> [NativeTaskGenerationMessage] {
-        [NativeTaskGenerationMessage(role: "system", content: systemPrompt(finishing: finishing, stoppedOnRepairs: checkpoint.stoppedOnRepairs)),
-         NativeTaskGenerationMessage(role: "user", content: "Assignment:\n\(dot.assignment)" + NativeCompanionWorker.carriedSection(dot.carried))] + checkpoint.transcript
+        NativeCompanionWorker.fitted([NativeTaskGenerationMessage(role: "system", content: systemPrompt(finishing: finishing, stoppedOnRepairs: checkpoint.stoppedOnRepairs)),
+         NativeTaskGenerationMessage(role: "user", content: "Assignment:\n\(dot.assignment)" + NativeCompanionWorker.carriedSection(dot.carried))] + checkpoint.transcript,
+                                     room: resultRoom)
     }
 
     func fits(_ messages: [NativeTaskGenerationMessage], tools: [NativeTaskGenerationTool]?, closing: Bool = false) -> Bool {
@@ -1139,7 +1169,7 @@ private struct NativeCompanionRun {
                 var requested: String?
                 if case .string(let address)? = arguments["url"] { requested = address.trimmingCharacters(in: .whitespacesAndNewlines) }
                 let value = checkpoint.numbered(raw, definition: definition, requested: requested)
-                checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
+                checkpoint.answer(call, NativeCompanionWorker.bounded(value, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget, room: resultRoom)))
                 return
             } catch {
                 if error is NativeCompanionStopped { throw CancellationError() }
@@ -1171,7 +1201,7 @@ private struct NativeCompanionRun {
             case .completed:
                 checkpoint.note(title, NativeCompanionWorker.ranWithFailure(existing.receipt ?? .null) ? "failed" : "done")
                 checkpoint.answer(call, NativeCompanionWorker.bounded(existing.receipt ?? .null,
-                                                                      bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
+                                                                      bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget, room: resultRoom)))
                 return nil
             case .uncertain:
                 return try await reconcile(existing, call: call, definition: definition, &checkpoint)
@@ -1272,7 +1302,7 @@ private struct NativeCompanionRun {
                 }
             }
             settleRepairs(call, &checkpoint)
-            let limit = NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)
+            let limit = NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget, room: resultRoom)
             if NativeToolRepair.resultProblem(definition, value, write: true) != nil {
                 try environment.ledger.markUncertain(digest: record.digest, reason: "failed_result")
                 guard let uncertain = try environment.ledger.record(digest: record.digest) else { return nil }
@@ -1363,7 +1393,7 @@ private struct NativeCompanionRun {
             switch observation {
             case .applied(let receipt):
                 checkpoint.note(title, "done")
-                checkpoint.answer(call, NativeCompanionWorker.bounded(receipt, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget)))
+                checkpoint.answer(call, NativeCompanionWorker.bounded(receipt, bytes: NativeCompanionWorker.resultLimit(checkpoint, definition: definition, budget: environment.budget, room: resultRoom)))
                 return nil
             case .absent:
                 checkpoint.note(title, "not done")

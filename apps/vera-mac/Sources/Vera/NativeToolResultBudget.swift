@@ -4,6 +4,44 @@ enum NativeToolResultBudget {
     static let defaultBytes = 32_768
     static let researchBytes = 131_072
 
+    static let roomPercent = 75
+    static let leastShare = 16
+    static let imageBytes = 4_096
+
+    static func promptRoom(_ contextTokens: Int, _ outputTokens: Int?) -> Int {
+        let policy = NativeResourcePolicy(contextTokens: contextTokens, outputTokens: outputTokens, reasoning: false)
+        guard let outputTokens, outputTokens > 0 else { return policy.promptBytes }
+        return max(1, min(policy.promptBytes, (contextTokens - outputTokens) * NativeResourcePolicy.charactersPerToken))
+    }
+
+    static func sized(contextTokens: Int?, outputTokens: Int? = nil, used: Int) -> Int {
+        guard let contextTokens, contextTokens > 0 else { return defaultBytes }
+        let room = promptRoom(contextTokens, outputTokens)
+        return max(NativeResourcePolicy.companionShortestResultBytes, min(defaultBytes, room / leastShare), (room - used) * roomPercent / 100)
+    }
+
+    static func size(_ history: [NativeChatMessage]) -> Int {
+        history.reduce(0) { total, message in
+            total + message.content.utf8.count + message.images.count * imageBytes
+                + message.toolCalls.reduce(0) { $0 + $1.name.utf8.count + $1.arguments.utf8.count }
+        }
+    }
+
+    static func fitted(_ history: [NativeChatMessage], contextTokens: Int?, outputTokens: Int? = nil, beside: Int = 0) -> [NativeChatMessage] {
+        guard let contextTokens, contextTokens > 0 else { return history }
+        let room = promptRoom(contextTokens, outputTokens)
+        var result = history
+        var total = size(result) + beside
+        for index in result.indices where total > room && result[index].role == "tool" && result[index].content.utf8.count > defaultBytes {
+            let message = result[index]
+            let value = (try? NativeJSONValue.piRead(Data(message.content.utf8), maximumBytes: NativeMCPSDKConnection.responseBytes)) ?? .string(message.content)
+            guard let shorter = try? serialized(value, maximumBytes: defaultBytes) else { continue }
+            total += shorter.utf8.count - message.content.utf8.count
+            result[index] = NativeChatMessage(role: message.role, content: shorter, toolCallID: message.toolCallID, toolCalls: message.toolCalls, images: message.images)
+        }
+        return result
+    }
+
     private enum Component {
         case key(String)
         case index(Int)
