@@ -169,11 +169,18 @@ enum NativeToolResultBudgetSelftest {
             let limit = NativeCompanionWorker.resultLimit(NativeCompanionCheckpoint(), definition: definition(long), budget: .standard, room: NativeCompanionResultRoom(contextTokens: tokens))
             try require((least...most).contains(limit), "companion work sizes an answer from its model: \(limit)")
         }
+        try require(NativeToolResultBudget.sized(contextTokens: 128_000, outputTokens: 96_000, used: 0) <= 96_000, "a reply larger than half the context is left its room")
+        let worked = [NativeTaskGenerationMessage(role: "system", content: "Work")] + (0..<4).map { NativeTaskGenerationMessage(role: "tool", content: String(repeating: "x", count: 120_000), toolCallID: "call-\($0)") }
+        let room = NativeCompanionResultRoom(contextTokens: 128_000, besideBytes: 20_000)
+        let kept = NativeCompanionWorker.fitted(worked, room: room)
+        try require(kept.reduce(0) { $0 + $1.content.utf8.count } + 20_000 <= NativeToolResultBudget.promptRoom(128_000, nil) && kept.last == worked.last && kept[1].content.hasSuffix(" [result truncated]") && kept[1].toolCallID == "call-0",
+                    "companion work shortens earlier answers first")
+        try require(NativeCompanionWorker.fitted(worked, room: NativeCompanionResultRoom()) == worked, "companion work with an unknown context sends what it has")
         let content = try NativeToolLoop.serializedResult(long)
         let history = (0..<3).flatMap { [NativeChatMessage(role: "user", content: "Look \($0)"), NativeChatMessage(role: "tool", content: content, toolCallID: "call-\($0)")] }
-        let room = NativeResourcePolicy(contextTokens: 128_000, outputTokens: nil, reasoning: false).promptBytes
+        let limit = NativeToolResultBudget.promptRoom(128_000, nil)
         let fitted = NativeToolResultBudget.fitted(history, contextTokens: 128_000)
-        try require(NativeToolResultBudget.size(fitted) <= room && fitted.last?.content == content && fitted[1].content.contains("\"truncated\":true") && fitted[1].toolCallID == "call-0",
+        try require(NativeToolResultBudget.size(fitted) <= limit && fitted.last?.content == content && fitted[1].content.contains("\"truncated\":true") && fitted[1].toolCallID == "call-0",
                     "earlier answers are shortened first when a conversation outgrows the model")
         try require(NativeToolResultBudget.fitted(Array(history.prefix(2)), contextTokens: 128_000, beside: 140_000)[1].content.contains("\"truncated\":true"), "a large tool list counts too")
         try require(NativeToolResultBudget.fitted(Array(history.prefix(2)), contextTokens: 128_000) == Array(history.prefix(2)) && NativeToolResultBudget.fitted(history, contextTokens: nil) == history,

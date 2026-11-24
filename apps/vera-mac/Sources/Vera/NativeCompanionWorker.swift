@@ -540,6 +540,22 @@ enum NativeCompanionWorker {
         return max(NativeResourcePolicy.companionShortestResultBytes, min(definition.resultByteBudget ?? NativeToolResultBudget.sized(contextTokens: room.contextTokens, outputTokens: room.outputTokens, used: transcriptBytes(checkpoint) + room.besideBytes), remaining))
     }
 
+    static func fitted(_ messages: [NativeTaskGenerationMessage], room: NativeCompanionResultRoom) -> [NativeTaskGenerationMessage] {
+        guard let context = room.contextTokens, context > 0 else { return messages }
+        let limit = NativeToolResultBudget.promptRoom(context, room.outputTokens)
+        var result = messages
+        var total = room.besideBytes + messages.reduce(0) { $0 + $1.content.utf8.count + ($1.toolCalls ?? []).reduce(0) { $0 + $1.arguments.utf8.count + NativeResourcePolicy.companionCallOverheadBytes } }
+        for index in result.indices where total > limit && result[index].role == "tool" && result[index].content.utf8.count > NativeToolResultBudget.defaultBytes {
+            let before = result[index].content
+            var cut = String(decoding: Data(before.utf8.prefix(NativeToolResultBudget.defaultBytes - NativeResourcePolicy.companionMarkerBytes)), as: UTF8.self)
+            while cut.last == "\u{FFFD}" { cut.removeLast() }
+            cut += " [result truncated]"
+            total += cut.utf8.count - before.utf8.count
+            result[index] = NativeTaskGenerationMessage(role: "tool", content: cut, toolCallID: result[index].toolCallID)
+        }
+        return result
+    }
+
     static func effectsLine(_ checkpoint: NativeCompanionCheckpoint) -> String {
         let done = checkpoint.effects.filter { $0.outcome.hasPrefix("done") }.map(\.title)
         let unsure = checkpoint.effects.filter { $0.outcome == "failed" || $0.outcome == "unconfirmed" }.map(\.title)
@@ -893,8 +909,9 @@ private struct NativeCompanionRun {
     }
 
     func messages(_ checkpoint: NativeCompanionCheckpoint, finishing: Bool) -> [NativeTaskGenerationMessage] {
-        [NativeTaskGenerationMessage(role: "system", content: systemPrompt(finishing: finishing, stoppedOnRepairs: checkpoint.stoppedOnRepairs)),
-         NativeTaskGenerationMessage(role: "user", content: "Assignment:\n\(dot.assignment)" + NativeCompanionWorker.carriedSection(dot.carried))] + checkpoint.transcript
+        NativeCompanionWorker.fitted([NativeTaskGenerationMessage(role: "system", content: systemPrompt(finishing: finishing, stoppedOnRepairs: checkpoint.stoppedOnRepairs)),
+         NativeTaskGenerationMessage(role: "user", content: "Assignment:\n\(dot.assignment)" + NativeCompanionWorker.carriedSection(dot.carried))] + checkpoint.transcript,
+                                     room: resultRoom)
     }
 
     func fits(_ messages: [NativeTaskGenerationMessage], tools: [NativeTaskGenerationTool]?, closing: Bool = false) -> Bool {

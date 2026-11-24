@@ -8,9 +8,15 @@ enum NativeToolResultBudget {
     static let leastShare = 16
     static let imageBytes = 4_096
 
+    static func promptRoom(_ contextTokens: Int, _ outputTokens: Int?) -> Int {
+        let policy = NativeResourcePolicy(contextTokens: contextTokens, outputTokens: outputTokens, reasoning: false)
+        guard let outputTokens, outputTokens > 0 else { return policy.promptBytes }
+        return max(1, min(policy.promptBytes, (contextTokens - outputTokens) * NativeResourcePolicy.charactersPerToken))
+    }
+
     static func sized(contextTokens: Int?, outputTokens: Int? = nil, used: Int) -> Int {
         guard let contextTokens, contextTokens > 0 else { return defaultBytes }
-        let room = NativeResourcePolicy(contextTokens: contextTokens, outputTokens: outputTokens, reasoning: false).promptBytes
+        let room = promptRoom(contextTokens, outputTokens)
         return max(NativeResourcePolicy.companionShortestResultBytes, min(defaultBytes, room / leastShare), (room - used) * roomPercent / 100)
     }
 
@@ -23,7 +29,7 @@ enum NativeToolResultBudget {
 
     static func fitted(_ history: [NativeChatMessage], contextTokens: Int?, outputTokens: Int? = nil, beside: Int = 0) -> [NativeChatMessage] {
         guard let contextTokens, contextTokens > 0 else { return history }
-        let room = NativeResourcePolicy(contextTokens: contextTokens, outputTokens: outputTokens, reasoning: false).promptBytes
+        let room = promptRoom(contextTokens, outputTokens)
         var result = history
         var total = size(result) + beside
         for index in result.indices where total > room && result[index].role == "tool" && result[index].content.utf8.count > defaultBytes {
