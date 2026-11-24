@@ -84,7 +84,7 @@ enum Shot {
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let artifactSeed = view.hasPrefix("artifacts") ? ArtifactShotFixture.store(variant: view) : nil
         let projectSeed = view.hasPrefix("projects") ? ProjectShotFixture.store(variant: view) : nil
-        let integrationsSeed = view.hasPrefix("integrations") ? IntegrationsShotFixture.store(variant: view) : nil
+        let integrationsSeed = view.hasPrefix("integrations") ? IntegrationsShotFixture.store(variant: view.replacingOccurrences(of: "integrations-detail", with: "integrations")) : nil
         let workSeed = view == "conversation-work" || view == "conversation-narrow" ? OngoingWorkFixture.store() : nil
         unsetenv("VERA_ASSISTANT_NAME")
         if CompanionNameShot.views.contains(view) {
@@ -102,7 +102,9 @@ enum Shot {
         let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? workSeed ?? ChatStore()
         CompanionNameShot.apply(to: store)
         let size: CGSize
-        if view.hasPrefix("agentic-editor") || view == "agentic-run" {
+        if view.hasPrefix("integrations") && view.hasSuffix("narrow") {
+            size = CGSize(width: 920, height: 760)
+        } else if view.hasPrefix("agentic-editor") || view == "agentic-run" {
             size = CGSize(width: 2048, height: 1100)
         } else if view.hasPrefix("settings-advanced") {
             size = CGSize(width: 1180, height: 1500)
@@ -396,6 +398,18 @@ enum Shot {
             content = AnyView(
                 IntegrationsManageSheet(target: IntegrationsManageTarget(id: view == "integrations-manage-reports" ? IntegrationsShotFixture.reportsID : IntegrationsShotFixture.codeID),
                                         filled: view == "integrations-manage-reports" ? IntegrationsShotFixture.reportsRow : IntegrationsShotFixture.codeRow) { _ in }
+                    .background(Theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+                    .environment(\.renderSafe, true)
+                    .environmentObject(seed.store)
+                    .environmentObject(seed.config)
+            )
+        } else if view.hasPrefix("integrations-detail"), let seed = integrationsSeed {
+            content = AnyView(
+                IntegrationsDetailSheet(manager: seed.config.nativeMCP, target: IntegrationsShotFixture.detail(view, seed: seed))
                     .background(Theme.surface)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
@@ -709,7 +723,8 @@ enum Shot {
                  "artifacts-save-missing", "artifacts-cited-code", "artifacts-recovered", "artifacts-sources-open",
                  "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow", "artifacts-collapsed": section = .artifacts
             case "scheduled", "scheduled-paused", "scheduled-caught-up", "scheduled-anything": section = .scheduled
-            case "integrations", "integrations-public", "integrations-empty", "integrations-changes", "integrations-reports", "integrations-reconnecting", "integrations-failed", "integrations-signed-in": section = .integrations
+            case "integrations", "integrations-public", "integrations-empty", "integrations-changes", "integrations-reports", "integrations-reconnecting", "integrations-failed", "integrations-signed-in",
+                 "integrations-public-installed", "integrations-no-match", "integrations-states", "integrations-long", "integrations-long-narrow", "integrations-narrow", "integrations-menu": section = .integrations
             case "memory": section = .memory
             case "companion-connection":
                 section = .vera
@@ -753,6 +768,11 @@ enum Shot {
                     .environment(\.sourcesListExpanded, view == "artifacts-sources-open")
                     .environmentObject(store)
                     .environmentObject(integrationsSeed?.config ?? ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in }))
+                    .overlay(alignment: .topLeading) {
+                        if view == "integrations-menu", let seed = integrationsSeed, let server = seed.config.nativeMCP.servers.first(where: { $0.id == seed.selection }) {
+                            IntegrationsMenuShot(actions: IntegrationsPageModel.menu(seed.config.nativeMCP.connection(server))).padding(.leading, 705).padding(.top, 388)
+                        }
+                    }
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
