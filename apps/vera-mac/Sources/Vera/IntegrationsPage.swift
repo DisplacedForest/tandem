@@ -22,7 +22,7 @@ struct IntegrationsPageHeader: View {
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("Plugins").font(.system(size: 22, weight: .semibold)).accessibilityAddTraits(.isHeader)
+            Text("Plugins").font(.system(size: 20, weight: .medium)).accessibilityAddTraits(.isHeader)
             CompanionNamedText(template: IntegrationsPageModel.subtitle)
                 .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
         }
@@ -86,8 +86,8 @@ struct IntegrationsPageSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 6) {
             Button(action: toggle) {
                 HStack(spacing: 5) {
-                    Text(title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                    Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
+                    Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                 }
                 .contentShape(Rectangle())
@@ -107,7 +107,7 @@ struct IntegrationsPageGrid<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 24), count: columns), alignment: .leading, spacing: 0) { content() }
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 16), count: columns), alignment: .leading, spacing: 0) { content() }
     }
 }
 
@@ -117,34 +117,31 @@ struct IntegrationsPageRow<Trailing: View>: View {
     let line: String
     var lineHelp: String? = nil
     var state: String? = nil
-    var live = false
     let open: () -> Void
     @ViewBuilder let trailing: () -> Trailing
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             Button(action: open) {
-                HStack(spacing: 11) {
+                HStack(spacing: 10) {
                     IntegrationsEntryIcon(name: icon, size: 20)
                         .frame(width: 28, height: 28)
                         .background(Theme.surface)
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(verbatim: name).font(.system(size: 13)).lineLimit(1).truncationMode(.tail).help(Text(verbatim: name))
-                            if live { Circle().fill(Theme.accent).frame(width: 6, height: 6).help(state ?? "") }
+                        Text(verbatim: name).font(.system(size: 13)).lineLimit(1).truncationMode(.tail).help(Text(verbatim: name))
+                        if !line.isEmpty {
+                            Text(verbatim: line).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1).truncationMode(.tail).help(Text(verbatim: lineHelp ?? line))
                         }
-                        Text(verbatim: line).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1).truncationMode(.tail).help(Text(verbatim: lineHelp ?? line))
                     }
-                    Spacer(minLength: 0)
                 }
-                .frame(maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(Text(verbatim: [name, state, line == state ? nil : line].compactMap { $0 }.joined(separator: ", ")))
+            .accessibilityLabel(Text(verbatim: [name, state, line == state ? nil : line].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")))
             .accessibilityHint("Opens its details")
             trailing()
         }
@@ -164,7 +161,7 @@ struct IntegrationsPagePlus: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "plus").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                .frame(width: 28, height: 28).contentShape(Rectangle())
+                .frame(width: 22, height: 28).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("Install")
@@ -187,7 +184,7 @@ struct IntegrationsPageMenu: View {
 
     var body: some View {
         let dots = Image(systemName: "ellipsis").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
-            .frame(width: 28, height: 28).contentShape(Rectangle())
+            .frame(width: 22, height: 28).contentShape(Rectangle())
         if renderSafe { dots } else {
             Menu {
                 if items.count == 1, let item = items.first {
@@ -229,5 +226,19 @@ struct IntegrationsMenuShot: View {
         .padding(6).frame(width: 170, alignment: .leading)
         .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
+    }
+}
+
+struct IntegrationsCappedHeight: Layout {
+    let cap: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let size = subview.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? size.width, height: min(size.height, cap))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }

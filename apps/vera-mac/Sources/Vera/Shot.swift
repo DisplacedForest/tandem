@@ -102,7 +102,9 @@ enum Shot {
         let store = artifactSeed?.store ?? projectSeed?.store ?? integrationsSeed?.store ?? workSeed ?? ChatStore()
         CompanionNameShot.apply(to: store)
         let size: CGSize
-        if view.hasPrefix("integrations") && view.hasSuffix("narrow") {
+        if view == "integrations-wide" {
+            size = CGSize(width: 1900, height: 760)
+        } else if view.hasPrefix("integrations") && view.hasSuffix("narrow") {
             size = CGSize(width: 920, height: 760)
         } else if view.hasPrefix("agentic-editor") || view == "agentic-run" {
             size = CGSize(width: 2048, height: 1100)
@@ -724,7 +726,7 @@ enum Shot {
                  "artifacts-ambiguous", "artifacts-cited-code-narrow", "artifacts-recovered-narrow", "artifacts-collapsed": section = .artifacts
             case "scheduled", "scheduled-paused", "scheduled-caught-up", "scheduled-anything": section = .scheduled
             case "integrations", "integrations-public", "integrations-empty", "integrations-changes", "integrations-reports", "integrations-reconnecting", "integrations-failed", "integrations-signed-in", "integrations-locked",
-                 "integrations-public-installed", "integrations-no-match", "integrations-states", "integrations-long", "integrations-long-narrow", "integrations-narrow", "integrations-menu": section = .integrations
+                 "integrations-public-installed", "integrations-no-match", "integrations-states", "integrations-listed", "integrations-wide", "integrations-long", "integrations-long-narrow", "integrations-narrow", "integrations-menu": section = .integrations
             case "memory": section = .memory
             case "companion-connection":
                 section = .vera

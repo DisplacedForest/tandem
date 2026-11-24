@@ -244,7 +244,7 @@ private struct IntegrationsDestination: View {
         let servers = IntegrationsPageModel.installed(entry, in: manager.servers)
         let state = servers.count == 1 ? servers.first.map { manager.shownState($0) } : nil
         return IntegrationsPageRow(icon: entry.icon, name: entry.name, line: entry.description,
-                                   state: servers.isEmpty ? nil : state ?? "Installed", live: servers.contains(where: \.connected)) {
+                                   state: servers.isEmpty ? nil : state ?? "Installed") {
             detail = servers.count == 1 ? servers.first.map { .server($0.id) } : .entry(entry)
         } trailing: {
             switch IntegrationsPageModel.trailing(entry, in: manager.servers) {
@@ -260,7 +260,7 @@ private struct IntegrationsDestination: View {
         return IntegrationsPageRow(icon: entry?.icon, name: server.configuration.name,
                                    line: IntegrationsPageModel.line(server, state: state, entry: entry),
                                    lineHelp: server.connected || server.status == "Not connected" || server.status == state ? nil : server.status,
-                                   state: state, live: server.connected) {
+                                   state: state) {
             detail = .server(server.id)
         } trailing: {
             menu(server.configuration.name, [server])
@@ -350,12 +350,14 @@ struct IntegrationsDetailSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let server {
-                ShotSafeScroll(renderSafe: renderSafe) {
-                    serverCard(server).id(server.id)
-                        .padding(24)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                IntegrationsCappedHeight(cap: IntegrationsPageModel.detailHeight) {
+                    ShotSafeScroll(renderSafe: renderSafe) {
+                        serverCard(server).id(server.id)
+                            .padding(24)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-                .frame(height: 520, alignment: .top).clipped()
+                .clipped()
             } else if case .entry(let entry) = target {
                 entryCard(entry).padding(24).frame(maxWidth: .infinity, alignment: .leading)
             }

@@ -52,7 +52,10 @@ enum IntegrationsPageSelftest {
         var connected = code
         connected.connected = true
         try require(IntegrationsPageModel.line(connected, state: "Connected", entry: listed) == listed.description, "A connected row shows its description")
-        try require(IntegrationsPageModel.line(own, state: "Connected", entry: nil) == "Connected", "A connected row with no description shows its state")
+        try require(IntegrationsPageModel.line(own, state: "Connected", entry: nil) == "by Cognition (Devin)", "A connected row with no description shows its publisher, never its state")
+        let house = IntegrationsShotFixture.store(variant: "integrations-listed").config.nativeMCP
+        let home = house.servers.first { $0.id == IntegrationsShotFixture.reportsID }
+        try require(home.flatMap { IntegrationsPageModel.entry(for: $0, in: entries) }?.icon != nil, "A service installed from the list keeps its icon")
         func found(_ query: String) -> [String] { IntegrationsPageModel.matching(manager.servers, entries: entries, query: query).map(\.id) }
         try require(found("").count == 3 && found("deepwiki") == [own.id] && found("COGNITION") == [own.id], "Personal search reads the name and the publisher")
         try require(found("pull requests") == [code.id] && found("no such thing").isEmpty, "Personal search reads the description")

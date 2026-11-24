@@ -1,9 +1,10 @@
 import Foundation
 
 enum IntegrationsPageModel {
-    static let contentWidth: CGFloat = 700
+    static let contentWidth: CGFloat = 728
     static let twoColumnWidth: CGFloat = 660
     static let headerRowWidth: CGFloat = 520
+    static let detailHeight: CGFloat = 520
     static let subtitle = "Connect the services {name} can use."
     static let noMatch = "Nothing matches."
     static let emptyTitle = "No connected services yet."
@@ -93,6 +94,6 @@ enum IntegrationsPageModel {
     static func line(_ server: NativeMCPServerState, state: String, entry: NativeMCPStarterEntry?) -> String {
         guard server.connected else { return state }
         if let description = entry?.description, !description.isEmpty { return description }
-        return state
+        return server.configuration.publisher.map { "by \($0)" } ?? ""
     }
 }
