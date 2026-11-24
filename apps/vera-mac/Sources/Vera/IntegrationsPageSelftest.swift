@@ -29,6 +29,8 @@ enum IntegrationsPageSelftest {
         try require(IntegrationsPageModel.sections(bundled.entries).flatMap(\.entries).count == bundled.entries.count, "Every listed plugin is in a section")
         let atMinimum = 920 - VeraSidebar.expandedWidth - 64
         try require(IntegrationsPageModel.columns(for: atMinimum) == 1, "The grid is one column at the smallest window")
+        let collapsed = min(920 - VeraSidebar.collapsedWidth - 64, IntegrationsPageModel.contentWidth)
+        try require(IntegrationsPageModel.columns(for: collapsed) == 2, "With the sidebar closed the same window has room for two")
         try require(IntegrationsPageModel.columns(for: IntegrationsPageModel.contentWidth) == 2, "The grid is two columns at full width")
     }
 

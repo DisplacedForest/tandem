@@ -359,7 +359,12 @@ struct IntegrationsDetailSheet: View {
                 }
                 .clipped()
             } else if case .entry(let entry) = target {
-                entryCard(entry).padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                IntegrationsCappedHeight(cap: IntegrationsPageModel.detailHeight) {
+                    ShotSafeScroll(renderSafe: renderSafe) {
+                        entryCard(entry).padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .clipped()
             }
             Rectangle().fill(Theme.hairline).frame(height: 1)
             HStack {
