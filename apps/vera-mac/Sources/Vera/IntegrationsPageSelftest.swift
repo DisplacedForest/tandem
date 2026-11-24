@@ -92,7 +92,7 @@ enum IntegrationsPageSelftest {
         try require(named.contains("Wren") && unnamed.contains(CompanionSentence.unnamedSubject), "The line under the title names the companion")
         let shown = [named, unnamed, IntegrationsPageModel.noMatch, IntegrationsPageModel.emptyTitle, IntegrationsPageModel.emptyDetail, IntegrationsText.removeQuestion("Example")]
             + IntegrationsPageModel.MenuAction.allCases.map(\.title) + IntegrationsTab.allCases.map(\.title)
-        let banned = ["ver" + "a", "task", "background", "worker", "agent", "she", "her", "he", "him", "his", "\u{2014}"]
+        let banned = ["ver" + "a", "ta" + "sk", "back" + "ground", "work" + "er", "ag" + "ent", "she", "her", "he", "him", "his", "\u{2014}"]
         for text in shown {
             let words = Set(text.lowercased().split { !$0.isLetter && $0 != "\u{2014}" }.map(String.init))
             try require(words.isDisjoint(with: banned), "The page's copy stays plain: \(text)")
