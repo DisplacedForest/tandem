@@ -60,7 +60,7 @@ enum IntegrationsShotFixture {
         store.section = .integrations
         let manage = variant.hasPrefix("integrations-manage")
         let changes = variant == "integrations-changes" || manage
-        let rows: [[String: Any]] = ["integrations-empty", "integrations-public"].contains(variant) ? [] : variant.hasPrefix("integrations-long") ? [longRow, codeRow] : variant == "integrations-states" ? [docsRow, codeRow, reportsRow] : variant == "integrations-reports" || variant == "integrations-manage-reports" ? [reportsRow] : variant == "integrations-signed-in" ? [signedInRow] : changes ? [codeRow] : [
+        let rows: [[String: Any]] = ["integrations-empty", "integrations-public"].contains(variant) ? [] : variant == "integrations-locked" ? [reportsRow.merging(["address_saved": true]) { $1 }] : variant.hasPrefix("integrations-long") ? [longRow, codeRow] : variant == "integrations-states" ? [docsRow, codeRow, reportsRow] : variant == "integrations-reports" || variant == "integrations-manage-reports" ? [reportsRow] : variant == "integrations-signed-in" ? [signedInRow] : changes ? [codeRow] : [
             [
                 "id": wikiID, "name": "DeepWiki", "url": "https://mcp.deepwiki.com/mcp",
                 "read_tools": ["read_wiki_structure", "read_wiki_contents", "ask_question"],
@@ -127,7 +127,7 @@ enum IntegrationsShotFixture {
             manager.authority.access.update(state)
             manager.refresh()
         }
-        if let reports = servers.first(where: { $0.reportsTools }), var state = manager.authority.access.snapshot().first(where: { $0.id == reports.id }) {
+        if variant != "integrations-locked", let reports = servers.first(where: { $0.reportsTools }), var state = manager.authority.access.snapshot().first(where: { $0.id == reports.id }) {
             let tools: [(String, String, Bool)] = [("read_items", "Reads every item.", true), ("update_item", "Changes one item.", false), ("remove_item", "Removes an item.", false)]
             state.connected = variant != "integrations-states"
             state.status = state.connected ? "Connected" : "Not connected"
@@ -147,7 +147,7 @@ enum IntegrationsShotFixture {
         switch variant {
         case "integrations-reconnecting", "integrations-failed":
             return Seeded(store: store, config: config, tab: .personal, search: "", selection: codeID)
-        case "integrations-reports", "integrations-manage-reports", "integrations-signed-in":
+        case "integrations-reports", "integrations-manage-reports", "integrations-signed-in", "integrations-locked":
             return Seeded(store: store, config: config, tab: .personal, search: "", selection: nil)
         case "integrations-public":
             return Seeded(store: store, config: config, tab: .catalogue, search: "", selection: "home-assistant")

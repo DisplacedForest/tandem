@@ -75,7 +75,7 @@ struct NativeMCPStarterEntry: Identifiable, Hashable, Codable, Sendable {
     var credentialField: NativeMCPStarterField? { fields.first { $0.target == .credential } }
 
     func matches(_ server: NativeMCPServerConfiguration) -> Bool {
-        if addressField == nil { return server.endpoint.absoluteString == url }
+        if addressField == nil, !server.locked { return server.endpoint.absoluteString == url }
         return server.sourceURL == sourceURL && server.publisher == publisher
     }
 

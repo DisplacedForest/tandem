@@ -47,6 +47,8 @@ enum IntegrationsPageSelftest {
         try require(IntegrationsPageModel.entry(for: own, in: entries) == nil, "A service the person added has no listing")
         try require(manager.shownState(code) == "Reconnecting" && manager.shownState(off) == "Not connected" && manager.shownState(own) == "Connected", "Each row knows its state")
         try require(IntegrationsPageModel.line(code, state: "Reconnecting", entry: listed) == "Reconnecting", "A row that isn't connected shows its state instead of its description")
+        let locked = NativeMCPServerConfiguration.load(["native_mcp_servers": [IntegrationsShotFixture.codeRow.merging(["url": "https://api.githubcopilot.com", "address_saved": true]) { $1 }]]).0
+        try require(locked.first.map { IntegrationsPageModel.trailing(listed, in: [NativeMCPServerState(configuration: $0)]) } == .menu, "A service whose address is locked still counts as installed")
         var connected = code
         connected.connected = true
         try require(IntegrationsPageModel.line(connected, state: "Connected", entry: listed) == listed.description, "A connected row shows its description")

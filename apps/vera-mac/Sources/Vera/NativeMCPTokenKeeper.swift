@@ -29,7 +29,7 @@ final class NativeMCPTokenKeeper {
                 guard let value = try store.readForStartup(for: Self.account(server.id)) else { continue }
                 saved.insert(server.id)
                 try? remember(server.id)
-                if Self.token(value, for: server) == nil { discard(server.id) }
+                if !server.locked, Self.token(value, for: server) == nil { discard(server.id) }
             } catch { saved.insert(server.id) }
         }
     }

@@ -348,10 +348,10 @@ enum NativeMCPChangesSelftest {
         controller.close()
     }
 
-    final class Disk { var contents: [String: Any] = [:]; var fails = false }
+    final class Disk { var contents: [String: Any] = [:]; var fails = false; let keys = NativeCredentialFixtureStore() }
 
     static func store(_ disk: Disk, _ manager: NativeMCPManager) -> ConfigStore {
-        ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { disk.contents }, nativeMCP: manager,
+        ConfigStore(credentialStore: disk.keys, readConfiguration: { disk.contents }, nativeMCP: manager,
                     writeConfiguration: { if disk.fails { throw NativeToolError.unavailable }; disk.contents = $0 })
     }
 
@@ -463,7 +463,7 @@ enum NativeMCPChangesSelftest {
             await manager.connect(id)
             try await stillAsks(manager, connection, label)
         }
-        let reloaded = NativeMCPServerConfiguration.load(disk.contents).0
+        let reloaded = NativeMCPServerConfiguration.load(["native_mcp_servers": NativeMCPAddressBook(store: disk.keys).resolved(disk.contents["native_mcp_servers"] as? [[String: Any]] ?? [])]).0
         try require(reloaded.first?.state(of: "lookup", hints: NativeMCPToolHints(readOnly: true, destructive: false)) == .change, "A reloaded configuration still treats it as a change")
         let fresh = NativeMCPChangesConnection([tool("lookup", readOnly: true)])
         let restarted = NativeMCPManager(servers: reloaded, enabled: Set(reloaded.map { $0.toolID("lookup") }), factory: { _ in fresh })
@@ -486,7 +486,7 @@ enum NativeMCPChangesSelftest {
             try await stillAsks(manager, connection, "unsaved " + label)
         }
         await connection.set([tool("lookup")])
-        await manager.replaceConfiguration(NativeMCPServerConfiguration.load(disk.contents).0)
+        await manager.replaceConfiguration(NativeMCPServerConfiguration.load(["native_mcp_servers": NativeMCPAddressBook(store: disk.keys).resolved(disk.contents["native_mcp_servers"] as? [[String: Any]] ?? [])]).0)
         await manager.connect(id)
         try await stillAsks(manager, connection, "unsaved, after the whole configuration is replaced")
         disk.fails = false
@@ -496,7 +496,7 @@ enum NativeMCPChangesSelftest {
         let elsewhere = try NativeMCPServerConfiguration(id: id, name: "Other tracker", endpoint: URL(string: "https://other-fixture.invalid/mcp")!, readTools: ["lookup"])
         await manager.replaceConfiguration([elsewhere])
         try require(manager.servers.first?.configuration.asksTools.isEmpty == true, "A marking does not follow its id to a different address when the configuration is replaced")
-        manager.applyConfigurationSynchronously(NativeMCPServerConfiguration.load(disk.contents).0)
+        manager.applyConfigurationSynchronously(NativeMCPServerConfiguration.load(["native_mcp_servers": NativeMCPAddressBook(store: disk.keys).resolved(disk.contents["native_mcp_servers"] as? [[String: Any]] ?? [])]).0)
         try require(manager.servers.first?.configuration.asksTools == ["lookup"], "The saved marking comes back with the saved service")
         manager.applyConfigurationSynchronously([elsewhere])
         try require(manager.servers.first?.configuration.asksTools.isEmpty == true, "A marking does not follow its id to a different address when the configuration is edited")
