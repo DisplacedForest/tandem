@@ -31,6 +31,12 @@ enum IntegrationsShotFixture {
         ["id": reportsID, "name": "Home Assistant", "url": "https://house.example/mcp", "scopes": IntegrationsText.scopeKeys, "timeout_seconds": 20.0]
     }
 
+    static var installedRow: [String: Any] {
+        guard let catalogue = try? IntegrationsCatalogue.loaded.get(), let entry = catalogue.entries.first(where: { $0.addressField != nil }),
+              let address = URL(string: "https://house.example/mcp") else { return reportsRow }
+        return catalogue.configurationRow(for: entry, endpoint: address, authentication: .none, scopes: IntegrationsText.scopeKeys, id: reportsID)
+    }
+
     static var signedInRow: [String: Any] {
         ["id": wikiID, "name": "Reference", "url": "https://reference.example/mcp", "read_tools": ["lookup_reference"], "scopes": ["focused", "assistant"], "timeout_seconds": 20.0, "authentication": "oauth",
          "oauth": ["resource": "https://reference.example/mcp", "issuer": "https://login.reference.example",
@@ -38,6 +44,16 @@ enum IntegrationsShotFixture {
                    "authorization_server_metadata_url": "https://login.reference.example/.well-known/oauth-authorization-server",
                    "authorization_endpoint": "https://login.reference.example/authorize", "token_endpoint": "https://login.reference.example/token",
                    "client_id": "preregistered-public-client", "redirect_uri": "vera-oauth://callback", "scopes": ["reference.read"]]]
+    }
+
+    static var docsRow: [String: Any] {
+        ["id": wikiID, "name": "DeepWiki", "url": "https://mcp.deepwiki.com/mcp", "read_tools": ["read_wiki_structure"], "scopes": ["focused"],
+         "timeout_seconds": 20.0, "publisher": "Cognition (Devin)"]
+    }
+
+    static var longRow: [String: Any] {
+        ["id": wikiID, "name": "A service somebody gave a remarkably long name that will not fit on one line", "url": "https://long.example/mcp",
+         "scopes": ["focused"], "timeout_seconds": 20.0, "publisher": "Example"]
     }
 
     static func changeDefinition(_ store: ChatStore) -> NativeToolDefinition {
@@ -50,7 +66,7 @@ enum IntegrationsShotFixture {
         store.section = .integrations
         let manage = variant.hasPrefix("integrations-manage")
         let changes = variant == "integrations-changes" || manage
-        let rows: [[String: Any]] = variant == "integrations-empty" ? [] : variant == "integrations-locked" ? [reportsRow.merging(["address_saved": true]) { $1 }] : variant == "integrations-reports" || variant == "integrations-manage-reports" ? [reportsRow] : variant == "integrations-signed-in" ? [signedInRow] : changes ? [codeRow] : [
+        let rows: [[String: Any]] = ["integrations-empty", "integrations-public"].contains(variant) ? [] : variant == "integrations-locked" ? [reportsRow.merging(["address_saved": true]) { $1 }] : variant.hasPrefix("integrations-long") ? [longRow, codeRow] : variant == "integrations-states" ? [docsRow, codeRow, installedRow] : variant == "integrations-listed" ? [installedRow, codeRow] : variant == "integrations-reports" || variant == "integrations-manage-reports" ? [reportsRow] : variant == "integrations-signed-in" ? [signedInRow] : changes ? [codeRow] : [
             [
                 "id": wikiID, "name": "DeepWiki", "url": "https://mcp.deepwiki.com/mcp",
                 "read_tools": ["read_wiki_structure", "read_wiki_contents", "ask_question"],
@@ -67,7 +83,7 @@ enum IntegrationsShotFixture {
         let disk = Disk(rows.isEmpty ? [:] : ["native_mcp_servers": rows])
         let (servers, _) = NativeMCPServerConfiguration.load(disk.contents)
         let keys = NativeCredentialFixtureStore()
-        if ["integrations-manage", "integrations-reconnecting"].contains(variant), let code = servers.first(where: { $0.id == codeID }) {
+        if ["integrations-manage", "integrations-reconnecting", "integrations-states"].contains(variant), let code = servers.first(where: { $0.id == codeID }) {
             try? NativeMCPTokenKeeper(store: keys).save("synthetic-shot-token", server: code)
         }
         let manager = NativeMCPManager(servers: servers, tokens: keys, reconnectDelays: [])
@@ -119,9 +135,9 @@ enum IntegrationsShotFixture {
         }
         if variant != "integrations-locked", let reports = servers.first(where: { $0.reportsTools }), var state = manager.authority.access.snapshot().first(where: { $0.id == reports.id }) {
             let tools: [(String, String, Bool)] = [("read_items", "Reads every item.", true), ("update_item", "Changes one item.", false), ("remove_item", "Removes an item.", false)]
-            state.connected = true
-            state.status = "Connected"
-            state.tools = tools.map { name, description, readOnly in
+            state.connected = variant != "integrations-states"
+            state.status = state.connected ? "Connected" : "Not connected"
+            state.tools = !state.connected ? [] : tools.map { name, description, readOnly in
                 NativeMCPToolRecord(id: reports.toolID(name), server: reports, generation: state.generation, remoteName: name, description: description, schema: schema,
                                     validator: try? NativeMCPJSONSchema(schema), reason: nil, hints: NativeMCPToolHints(readOnly: readOnly, destructive: true))
             }
@@ -141,9 +157,20 @@ enum IntegrationsShotFixture {
             return Seeded(store: store, config: config, tab: .personal, search: "", selection: nil)
         case "integrations-public":
             return Seeded(store: store, config: config, tab: .catalogue, search: "", selection: "home-assistant")
+        case "integrations-public-installed", "integrations-wide", "integrations-menu":
+            return Seeded(store: store, config: config, tab: .catalogue, search: "", selection: codeID)
+        case "integrations-listed":
+            return Seeded(store: store, config: config, tab: .personal, search: "", selection: reportsID)
+        case "integrations-no-match":
+            return Seeded(store: store, config: config, tab: .catalogue, search: "nothing like this", selection: nil)
         default:
             return Seeded(store: store, config: config, tab: .personal, search: "", selection: rows.isEmpty ? nil : changes ? codeID : wikiID)
         }
+    }
+
+    static func detail(_ view: String, seed: Seeded) -> IntegrationsDetailTarget {
+        if view == "integrations-detail-public", let entry = (try? IntegrationsCatalogue.loaded.get())?.entries.first { return .entry(entry) }
+        return .server(seed.selection ?? seed.config.nativeMCP.servers.first?.id ?? "")
     }
 
     static func installDraft(_ view: String) -> NativeMCPInstallDraft? {
