@@ -13,6 +13,14 @@ struct CardAnswers: Equatable {
     var declineTitle = "Decline"
     var allowMenu: [CardMenuItem] = []
     var declineMenu: [CardMenuItem] = []
+    var confirms: [String: ServiceAllowConfirm] = [:]
+
+    enum Route: Equatable {
+        case send(String)
+        case confirm(String, ServiceAllowConfirm)
+    }
+
+    func route(_ id: String) -> Route { confirms[id].map { .confirm(id, $0) } ?? .send(id) }
 
     static let allowOrder: [NativeCardChoiceKind] = [.allowHere, .allowSchedule, .allowAlways]
     static let displayLimit = 400
@@ -31,6 +39,7 @@ struct CardAnswers: Equatable {
                 answers.allowMenu.append(CardMenuItem(id: kind.rawValue, title: choice.title, note: scope))
             }
         }
+        if let service = subject.service { answers.confirms[NativeCardChoiceKind.allowAlways.rawValue] = .tool(service) }
         if NativeCardChoices.declineMenu, let never = request.choices.first(where: { $0.kind == .never }), shown(never.title) != nil {
             answers.declineMenu = [CardMenuItem(id: NativeCardChoiceKind.never.rawValue, title: never.title,
                                                 note: subject.toolID == NativeCommandTools.toolID ? NativeCardChoices.neverHelp : nil)]
@@ -38,9 +47,10 @@ struct CardAnswers: Equatable {
         return answers
     }
 
-    static func offer() -> CardAnswers {
+    static func offer(_ service: NativeServiceTool? = nil) -> CardAnswers {
         CardAnswers(allowMenu: [CardMenuItem(id: RuleOfferAnswer.allowEverywhere.rawValue, title: RuleOfferCopy.allowEverywhere)],
-                    declineMenu: [CardMenuItem(id: RuleOfferAnswer.neverOffer.rawValue, title: RuleOfferCopy.neverOffer)])
+                    declineMenu: [CardMenuItem(id: RuleOfferAnswer.neverOffer.rawValue, title: RuleOfferCopy.neverOffer)],
+                    confirms: service.map { [RuleOfferAnswer.allowEverywhere.rawValue: .tool($0)] } ?? [:])
     }
 
     static let wholeNever = "Never allow it for this"
@@ -63,8 +73,12 @@ struct CardAnswers: Equatable {
         title == wholeNever || title == commandsNever || (title.hasPrefix(sendStart) && title.hasSuffix(scopeEnd))
     }
 
-    static func task(choices: [String], covers: String?, neverTitle: String?, run: Bool = false) -> CardAnswers {
+    static func task(choices: [String], covers: String?, neverTitle: String?, run: Bool = false, service: NativeServiceTool? = nil) -> CardAnswers {
         var answers = CardAnswers()
+        if let service, service.fits, choices.contains(NativeCardChoices.serviceAlways) {
+            answers.allowMenu.append(CardMenuItem(id: NativeCardChoices.serviceAlways, title: NativeCardChoices.alwaysTitle(service), note: NativeCardChoices.everything(service)))
+            answers.confirms[NativeCardChoices.serviceAlways] = .tool(service)
+        }
         if let scope = shown(covers) {
             for kind in allowOrder where choices.contains(kind.rawValue) {
                 var title = NativeCardChoices.wireTitle(kind.rawValue) ?? kind.rawValue
@@ -201,14 +215,34 @@ struct CardAnswerRow: View {
     let onAllow: () -> Void
     let onDecline: () -> Void
     let onItem: (String) -> Void
+    var onConfirmed: (String, ServiceAllowConfirmed) -> Void = { _, _ in }
+    @State private var asking: Asking?
+
+    private struct Asking: Identifiable {
+        let id: String
+        let confirm: ServiceAllowConfirm
+    }
+
+    private func choose(_ id: String) {
+        switch answers.route(id) {
+        case .send(let id): onItem(id)
+        case .confirm(let id, let confirm): asking = Asking(id: id, confirm: confirm)
+        }
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             Spacer(minLength: 0)
             CardSplitButton(title: answers.declineTitle, kind: .secondary, enabled: allowDecline, context: context, items: answers.declineMenu,
-                            onPrimary: onDecline, onItem: onItem)
+                            onPrimary: onDecline, onItem: choose)
             CardSplitButton(title: answers.allowTitle, kind: even ? .secondary : .primary, isDefault: defaultApproval, enabled: allowApprove,
-                            context: context, items: answers.allowMenu, onPrimary: onAllow, onItem: onItem)
+                            context: context, items: answers.allowMenu, onPrimary: onAllow, onItem: choose)
+        }
+        .sheet(item: $asking) { asked in
+            ServiceAllowConfirmSheet(confirm: asked.confirm, onAllow: { confirmed in
+                asking = nil
+                onConfirmed(asked.id, confirmed)
+            }, onCancel: { asking = nil })
         }
     }
 }

@@ -224,6 +224,7 @@ struct NativeToolDefinition: Sendable {
     var place: (@Sendable ([String: NativeJSONValue], String) -> String?)? = nil
     var access: NativeToolAccess? = nil
     var wants: String? = nil
+    var service: NativeServiceTool? = nil
     var governed = false
     var proposes = false
     var alwaysAsks = false

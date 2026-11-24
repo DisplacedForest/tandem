@@ -576,6 +576,14 @@ struct NativeTaskDecision: Codable, Equatable, Hashable, Sendable {
     var details: String? = nil
     var covers: String? = nil
     var never: String? = nil
+    var service: NativeServiceTool? = nil
+
+    func accepts(_ choice: String) -> Bool {
+        let parts = NativeCardChoices.split(choice)
+        guard choices.contains(parts.choice) else { return false }
+        guard parts.choice == NativeCardChoices.serviceAlways else { return true }
+        return service.map { ServiceAllowConfirm.tool($0).accepts(parts.confirmed) } ?? false
+    }
 }
 
 struct NativeTaskCheckpoint: Codable, Equatable, Hashable, Sendable {

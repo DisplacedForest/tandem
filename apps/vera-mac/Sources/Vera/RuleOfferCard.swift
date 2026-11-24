@@ -2,7 +2,7 @@ import SwiftUI
 
 struct RuleOfferCard: View {
     let offer: NativeRuleOffer
-    var onAnswer: ((RuleOfferAnswer) -> Void)? = nil
+    var onAnswer: ((RuleOfferAnswer, ServiceAllowConfirmed?) -> Void)? = nil
     @Environment(\.renderSafe) private var renderSafe
 
     static func spoken(_ question: String, answers: CardAnswers) -> [String] {
@@ -13,7 +13,7 @@ struct RuleOfferCard: View {
     }
 
     static func line(_ offer: NativeRuleOffer) -> String? {
-        guard let action = offer.action else { return nil }
+        guard let action = offer.subject else { return nil }
         switch offer.state {
         case .allowedHere: return RuleOfferCopy.allowedHere(action)
         case .allowedEverywhere: return RuleOfferCopy.allowedEverywhere(action)
@@ -22,17 +22,18 @@ struct RuleOfferCard: View {
     }
 
     var body: some View {
-        if let action = offer.action {
+        if let subject = offer.subject {
             switch offer.state {
-            case .waiting: question(action)
+            case .waiting where offer.open: question(subject)
+            case .waiting: EmptyView()
             case .allowedHere, .allowedEverywhere: after
             case .closed: EmptyView()
             }
         }
     }
 
-    private func question(_ action: NativeActionClass) -> some View {
-        let sentence = RuleOfferCopy.question(action)
+    private func question(_ subject: RuleOfferSubject) -> some View {
+        let sentence = RuleOfferCopy.question(subject)
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 InterfaceIconView(icon: .needsYou, size: InterfaceIconSize.row).foregroundStyle(Theme.sage)
@@ -51,10 +52,11 @@ struct RuleOfferCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 6)
             }
-            CardAnswerRow(answers: CardAnswers.offer(), defaultApproval: false, allowApprove: onAnswer != nil, allowDecline: onAnswer != nil,
+            CardAnswerRow(answers: CardAnswers.offer(subject.service), defaultApproval: false, allowApprove: onAnswer != nil, allowDecline: onAnswer != nil,
                           context: sentence,
-                          onAllow: { onAnswer?(.allow) }, onDecline: { onAnswer?(.decline) },
-                          onItem: { id in if let answer = RuleOfferAnswer(rawValue: id) { onAnswer?(answer) } })
+                          onAllow: { onAnswer?(.allow, nil) }, onDecline: { onAnswer?(.decline, nil) },
+                          onItem: { id in if let answer = RuleOfferAnswer(rawValue: id) { onAnswer?(answer, nil) } },
+                          onConfirmed: { id, confirmed in if let answer = RuleOfferAnswer(rawValue: id) { onAnswer?(answer, confirmed) } })
         }
         .padding(14)
         .frame(maxWidth: 560, alignment: .leading)

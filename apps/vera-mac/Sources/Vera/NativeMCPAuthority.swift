@@ -494,6 +494,9 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
         }
         return taken ? name : title
     }
+    nonisolated func serviceTool(_ record: NativeMCPToolRecord) -> NativeServiceTool {
+        NativeServiceTool(tool: shown(record), service: NativeToolRepair.plain(record.server.name), detail: record.description, host: record.server.endpoint.host)
+    }
     nonisolated func definitions(scope: String) -> [NativeToolDefinition] {
         let revision = access.permissionRevision()
         return access.snapshot().flatMap(\.tools).filter { access.allowed($0, scope: scope) }.map { record in
@@ -507,6 +510,7 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                 execute: { arguments in try await self.execute(record, arguments: .object(arguments), scope: scope, subject: "focused", expectedRevision: revision) },
                 argumentValidator: { try record.validator?.validate(.object($0)) },
                 wants: change ? "use \(shown(record)) in \(NativeToolRepair.plain(record.server.name))" : nil,
+                service: change ? serviceTool(record) : nil,
                 outputSchema: record.outputSchema, checksOwnResult: true)
         }
     }

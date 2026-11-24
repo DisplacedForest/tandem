@@ -148,6 +148,7 @@ struct RulesSettingsTab: View {
     @State private var infoFor: NativeActionClass?
     @State private var rows: [RuleRow] = []
     @State private var widening: RuleRow?
+    @State private var confirming: RuleRow?
     @State private var advanced: RulesAdvancedState
 
     private let startsClosed: Bool
@@ -176,6 +177,10 @@ struct RulesSettingsTab: View {
 
     private func infoShown(_ action: NativeActionClass) -> Binding<Bool> {
         Binding(get: { infoFor == action }, set: { infoFor = $0 ? action : nil })
+    }
+
+    private func widen(_ row: RuleRow) {
+        if row.confirm != nil { confirming = row } else if row.widenQuestion != nil { widening = row } else { store.widenRule(row) }
     }
 
     private func binding(for action: NativeActionClass) -> Binding<NativeRuleChoice> {
@@ -224,6 +229,7 @@ struct RulesSettingsTab: View {
                     }
                     .padding(.vertical, 2)
                 }
+                Text(RuleRows.scheduledNote).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             } header: {
                 HStack {
                     CompanionNamedText(template: RulesCopy.sectionTemplate)
@@ -247,7 +253,7 @@ struct RulesSettingsTab: View {
                 }
                 ForEach(rows) { row in
                     SavedRuleRow(row: row, onToggle: { store.toggleRule(row) },
-                                 onWiden: { if row.widenQuestion == nil { store.widenRule(row) } else { widening = row } },
+                                 onWiden: { widen(row) },
                                  onRemove: { store.removeRule(row) })
                 }
             }
@@ -294,6 +300,14 @@ struct RulesSettingsTab: View {
         .onReceive(NotificationCenter.default.publisher(for: .ruleRecordsChanged).receive(on: RunLoop.main)) { _ in refresh() }
         .onChange(of: store.conversations.map(\.title)) { _, _ in refresh() }
         .onChange(of: config.nativeSettings.rules) { _, _ in refresh() }
+        .sheet(item: $confirming) { row in
+            if let confirm = row.confirm {
+                ServiceAllowConfirmSheet(confirm: confirm, onAllow: { confirmed in
+                    store.widenRule(row, confirmed: confirmed)
+                    confirming = nil
+                }, onCancel: { confirming = nil })
+            }
+        }
         .confirmationDialog(widening?.widenQuestion ?? "", isPresented: Binding(get: { widening != nil }, set: { if !$0 { widening = nil } }),
                             titleVisibility: .visible) {
             Button(RuleRows.widenConfirm) {

@@ -53,7 +53,7 @@ extension SelfTest {
                                                request: "{\"zone\":\"north\",\"body\":\"See you Tuesday\",\"title\":\"Inspection\",\"CC\":\"bo@example.com\",\"to\":\"ana@example.com\",\"amount\":3}",
                                                result: nil, state: .pending, confirmationRequired: true)
         let plainRequest = NativeToolConfirmationRequest(activity: plainActivity)
-        for chosen in [nil, { (_: NativeCardChoiceKind) in }] as [((NativeCardChoiceKind) -> Void)?] {
+        for chosen in [nil, { (_: NativeCardChoiceKind, _: ServiceAllowConfirmed?) in }] as [((NativeCardChoiceKind, ServiceAllowConfirmed?) -> Void)?] {
             let answers = NativeToolConfirmationBar(request: plainRequest, onDecision: { _ in }, onChoice: chosen).answers
             try require(answers.allowTitle == "Allow" && answers.declineTitle == "Decline", "A chat card with no saved choices still answers Decline and Allow")
         }

@@ -316,12 +316,12 @@ struct ChatPane: View {
                                onOpenArtifact: { store.openArtifact($0) },
                                attachmentStore: store.attachmentStore,
                                pendingConfirmation: confirmation,
-                               onToolDecision: { decision in
+                               onToolDecision: { decision, confirmed in
                                    store.resolveTurnConfirmation(msg.id, decision: decision,
-                                       requestID: confirmation?.id, token: confirmationToken)
+                                       requestID: confirmation?.id, token: confirmationToken, confirmed: confirmed)
                                },
-                               onRuleOffer: { blockID, answer in
-                                   store.answerRuleOffer(answer, messageID: msg.id, blockID: blockID, config: config)
+                               onRuleOffer: { blockID, answer, confirmed in
+                                   store.answerRuleOffer(answer, messageID: msg.id, blockID: blockID, config: config, confirmed: confirmed)
                                },
                                companionThread: store.isVeraThread(convo.id))
                         .background(
@@ -810,8 +810,8 @@ struct MessageRow: View {
     var onOpenArtifact: ((Artifact) -> Void)? = nil
     var attachmentStore: NativeAttachmentStore? = nil
     var pendingConfirmation: NativeToolConfirmationRequest? = nil
-    var onToolDecision: ((NativeCardChoiceKind) -> Void)? = nil
-    var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
+    var onToolDecision: ((NativeCardChoiceKind, ServiceAllowConfirmed?) -> Void)? = nil
+    var onRuleOffer: ((String, RuleOfferAnswer, ServiceAllowConfirmed?) -> Void)? = nil
     var companionThread = false
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -841,8 +841,8 @@ struct MessageRow: View {
                                 prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
                                 detail: NativeToolConfirmationBar.detail(for: pendingConfirmation, assistantName: CompanionSentence.placeholder),
                                 actor: companionThread ? CompanionSentence.placeholder : "Tandem",
-                                onDecision: { onToolDecision?($0 ? .allowOnce : .decline) },
-                                onChoice: { onToolDecision?($0) }, companionThread: companionThread)
+                                onDecision: { onToolDecision?($0 ? .allowOnce : .decline, nil) },
+                                onChoice: { onToolDecision?($0, $1) }, companionThread: companionThread)
                         }
                     }
                     AssistantBody(message: message, section: .extras, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
@@ -1177,7 +1177,7 @@ struct NativeToolConfirmationBar: View {
     var allowApprove = true
     var allowDecline = true
     var onDecision: (Bool) -> Void
-    var onChoice: ((NativeCardChoiceKind) -> Void)? = nil
+    var onChoice: ((NativeCardChoiceKind, ServiceAllowConfirmed?) -> Void)? = nil
     var companionThread = false
     @Environment(\.renderSafe) private var renderSafe
 
@@ -1278,7 +1278,9 @@ struct NativeToolConfirmationBar: View {
             }
             CardAnswerRow(answers: answers, defaultApproval: defaultApproval, allowApprove: allowApprove, allowDecline: allowDecline,
                           onAllow: { onDecision(true) }, onDecline: { onDecision(false) },
-                          onItem: { id in if let kind = NativeCardChoiceKind(rawValue: id) { onChoice?(kind) } })
+                          onItem: { id in if let kind = NativeCardChoiceKind(rawValue: id) { onChoice?(kind, nil) } },
+                          onConfirmed: { id, confirmed in if let kind = NativeCardChoiceKind(rawValue: id) { onChoice?(kind, confirmed) } })
+                .id(request.id + (request.digest ?? ""))
         }
         .padding(14)
         .frame(maxWidth: 560, alignment: .leading)

@@ -301,7 +301,7 @@ actor NativeTaskTracker {
               let snapshot = try? repository.taskProjection(id: id)?.snapshot,
               snapshot.state == .needsDecision, let decision = snapshot.decision,
               decisionID == nil || decision.id == decisionID,
-              decision.choices.contains(choice), !reference.cancelRequested else { return nil }
+              decision.accepts(choice), !reference.cancelRequested else { return nil }
         do {
             if let remote = reference.remoteTaskID { states[remote]?.invalidate() }
             let intent = try repository.prepareTaskDecision(id: id, decisionID: decision.id, choice: choice)
@@ -327,7 +327,7 @@ actor NativeTaskTracker {
         guard idle, current(lease), reference.engine == lease.engine else { return .waiting }
         guard let saved = try? repository.taskProjection(id: id)?.snapshot else { return .waiting }
         guard saved.state == .needsDecision, let decision = saved.decision, decision.id == intent.decisionID,
-              decision.choices.contains(intent.choice) else {
+              decision.accepts(intent.choice) else {
             try? repository.resolveTaskRetry(intent)
             return .dropped
         }

@@ -2,7 +2,7 @@ import Foundation
 
 final class RuleOfferSession {
     var whys: [String: NativeRuleWhy] = [:]
-    var candidates: [UUID: [NativeActionClass]] = [:]
+    var candidates: [UUID: [RuleOfferSubject]] = [:]
 }
 
 extension ChatStore {
@@ -53,13 +53,20 @@ extension ChatStore {
         }
     }
 
+    nonisolated static func ruleOfferSubject(_ subject: NativeCardSubject?, action: NativeActionClass) -> RuleOfferSubject? {
+        guard action == .serviceChanges else { return .action(action) }
+        guard let subject, let service = subject.service, service.fits else { return nil }
+        return .tool(id: subject.toolID, service: service)
+    }
+
     func recordRuleOfferDecision(_ decision: NativeCardChoiceKind, request: NativeToolConfirmationRequest?, turn: NativeConversationTurn, chosen: Bool) {
         guard let request else { return }
         let why = ruleOfferSession.whys.removeValue(forKey: Self.ruleOfferKey(turn: turn, request: request.id))
         guard chosen, Self.ruleOfferCard(request.subject), let why, let store = ruleOfferStore,
-              (try? store.record(RuleOffer.event(decision, why: why), conversationID: turn.conversationID, action: why.action)) == true else { return }
+              let offered = Self.ruleOfferSubject(request.subject, action: why.action),
+              (try? store.record(RuleOffer.event(decision, why: why), conversationID: turn.conversationID, key: offered.key)) == true else { return }
         var candidates = ruleOfferSession.candidates[turn.id] ?? []
-        if !candidates.contains(why.action) { candidates.append(why.action) }
+        if !candidates.contains(where: { $0.key == offered.key }) { candidates.append(offered) }
         ruleOfferSession.candidates[turn.id] = candidates
     }
 
@@ -71,10 +78,15 @@ extension ChatStore {
         RuleOffer.stillAsks(action, global: nativeRules, chat: conversationRules(for: conversationID))
     }
 
+    func ruleOfferStillAsks(_ subject: RuleOfferSubject, conversationID: String) -> Bool {
+        ruleOfferStillAsks(subject.action, conversationID: conversationID)
+            && !RuleOffer.settled(subject, records: ruleRecords, conversationID: conversationID)
+    }
+
     func ruleOfferWaiting(in conversationID: String) -> Bool {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return false }
         return conversation.messages.flatMap(\.displayBlocks).contains { block in
-            if case .ruleOffer(let offer) = block { return offer.state == .waiting && offer.action != nil }
+            if case .ruleOffer(let offer) = block { return offer.open }
             return false
         }
     }
@@ -82,25 +94,27 @@ extension ChatStore {
     func offerToStopAsking(after turn: NativeConversationTurn) {
         guard let candidates = ruleOfferSession.candidates.removeValue(forKey: turn.id), let store = ruleOfferStore,
               !ruleOfferWaiting(in: turn.conversationID) else { return }
-        for action in NativeActionClass.configurable where candidates.contains(action) {
-            guard ruleOfferStillAsks(action, conversationID: turn.conversationID),
-                  let state = try? store.state(conversationID: turn.conversationID, action: action),
+        let ordered = NativeActionClass.configurable.flatMap { action in candidates.filter { $0.action == action } }
+        for subject in ordered {
+            guard ruleOfferStillAsks(subject, conversationID: turn.conversationID),
+                  let state = try? store.state(conversationID: turn.conversationID, key: subject.key),
                   !state.answered, state.approvals >= RuleOffer.approvalsBeforeOffer,
-                  (try? store.turnedOff(action)) == false else { continue }
-            attachDisplayBlock(.ruleOffer(NativeRuleOffer(action: action)), turn: turn)
+                  (try? store.turnedOff(subject.key)) == false else { continue }
+            attachDisplayBlock(.ruleOffer(NativeRuleOffer(subject: subject)), turn: turn)
             return
         }
     }
 
-    func answerRuleOffer(_ answer: RuleOfferAnswer, messageID: UUID, blockID: String, config: ConfigStore) {
-        answerRuleOffer(answer, messageID: messageID, blockID: blockID) { config.applyRule(.act, for: $0, store: self) }
+    func answerRuleOffer(_ answer: RuleOfferAnswer, messageID: UUID, blockID: String, config: ConfigStore, confirmed: ServiceAllowConfirmed? = nil) {
+        answerRuleOffer(answer, messageID: messageID, blockID: blockID, confirmed: confirmed) { config.applyRule(.act, for: $0, store: self) }
     }
 
-    func answerRuleOffer(_ answer: RuleOfferAnswer, messageID: UUID, blockID: String, everywhere: (NativeActionClass) -> Bool) {
+    func answerRuleOffer(_ answer: RuleOfferAnswer, messageID: UUID, blockID: String, confirmed: ServiceAllowConfirmed? = nil, everywhere: (NativeActionClass) -> Bool) {
         guard let conversation = conversations.first(where: { $0.messages.contains { $0.id == messageID } }),
               let message = conversation.messages.first(where: { $0.id == messageID }),
               case .ruleOffer(var offer)? = message.displayBlocks.first(where: { $0.id == blockID }),
-              offer.state == .waiting, let action = offer.action else { return }
+              offer.state == .waiting, let subject = offer.subject else { return }
+        let action = subject.action
         let conversationID = conversation.id
         guard let store = ruleOfferStore else { return }
         func show(_ state: NativeRuleOffer.State, failed: Bool = false) {
@@ -110,14 +124,15 @@ extension ChatStore {
         }
         func settle(_ state: NativeRuleOffer.State) {
             do {
-                try store.settle(conversationID: conversationID, action: action, everyChat: answer == .neverOffer)
+                try store.settle(conversationID: conversationID, key: subject.key, everyChat: answer == .neverOffer)
                 show(state)
             } catch {
                 show(.waiting, failed: true)
             }
         }
-        guard (try? store.state(conversationID: conversationID, action: action).answered) == false else { show(.closed); return }
-        let wanted = RuleOffer.record(action, conversationID: conversationID)
+        guard offer.open else { show(.closed); return }
+        guard (try? store.state(conversationID: conversationID, key: subject.key).answered) == false else { show(.closed); return }
+        let wanted = RuleOffer.record(subject, conversationID: conversationID)
         let held = ruleRecords.first { RuleOffer.same($0, wanted) }
         func withdrawn() -> Bool {
             guard let held, !revokeRuleRecord(id: held.id) else { return true }
@@ -129,10 +144,20 @@ extension ChatStore {
             guard withdrawn() else { return }
             settle(.closed)
         case .allow:
-            guard held != nil || ruleOfferStillAsks(action, conversationID: conversationID) else { settle(.closed); return }
+            guard held != nil || ruleOfferStillAsks(subject, conversationID: conversationID) else { settle(.closed); return }
             guard held != nil || addRuleRecord(wanted) != nil else { show(.waiting, failed: true); return }
             settle(.allowedHere)
         case .allowEverywhere:
+            if let service = subject.service {
+                guard ServiceAllowConfirm.tool(service).accepts(confirmed) else { return }
+                let wide = RuleOffer.record(subject, conversationID: conversationID, everywhere: true)
+                let kept = ruleRecords.contains { RuleOffer.same($0, wide) }
+                guard kept || held != nil || ruleOfferStillAsks(subject, conversationID: conversationID) else { settle(.closed); return }
+                guard kept || addRuleRecord(wide) != nil else { show(.waiting, failed: true); return }
+                guard withdrawn() else { return }
+                settle(.allowedEverywhere)
+                return
+            }
             guard withdrawn() else { return }
             let applied = nativeRules.choice(for: action) == .act
             guard offer.failed && applied || ruleOfferStillAsks(action, conversationID: conversationID) else { settle(.closed); return }

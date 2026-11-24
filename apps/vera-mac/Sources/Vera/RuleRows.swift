@@ -7,6 +7,7 @@ struct RulePlaces: Equatable, Sendable {
     var schedules: [String: String] = [:]
     var work: [String: String] = [:]
     var tools: [String: String] = [:]
+    var services: [String: NativeServiceTool] = [:]
 
     func contains(_ scope: NativeRuleScope) -> Bool {
         switch scope {
@@ -33,6 +34,7 @@ struct RuleRow: Identifiable, Equatable, Sendable {
     let off: Bool
     let widens: Bool
     let widenQuestion: String?
+    var confirm: ServiceAllowConfirm? = nil
 
     var line: CompanionLine { .parts([.text(sentence + ", ")] + place.parts) }
     var toggleTitle: String? {
@@ -70,6 +72,19 @@ enum RuleRows {
         case .handOff: return "Always leave to you"
         case .forbid: return "Never allow"
         }
+    }
+
+    static let scheduledNote = "Scheduled runs only read."
+
+    static func wholeServiceTool(_ record: NativeRuleRecord) -> Bool {
+        record.action == .serviceChanges && record.toolID != nil && record.target == nil
+    }
+
+    static func serviceSentence(_ record: NativeRuleRecord, tools: [String: String]) -> String {
+        let lead = record.effect == .handOff ? "Always leave to you:" : lead(record.effect)
+        let live = plain(record.toolID.flatMap { tools[$0] } ?? "")
+        let name = live.isEmpty ? toolName(record) : live
+        return "\(lead) \(name)"
     }
 
     static func toolName(_ record: NativeRuleRecord) -> String {
@@ -143,6 +158,7 @@ enum RuleRows {
             case .allow: return "Always allow commands"
             }
         }
+        if wholeServiceTool(record) { return serviceSentence(record, tools: tools) }
         if record.toolID != nil { return "\(lead): \(toolName(record))" }
         if let action = record.action, RuleOffer.offerable(action) { return "\(lead) \(RuleOfferCopy.words(action))" }
         if let action = record.action { return "\(lead): \(lowered(action.title))" }
@@ -227,7 +243,18 @@ enum RuleRows {
         case .conversation, .project: break
         case .everywhere, .task, .schedule: return false
         }
+        if record.effect == .allow, record.action == .serviceChanges, record.toolID == nil, record.target == nil { return false }
         return record.effect == .allow || record.effect == .forbid
+    }
+
+    static func confirm(_ record: NativeRuleRecord, places: RulePlaces) -> ServiceAllowConfirm? {
+        guard record.effect == .allow, wholeServiceTool(record), let id = record.toolID, let service = places.services[id] else { return nil }
+        return .tool(service)
+    }
+
+    static func widens(_ record: NativeRuleRecord, places: RulePlaces) -> Bool {
+        guard widens(record) else { return false }
+        return record.effect == .forbid || !wholeServiceTool(record) || confirm(record, places: places) != nil
     }
 
     static func widenQuestion(_ record: NativeRuleRecord, tools: [String: String] = [:]) -> String? {
@@ -247,7 +274,8 @@ enum RuleRows {
         return RuleRow(id: record.id, source: .saved(record.id), sentence: sentence(record, tools: places.tools),
                        place: place(record.scope, places: places),
                        note: notes.isEmpty ? nil : .parts(notes), off: record.status == .disabled,
-                       widens: widens(record), widenQuestion: widenQuestion(record, tools: places.tools))
+                       widens: widens(record, places: places), widenQuestion: widenQuestion(record, tools: places.tools),
+                       confirm: widens(record, places: places) ? confirm(record, places: places) : nil)
     }
 
     static func chatRow(conversationID: String, action: NativeActionClass, choice: NativeRuleChoice, places: RulePlaces) -> RuleRow {
@@ -332,12 +360,13 @@ enum RuleRows {
     }
 
     static func screenStrings(_ rows: [RuleRow], name: String?) -> [String] {
-        var strings = [sectionTitle, empty, remove, more, switchOff, switchOn, applyEverywhere, widenConfirm, cancel, goneTool,
+        var strings = [sectionTitle, empty, remove, more, switchOff, switchOn, applyEverywhere, widenConfirm, cancel, goneTool, scheduledNote,
                        lostChat, lostProject, lostSchedule]
         for row in rows {
             strings.append(row.line.plain(name: name))
             if let note = row.note { strings.append(note.plain(name: name)) }
             if let question = row.widenQuestion { strings.append(question) }
+            if let confirm = row.confirm { strings.append(confirm.question) }
         }
         return strings
     }
