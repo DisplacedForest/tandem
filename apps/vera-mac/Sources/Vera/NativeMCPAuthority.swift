@@ -626,6 +626,7 @@ final class NativeMCPManager: ObservableObject {
     static let disconnectUnsaved = "This couldn't be saved, so the service connects again when Tandem opens. Choose Connect, then Disconnect to try again."
     private var disconnectStatuses: [String: String] = [:]
     static let lockedAddress = "This service's address couldn't be read from your keychain. Unlock your keychain and choose Connect, or enter the address again under Manage."
+    @Published var unmovedAddresses: Set<String> = []
     var unlock: ((String) -> Bool)?
     var keepsConnection: ((String, Bool) -> Bool)?
     private let keeper: NativeMCPTokenKeeper

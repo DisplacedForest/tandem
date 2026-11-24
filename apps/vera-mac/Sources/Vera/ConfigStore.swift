@@ -127,10 +127,9 @@ final class ConfigStore: ObservableObject {
             let resolved = book.resolved(rows)
             cleaned["native_mcp_servers"] = resolved
             if cleansRetiredKeys {
-                if (try? book.saveAddresses(resolved)) != nil {
-                    let stripped = book.stripped(cleaned)
-                    if !NSDictionary(dictionary: stripped).isEqual(to: loaded) { try? writeConfiguration(stripped) }
-                }
+                book.saveEach(resolved)
+                let stripped = book.stripped(cleaned)
+                if !NSDictionary(dictionary: stripped).isEqual(to: loaded) { try? writeConfiguration(stripped) }
                 book.prune(resolved)
             }
         } else if cleansRetiredKeys, !loaded.isEmpty, loaded["native_mcp_servers"] == nil {
@@ -150,8 +149,7 @@ final class ConfigStore: ObservableObject {
         capabilityTools = NativeCapabilityTools.catalog(reservedNames: ChatStore.builtInToolNames)
         self.credentialStore = credentialStore
         self.writeConfiguration = { value in
-            _ = try? book.saveAddresses(value["native_mcp_servers"] as? [[String: Any]] ?? [])
-            try writeConfiguration(book.stripped(value))
+            try writeConfiguration(book.checked(value, over: readConfiguration()))
         }
         credentialError = unavailable.isEmpty ? nil : NativeCredentialError.read.localizedDescription
         showOnboarding = !settings.hasValidConfiguration
@@ -179,6 +177,7 @@ final class ConfigStore: ObservableObject {
         memoryCredentialLoaded = memoryEndpointWanted && !unavailable.contains(Self.memoryCredentialID)
         memoryCredentialReadFailed = memoryEndpointWanted && unavailable.contains(Self.memoryCredentialID)
         nativeMCPConfigurationError = nativeMCP.configurationError
+        if cleansRetiredKeys { nativeMCP.unmovedAddresses = book.exposed(nativeMCPServerRows) }
         nativeMCP.unlock = { [weak self] id in self?.unlockNativeMCP(id) ?? false }
         nativeMCP.keepConnected()
         nativeMCP.keepsConnection = { [weak self] id, stays in self?.rememberNativeMCPConnection(id, stays) ?? false }
@@ -312,6 +311,7 @@ final class ConfigStore: ObservableObject {
         }
         raw = updated
         nativeMCPAddresses.prune(rows)
+        nativeMCP.unmovedAddresses = nativeMCPAddresses.exposed(rows)
         nativeMCPConfigurationError = nil
         let pruned = stale.intersection(nativeSettings.enabledToolIDs)
         if !pruned.isEmpty {
@@ -436,6 +436,7 @@ final class ConfigStore: ObservableObject {
         }
         merged["pi_profile_revisions"] = revisions
         try writeConfiguration(merged)
+        nativeMCP.unmovedAddresses = nativeMCPAddresses.exposed(merged["native_mcp_servers"] as? [[String: Any]] ?? [])
         piCommittedSettings = persisted
         piCommittedCredentials = savedCredentials
         piCommitValid = true

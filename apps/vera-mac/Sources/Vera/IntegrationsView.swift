@@ -371,6 +371,10 @@ private struct IntegrationsDestination: View {
                     }
                 }
             }
+            if manager.unmovedAddresses.contains(server.id) {
+                Text(NativeMCPAddressBook.unmoved).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(server.notes, id: \.self) { note in
                 Text(note).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

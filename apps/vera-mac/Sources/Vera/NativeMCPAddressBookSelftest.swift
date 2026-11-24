@@ -71,6 +71,19 @@ enum NativeMCPAddressBookSelftest {
         try check(saved(refused)["url"] as? String == "http://house.local", "The next save moves it")
         refused.contents["native_mcp_servers"] = [row()]
         try check(saved(refused)["url"] as? String == address && kept.servers[0].configuration.endpoint.absoluteString == address, "An address the keychain won't take isn't lost")
+        let second = UUID().uuidString.lowercased()
+        let several = Disk(["native_mcp_servers": [row(), row("http://house.local:9583/private_other5Row7Addr", ["id": second])]]), partial = NativeCredentialFixtureStore()
+        partial.denied = [NativeMCPAddressBook.account(id)]
+        let (mixed, mixedConfig) = try await open(several, partial)
+        let written = several.contents["native_mcp_servers"] as? [[String: Any]] ?? []
+        try check(written[0]["url"] as? String == address && written[1]["url"] as? String == "http://house.local", "One address the keychain won't take doesn't hold back the rest")
+        try check(mixed.unmovedAddresses == [id] && mixed.servers.count == 2, "The one left says so")
+        mixedConfig["appearance"] = "dark"
+        try mixedConfig.save()
+        try check(several.contents["appearance"] as? String == "dark", "Other settings still save")
+        partial.denied = []
+        let (after, _) = try await open(several, partial)
+        try check(after.unmovedAddresses.isEmpty && !String(describing: several.contents).contains("private_"), "It's moved at the next launch")
         let unwritten = Disk(["native_mcp_servers": [row()]])
         unwritten.broken = true
         let (still, _) = try await open(unwritten, NativeCredentialFixtureStore())
@@ -93,6 +106,17 @@ enum NativeMCPAddressBookSelftest {
         do { try config.updateNativeMCPServer(row(moved)); throw NativeMCPTransportError.network } catch is NativeToolError {}
         try check(!String(describing: disk.contents).contains("second9Qw3Er7Ty") && saved(disk)["url"] as? String == "http://house.local", "A change the keychain won't take writes nothing")
         keys.failWrites = false
+        keys.refusesAfter = 1
+        keys.refused = [NativeMCPAddressBook.account(id)]
+        disk.broken = true
+        do { try config.updateNativeMCPServer(row(moved)); throw NativeMCPTransportError.network } catch is NativeToolError {}
+        disk.broken = false
+        let onDisk = String(describing: saved(disk))
+        do { try config.save(); throw NativeMCPTransportError.network } catch is NativeToolError {}
+        try check(String(describing: saved(disk)) == onDisk && !String(describing: disk.contents).contains(secret), "When an undo and the keychain both fail, the file is left as it was")
+        keys.refused = []
+        try config.save()
+        try check(!String(describing: disk.contents).contains(secret), "Once the keychain answers, saving works again")
         try config.updateNativeMCPServer(row(moved))
         try check(keys.values[NativeMCPAddressBook.account(id)] == moved && !String(describing: disk.contents).contains("second9Qw3Er7Ty"), "A new address replaces the old one")
         try config.removeNativeMCPServer(id: id)
@@ -194,6 +218,12 @@ enum NativeMCPAddressBookSelftest {
         let wordy = try NativeMCPServerConfiguration(id: id, name: "Wordy", endpoint: URL(string: "https://service.example/home-automations")!, readTools: [])
         let versioned = try NativeMCPServerConfiguration(id: id, name: "Versioned", endpoint: URL(string: "https://service.example/home-automations-v2")!, readTools: [])
         try check(versioned.redacted("Your home-automations-v2 are on") == "Your home-automations-v2 are on", "A versioned word isn't hidden")
+        let sibling = try NativeMCPServerConfiguration(id: id, name: "Sibling", endpoint: URL(string: "https://h.example/k7x9q2/mcp")!, readTools: [])
+        for text in ["https://h.example/k7x9q2/sse", "/K7X9Q2/mcp", "https:%2F%2Fh.example%2Fk7x9q2%2Fmcp", "https%3A%2F%2Fh.example%2Fk7x9q2%2Fmcp"] {
+            try check(!sibling.redacted(text).lowercased().contains("k7x9q2"), "A sibling, another case or an encoded address gives nothing away: \(sibling.redacted(text))")
+        }
+        let house = manager.servers[0].configuration
+        for text in ["zc7Qp2Lm9Xa4Rt8", secret.uppercased()] { try check(!house.redacted(text).lowercased().contains("zc7qp2lm9xa4rt8"), "The secret without its prefix gives nothing away") }
         let single = try NativeMCPServerConfiguration(id: id, name: "Single", endpoint: URL(string: "https://service.example:8443/a7f29c")!, readTools: [])
         for text in ["Request to service.example/a7f29c failed", "service.example:8443/a7f29c", "GET /a7f29c"] {
             try check(!single.redacted(text).contains("a7f29c"), "An address without its scheme gives nothing away: \(single.redacted(text))")

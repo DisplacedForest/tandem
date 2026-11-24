@@ -4,6 +4,8 @@ import Foundation
 final class NativeMCPAddressBook {
     nonisolated static let holders = "connected-service-addresses"
     static let marker = "address_saved"
+    static let unsaved = "A service's address couldn't be saved in your keychain, so nothing was changed. Unlock your keychain and try again."
+    static let unmoved = "This service's address couldn't be moved to your keychain, so it's still in Tandem's settings file. Unlock your keychain and reopen Tandem."
     private let store: any NativeCredentialStore
     private(set) var known: [String: String] = [:]
 
@@ -65,6 +67,26 @@ final class NativeMCPAddressBook {
         return replaced
     }
 
+    func saveEach(_ rows: [[String: Any]]) {
+        for row in rows { _ = try? saveAddresses([row]) }
+    }
+
+    func exposed(_ rows: [[String: Any]]) -> Set<String> {
+        Set(rows.filter { Self.hides($0) && known[Self.identity($0)] != $0["url"] as? String }.map(Self.identity))
+    }
+
+    func checked(_ raw: [String: Any], over current: [String: Any]) throws -> [String: Any] {
+        let rows = raw["native_mcp_servers"] as? [[String: Any]] ?? []
+        saveEach(rows)
+        let left = exposed(rows)
+        let held = current["native_mcp_servers"] as? [[String: Any]] ?? []
+        for row in rows where left.contains(Self.identity(row)) {
+            let already = held.contains { Self.identity($0) == Self.identity(row) && $0["url"] as? String == row["url"] as? String }
+            guard already else { throw NativeToolError.failed(Self.unsaved) }
+        }
+        return stripped(raw)
+    }
+
     func undo(_ replaced: [String: String?]) {
         for (id, address) in replaced {
             if let address { if (try? store.set(address, for: Self.account(id))) != nil { known[id] = address } }
@@ -114,14 +136,22 @@ final class NativeMCPAddressBook {
 }
 
 extension NativeMCPServerConfiguration {
-    private var hiddenSegments: [String] {
+    private var pathParts: [String] {
         let raw = endpoint.path(percentEncoded: true).split(separator: "/").map(String.init)
-        return Set(raw + raw.compactMap(\.removingPercentEncoding)).filter { segment in
-            segment.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains { part in
+        return Array(Set(raw + raw.compactMap(\.removingPercentEncoding)))
+    }
+
+    private var hiddenParts: [String] {
+        Set(pathParts.flatMap { segment in
+            segment.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter { part in
                 guard part.count >= 12, part.contains(where: \.isLetter) else { return false }
                 return part.contains(where: \.isNumber) || (part.dropFirst().contains(where: \.isUppercase) && part.contains(where: \.isLowercase))
             }
-        }.sorted { $0.count > $1.count }
+        }).sorted { $0.count > $1.count }
+    }
+
+    private var hiddenSegments: [String] {
+        pathParts.filter { $0.count >= 5 && $0.contains(where: \.isNumber) && $0.contains(where: \.isLetter) }.sorted { $0.count > $1.count }
     }
 
     private var hiddenPaths: [String] {
@@ -141,6 +171,7 @@ extension NativeMCPServerConfiguration {
         var spellings = [full, schemeless, portless].flatMap { [$0, $0.removingPercentEncoding ?? $0] }
         spellings += spellings.filter { $0.hasSuffix("/") }.map { String($0.dropLast()) }
         spellings += spellings.map { $0.replacingOccurrences(of: "/", with: "\\/") }
+        spellings += [full, schemeless].flatMap { [$0.replacingOccurrences(of: "/", with: "%2F"), $0.replacingOccurrences(of: ":", with: "%3A").replacingOccurrences(of: "/", with: "%2F")] }
         var result = text
         for spelling in Set(spellings).sorted(by: { $0.count > $1.count }) {
             result = result.replacingOccurrences(of: spelling, with: spelling.contains("://") || spelling.contains(":\\/\\/") ? source : endpoint.host ?? "", options: .caseInsensitive)
@@ -148,9 +179,12 @@ extension NativeMCPServerConfiguration {
         for path in hiddenPaths {
             let pattern = "(?<![A-Za-z0-9_-])" + NSRegularExpression.escapedPattern(for: path) + "(?![A-Za-z0-9_-])"
             result = result.replacingOccurrences(of: path.hasPrefix("/") || path.hasPrefix("\\") ? pattern.replacingOccurrences(of: "(?<![A-Za-z0-9_-])", with: "(?<![A-Za-z_-])") : pattern,
-                                                 with: "[hidden]", options: .regularExpression)
+                                                 with: "[hidden]", options: [.regularExpression, .caseInsensitive])
         }
-        for segment in hiddenSegments { result = result.replacingOccurrences(of: segment, with: "[hidden]") }
+        for segment in hiddenSegments {
+            result = result.replacingOccurrences(of: "(/|%2F)" + NSRegularExpression.escapedPattern(for: segment) + "(?![A-Za-z0-9_-])", with: "$1[hidden]", options: [.regularExpression, .caseInsensitive])
+        }
+        for part in hiddenParts { result = result.replacingOccurrences(of: part, with: "[hidden]", options: .caseInsensitive) }
         return result
     }
 
