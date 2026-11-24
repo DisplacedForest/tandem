@@ -2582,6 +2582,9 @@ final class ChatStore: ObservableObject {
                                            typed: typed, capture: capture, authorizer: authorizer, timeout: checkTimeout)
         let talk = talkSetup?.control
         if let talkSetup { turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + talkSetup.tools) }
+        let contextBase = nativeConfig.baseURL
+        let contextModel = nativeConfig.model
+        let contextCeiling = nativeConfig.options.contextCeiling
         let toolLoop = NativeToolLoop(
             transport: nativeTransport, registry: turnRegistry,
             authorize: { [weak self] in
@@ -2600,6 +2603,8 @@ final class ChatStore: ObservableObject {
             },
             authorizer: authorizer, request: trusted, restrictions: restrictions,
             effects: chatEffectHook(for: turn, definitions: turnRegistry.definitions, typed: typed),
+            contextTokens: { await NativeModelContext.room(base: contextBase, model: contextModel, ceiling: contextCeiling) },
+            outputTokens: NativeTaskConfiguration.outputLimit(nativeConfig.options),
             systemAccess: { [weak self] toolID, access in await self?.requestSystemAccess(for: toolID, access) })
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile

@@ -16,6 +16,7 @@ enum NativeToolResultBudgetSelftest {
         return result
     }
     static func run() async throws {
+        try await sized()
         let cap = NativeToolResultBudget.defaultBytes
         let ordinary: [NativeJSONValue] = [.object(["z": .string("slashes / quotes \" and newline\n"), "a": .bool(true)]),
             .array([.string("café 東京"), .number(12), .null]), .string("plain result"), .number(7), .bool(false), .null]
@@ -103,13 +104,13 @@ enum NativeToolResultBudgetSelftest {
         }
         let web = NativeWebTools.definitions(searchBase: { URL(string: "https://search.example") }, searchClient: searchClient, fetchClient: fetchClient)
         guard let search = web.first(where: { $0.name == "web_search" }), let fetch = web.first(where: { $0.name == "fetch_page" }) else { throw NativeToolError.unavailable }
-        try require(search.resultByteBudget == 32_768 && fetch.resultByteBudget == 32_768, "built-in definitions have wrong budgets")
+        try require(search.resultByteBudget == nil && fetch.resultByteBudget == nil, "built-in definitions set a budget of their own")
         let text = try await modelResult(search, arguments: "{\"query\":\"fixture\",\"max_results\":10}")
-        try require(text.utf8.count <= search.resultByteBudget && decode(text).pi("truncated") == .null
+        try require(text.utf8.count <= NativeToolResultBudget.defaultBytes && decode(text).pi("truncated") == .null
                     && (decode(text).pi("results").piArray ?? []).allSatisfy { ($0.pi("content").piString?.count ?? 0) <= NativeWebSearch.snippetCharacters },
                     "search results exceeded their snippet caps")
         let fetched = try await modelResult(fetch, arguments: "{\"url\":\"https://pages.example/report\",\"max_chars\":20000}")
-        try require(fetched.utf8.count <= fetch.resultByteBudget && decode(fetched).pi("truncated") == .bool(true), "model received an unbounded page result")
+        try require(fetched.utf8.count <= NativeToolResultBudget.defaultBytes && decode(fetched).pi("truncated") == .bool(true), "model received an unbounded page result")
         let intact = NativeToolDefinition(id: "deep-research", name: "deep_research", title: "Deep research", description: "Fixture",
             parameters: search.parameters, confirmation: .none, resultByteBudget: NativeToolResultBudget.researchBytes, isAvailable: { true }, execute: { _ in researchExact })
         try require(try await modelResult(intact, arguments: "{\"query\":\"fixture\"}") == NativeToolLoop.serializedResult(researchExact), "128 KiB model history changed")
@@ -138,6 +139,45 @@ enum NativeToolResultBudgetSelftest {
         try require(asciiValue.pi("error").piString?.hasPrefix("Failure detail. ") == true, "leading error detail lost")
         let capability = NativeCapabilityTools.value(from: Data(String(repeating: "\"\n", count: 16_000).utf8))
         try require(try await modelResult(definition(capability)) == NativeToolLoop.serializedResult(capability), "model-facing capability bytes changed")
+    }
+    static func sized() async throws {
+        func require(_ condition: Bool, _ message: String) throws { if !condition { throw NativeToolError.failed(message) } }
+        try require(NativeToolResultBudget.sized(contextTokens: nil, used: 500_000) == NativeToolResultBudget.defaultBytes, "an unknown context keeps the standing budget")
+        try require(NativeToolResultBudget.sized(contextTokens: 128_000, used: 20_000) >= 200_000, "a model with room gets 200 KB")
+        try require(NativeToolResultBudget.sized(contextTokens: 8_000, used: 2_000) < NativeToolResultBudget.defaultBytes, "a small model gets less")
+        try require(NativeToolResultBudget.sized(contextTokens: 8_000, used: 900_000) == max(NativeResourcePolicy.companionShortestResultBytes, 18_000 / NativeToolResultBudget.leastShare), "a full conversation still leaves a little")
+        try require(NativeToolResultBudget.sized(contextTokens: 128_000, outputTokens: 60_000, used: 0) < NativeToolResultBudget.sized(contextTokens: 128_000, used: 0), "a larger reply leaves less")
+        let long = NativeJSONValue.object(["text": .string(String(repeating: "x", count: 200_000))])
+        for (tokens, whole) in [(128_000 as Int?, true), (16_000, false), (nil, false)] {
+            let transport = NativeMCPChatFixture(name: "fixture", arguments: "{}")
+            let loop = NativeToolLoop(transport: transport, registry: NativeToolRegistry(definitions: [definition(long)]), contextTokens: { tokens })
+            var result: String?
+            for try await snapshot in loop.stream(messages: [NativeChatMessage(role: "user", content: "Look")], model: "fixture", enabledToolIDs: ["fixture"]) {
+                if let found = snapshot.activities.last?.result { result = found }
+            }
+            let text = result ?? ""
+            try require(whole ? text == NativeToolLoop.serializedResult(long) : text.contains("\"truncated\":true"), "a 200 KB answer with \(String(describing: tokens)) tokens: \(text.utf8.count)")
+            if !whole { try require(text.utf8.count <= NativeToolResultBudget.sized(contextTokens: tokens, used: 0), "a shortened answer fits its budget") }
+        }
+        var fixed = definition(long)
+        fixed.resultByteBudget = 512
+        let loop = NativeToolLoop(transport: NativeMCPChatFixture(name: "fixture", arguments: "{}"), registry: NativeToolRegistry(definitions: [fixed]), contextTokens: { 128_000 })
+        for try await snapshot in loop.stream(messages: [NativeChatMessage(role: "user", content: "Look")], model: "fixture", enabledToolIDs: ["fixture"]) {
+            try require((snapshot.activities.last?.result?.utf8.count ?? 0) <= 512, "a tool's own budget still holds")
+        }
+        for (tokens, least, most) in [(128_000 as Int?, 200_000, 400_000), (16_000, 1_024, 32_768), (nil, 32_768, 32_768)] {
+            let limit = NativeCompanionWorker.resultLimit(NativeCompanionCheckpoint(), definition: definition(long), budget: .standard, room: NativeCompanionResultRoom(contextTokens: tokens))
+            try require((least...most).contains(limit), "companion work sizes an answer from its model: \(limit)")
+        }
+        let content = try NativeToolLoop.serializedResult(long)
+        let history = (0..<3).flatMap { [NativeChatMessage(role: "user", content: "Look \($0)"), NativeChatMessage(role: "tool", content: content, toolCallID: "call-\($0)")] }
+        let room = NativeResourcePolicy(contextTokens: 128_000, outputTokens: nil, reasoning: false).promptBytes
+        let fitted = NativeToolResultBudget.fitted(history, contextTokens: 128_000)
+        try require(NativeToolResultBudget.size(fitted) <= room && fitted.last?.content == content && fitted[1].content.contains("\"truncated\":true") && fitted[1].toolCallID == "call-0",
+                    "earlier answers are shortened first when a conversation outgrows the model")
+        try require(NativeToolResultBudget.fitted(Array(history.prefix(2)), contextTokens: 128_000, beside: 140_000)[1].content.contains("\"truncated\":true"), "a large tool list counts too")
+        try require(NativeToolResultBudget.fitted(Array(history.prefix(2)), contextTokens: 128_000) == Array(history.prefix(2)) && NativeToolResultBudget.fitted(history, contextTokens: nil) == history,
+                    "nothing is shortened when it fits or the context is unknown")
     }
     static func definition(_ value: NativeJSONValue) -> NativeToolDefinition {
         NativeToolDefinition(id: "fixture", name: "fixture", title: "Fixture", description: "Fixture", parameters: .object(["type": .string("object"), "properties": .object([:])]), confirmation: .none,

@@ -88,11 +88,12 @@ extension LocalChatRepository: NativeTaskRepository {
         let binding: NativeTaskAdmissionBinding?
         if let profile {
             let sized = engine == NativeTaskLocalEngine.identity && NativeResearchTaskRequest.chatWorkerTypes.contains(request.workerType)
+            let companion = engine == NativeTaskLocalEngine.identity && request.workerType == "companion" && profile.contextTokens != nil
             binding = NativeTaskAdmissionBinding(id: profile.id, admissionBase: profile.provider.base,
                 enrollmentDigest: nativeTaskDigest(try nativeTaskEncoded(profile) + nativeTaskEncoded(request)),
-                outputTokens: sized ? profile.outputLimit : nil,
+                outputTokens: sized || companion ? profile.outputLimit : nil,
                 reasoning: sized ? profile.reasoning ?? false : nil,
-                contextTokens: sized ? profile.contextTokens ?? NativeResourcePolicy.defaultContextTokens : nil)
+                contextTokens: sized ? profile.contextTokens ?? NativeResourcePolicy.defaultContextTokens : companion ? profile.contextTokens : nil)
         } else {
             binding = nil
         }
