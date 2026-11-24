@@ -43,16 +43,21 @@ enum NativeMCPLaunchSelftest {
         throw NativeToolError.failed(message)
     }
 
+    @MainActor
     final class Disk {
         var contents: [String: Any]
+        let keys = NativeCredentialFixtureStore()
+        var loaded: [String: Any] {
+            ["native_mcp_servers": NativeMCPAddressBook(store: keys).resolved(contents["native_mcp_servers"] as? [[String: Any]] ?? [])]
+        }
         var broken = false
         init(_ contents: [String: Any]) { self.contents = contents }
     }
 
     static func launch(_ disk: Disk, _ house: House, delays: [Duration] = [.zero, .milliseconds(20)]) -> (NativeMCPManager, ConfigStore) {
-        let (servers, _) = NativeMCPServerConfiguration.load(disk.contents)
+        let (servers, _) = NativeMCPServerConfiguration.load(disk.loaded)
         let manager = NativeMCPManager(servers: servers, authenticatedFactory: { _, _ in house.make() }, reconnectDelays: delays)
-        let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { disk.contents }, nativeMCP: manager, writeConfiguration: {
+        let config = ConfigStore(credentialStore: disk.keys, readConfiguration: { disk.contents }, nativeMCP: manager, writeConfiguration: {
             if disk.broken { throw NativeMCPTransportError.network }
             disk.contents = $0
         })
@@ -171,8 +176,8 @@ enum NativeMCPLaunchSelftest {
         await waiting.settleReconnects(scope: unattended)
         try check(connected(waiting) && started.duration(to: .now) < .seconds(2), "A run tries a service that was waiting for its next turn")
         house.set(down: true)
-        await waiting.authority.disconnect(id, status: "The connection dropped")
         let count = house.count
+        await waiting.authority.disconnect(id, status: "The connection dropped")
         await waiting.settleReconnects(scope: unattended)
         try check(!connected(waiting) && house.count > count, "An unreachable service doesn't hold a run up")
         await waiting.disconnect(id)

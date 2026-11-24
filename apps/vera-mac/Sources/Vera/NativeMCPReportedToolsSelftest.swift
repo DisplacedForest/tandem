@@ -5,8 +5,13 @@ enum NativeMCPReportedToolsSelftest {
     static let id = "4d6f0c52-19ab-4b7e-9c33-7be0a2d15f80"
     static let row: [String: Any] = ["id": id, "name": "House", "url": "https://fixture.invalid/mcp", "scopes": IntegrationsText.scopeKeys, "timeout_seconds": 5.0]
 
+    @MainActor
     final class Disk {
         var contents: [String: Any]
+        let keys = NativeCredentialFixtureStore()
+        var loaded: [String: Any] {
+            ["native_mcp_servers": NativeMCPAddressBook(store: keys).resolved(contents["native_mcp_servers"] as? [[String: Any]] ?? [])]
+        }
         var writes = 0
         init(_ contents: [String: Any]) { self.contents = contents }
     }
@@ -16,9 +21,9 @@ enum NativeMCPReportedToolsSelftest {
     }
 
     static func make(_ disk: Disk, _ connection: NativeMCPChangesConnection) -> (NativeMCPManager, ConfigStore) {
-        let (servers, _) = NativeMCPServerConfiguration.load(disk.contents)
+        let (servers, _) = NativeMCPServerConfiguration.load(disk.loaded)
         let manager = NativeMCPManager(servers: servers, factory: { _ in connection })
-        let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { disk.contents }, nativeMCP: manager,
+        let config = ConfigStore(credentialStore: disk.keys, readConfiguration: { disk.contents }, nativeMCP: manager,
                                  writeConfiguration: { disk.contents = $0; disk.writes += 1 })
         return (manager, config)
     }
@@ -112,7 +117,7 @@ enum NativeMCPReportedToolsSelftest {
         await manager.connect(id)
         guard let odd = manager.servers.first?.tools.first else { throw NativeToolError.failed("The oddly named tool is listed") }
         try config.setNativeMCPTool(odd, enabled: false)
-        try check(manager.authority.definitions(scope: "focused").isEmpty && NativeMCPServerConfiguration.load(disk.contents).1 == nil, "Any tool the service reports can be turned off")
+        try check(manager.authority.definitions(scope: "focused").isEmpty && NativeMCPServerConfiguration.load(disk.loaded).1 == nil, "Any tool the service reports can be turned off")
         try config.setNativeMCPTool(odd, enabled: true)
     }
 

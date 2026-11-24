@@ -308,7 +308,15 @@ extension SelfTest {
             ResourcePolicyFixture.document(job)
         }
         try await second.start()
-        try require(try await second.wait(seconds: 40) { try second.state(reference) == .completed }, "After a relaunch the document finishes")
+        try require(try await second.wait(seconds: 40) { [.completed, .needsDecision].contains(try second.state(reference)) },
+                    "After a relaunch the document finishes or asks to retry: \(String(describing: try second.state(reference)))")
+        if try second.state(reference) == .needsDecision {
+            let choices = try repository.taskProjection(id: reference.id)?.snapshot?.decision?.choices
+            try require(choices == ["retry"], "A document paused by the relaunch offers a retry: \(choices ?? [])")
+            await second.tracker.retry(reference.id)
+        }
+        try require(try await second.wait(seconds: 40) { try second.state(reference) == .completed },
+                    "After a relaunch the document finishes: \(String(describing: try second.state(reference)))")
         try require(await counter.count("generate:condense-0") == 1, "A part condensed before the relaunch is not condensed again")
         let references = try repository.taskReferences(conversationID: nil)
         try require(references.count == 1, "The relaunch saves no second document")

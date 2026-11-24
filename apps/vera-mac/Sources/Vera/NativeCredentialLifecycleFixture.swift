@@ -15,6 +15,8 @@ final class NativeCredentialFixtureStore: NativeCredentialStore {
     var values: [String: String] = [:]
     var denied: Set<String> = []
     var failWrites = false
+    var refused: Set<String> = []
+    var refusesAfter = 0
     var writes: [String] = []
     var reads: [String] = []
     var startupReads: [String] = []
@@ -32,6 +34,10 @@ final class NativeCredentialFixtureStore: NativeCredentialStore {
 
     func set(_ value: String?, for profileID: String) throws {
         if failWrites { throw NativeCredentialError.write }
+        if refused.contains(profileID) {
+            if refusesAfter <= 0 { throw NativeCredentialError.write }
+            refusesAfter -= 1
+        }
         writes.append(value == nil ? "remove" : "update")
         values[profileID] = value
     }
