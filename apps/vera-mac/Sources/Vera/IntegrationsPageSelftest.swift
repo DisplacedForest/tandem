@@ -45,7 +45,7 @@ enum IntegrationsPageSelftest {
         }
         guard let listed = IntegrationsPageModel.entry(for: code, in: entries) else { throw NativeToolError.failed("The installed entry is missing") }
         try require(IntegrationsPageModel.trailing(listed, in: manager.servers) == .menu, "An installed entry shows three dots")
-        try require(entries.filter { $0.id != listed.id }.allSatisfy { IntegrationsPageModel.trailing($0, in: manager.servers) == .install }, "An entry that isn't installed shows a plus")
+        try require(entries.filter { $0.id != listed.id }.allSatisfy { IntegrationsPageModel.trailing($0, in: [code, own]) == .install }, "An entry that isn't installed shows a plus")
         try require(IntegrationsPageModel.entry(for: own, in: entries) == nil, "A service the person added has no listing")
         try require(manager.shownState(code) == "Reconnecting" && manager.shownState(off) == "Not connected" && manager.shownState(own) == "Connected", "Each row knows its state")
         try require(IntegrationsPageModel.line(code, state: "Reconnecting", entry: listed) == "Reconnecting", "A row that isn't connected shows its state instead of its description")
