@@ -11,6 +11,7 @@ enum PromptIdentitySelftest {
         try migration(require)
         try naming(require)
         try composition(require)
+        try missingService(require)
         try await preview(require)
         try await companionWork(require)
         print("PROMPT IDENTITY SELFTEST OK")
@@ -47,6 +48,20 @@ enum PromptIdentitySelftest {
         let store = ChatStore(nativeConfig: nil, nativeTransport: nil, repository: repository, nativePersonaID: old.id)
         try require(store.resolvePromptScopes(conversationID: nil).persona == NativeChatSettings.defaultSystemPrompt,
                     "The store sends the migrated persona")
+    }
+
+    static func missingService(_ require: (Bool, String) throws -> Void) throws {
+        let rule = NativeContextAssembler.missingServiceRule
+        for companionThread in [false, true] {
+            let assembled = NativeContextAssembler.assemble(NativeContextInput(
+                persona: "You are a helpful assistant.", timestamp: fixed, timeZone: zone, ownerName: "Riley",
+                assistantName: companionThread ? "Wren" : nil, companionThread: companionThread))
+            try require(occurrences(rule, in: assembled.prompt) == 1, "Every chat is told once that a missing service can be added in Plugins")
+            let policy = assembled.sections.first { $0.name == "policy" }
+            try require(policy?.content.contains(rule) == true && policy?.truncated == false, "The rule fits in the policy section")
+        }
+        let listed = try NativeMCPStarterCatalog.bundled().entries
+        try require(!listed.isEmpty && listed.allSatisfy { !rule.localizedCaseInsensitiveContains($0.name) }, "The rule names no plugin")
     }
 
     static func naming(_ require: (Bool, String) throws -> Void) throws {

@@ -71,8 +71,7 @@ struct ShotView: View {
                 case .projects: ProjectsView(initialSelection: projectSelection)
                 case .integrations:
                     IntegrationsView(initialTab: integrationsSeed?.tab ?? .personal,
-                                     initialSearch: integrationsSeed?.search ?? "",
-                                     initialSelection: integrationsSeed?.selection)
+                                     initialSearch: integrationsSeed?.search ?? "")
                 case .vera, .chat:
                     if emptyChat, companionPanel == nil, section != .vera {
                         emptyChatShot.overlay { ConversationTopBar() }

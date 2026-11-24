@@ -66,6 +66,8 @@ enum IntegrationsText {
 
     static let accountSignInNote = "Account sign-in needs details from the publisher in the configuration file; see the setup guide."
 
+    static func removeQuestion(_ name: String) -> String { "Remove \(name)? Its tools stop being available everywhere right away." }
+
     static func message(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? "The change could not be saved."
     }
@@ -80,17 +82,14 @@ struct IntegrationsView: View {
     @EnvironmentObject var config: ConfigStore
     private let initialTab: IntegrationsTab
     private let initialSearch: String
-    private let initialSelection: String?
 
-    init(initialTab: IntegrationsTab = .personal, initialSearch: String = "", initialSelection: String? = nil) {
+    init(initialTab: IntegrationsTab = .catalogue, initialSearch: String = "") {
         self.initialTab = initialTab
         self.initialSearch = initialSearch
-        self.initialSelection = initialSelection
     }
 
     var body: some View {
-        IntegrationsDestination(manager: config.nativeMCP, initialTab: initialTab,
-                                initialSearch: initialSearch, initialSelection: initialSelection)
+        IntegrationsDestination(manager: config.nativeMCP, initialTab: initialTab, initialSearch: initialSearch)
     }
 }
 
@@ -98,189 +97,138 @@ struct IntegrationsManageTarget: Identifiable {
     let id: String
 }
 
+enum IntegrationsDetailTarget: Identifiable, Equatable {
+    case entry(NativeMCPStarterEntry)
+    case server(String)
+
+    var id: String {
+        switch self {
+        case .entry(let entry): return "entry:" + entry.id
+        case .server(let id): return "server:" + id
+        }
+    }
+}
+
 private struct IntegrationsDestination: View {
     @ObservedObject var manager: NativeMCPManager
     @EnvironmentObject var config: ConfigStore
-    @EnvironmentObject var store: ChatStore
     @Environment(\.renderSafe) private var renderSafe
     @State private var tab: IntegrationsTab
     @State private var search: String
-    @State private var category: String?
-    @State private var selectedServerID: String?
-    @State private var selectedEntryID: String?
+    @State private var closed: Set<String> = []
+    @State private var detail: IntegrationsDetailTarget?
     @State private var installing: NativeMCPStarterEntry?
     @State private var managing: IntegrationsManageTarget?
     @State private var oauthReview: NativeMCPOAuthReview?
-    @State private var readTest: NativeMCPReadTestController?
-    @State private var enteredTokens: [String: String] = [:]
-    @State private var consentError: String?
+    @State private var removing: NativeMCPServerState?
+    @State private var removeError: String?
 
-    init(manager: NativeMCPManager, initialTab: IntegrationsTab, initialSearch: String, initialSelection: String?) {
+    init(manager: NativeMCPManager, initialTab: IntegrationsTab, initialSearch: String) {
         self.manager = manager
         _tab = State(initialValue: initialTab)
         _search = State(initialValue: initialSearch)
-        _selectedServerID = State(initialValue: initialTab == .personal ? initialSelection : nil)
-        _selectedEntryID = State(initialValue: initialTab == .catalogue ? initialSelection : nil)
     }
 
     private var catalogue: NativeMCPStarterCatalog? { try? IntegrationsCatalogue.loaded.get() }
-
-    private var matches: [NativeMCPStarterEntry] {
-        catalogue?.matching(query: search, category: category) ?? []
-    }
-
-    private var selectedServer: NativeMCPServerState? {
-        manager.servers.first { $0.id == selectedServerID } ?? manager.servers.first
-    }
-
-    private var selectedEntry: NativeMCPStarterEntry? {
-        matches.first { $0.id == selectedEntryID } ?? matches.first
-    }
-
-    private func installed(_ entry: NativeMCPStarterEntry) -> Bool {
-        manager.servers.contains { entry.matches($0.configuration) }
-    }
+    private var entries: [NativeMCPStarterEntry] { catalogue?.entries ?? [] }
 
     var body: some View {
-        HStack(spacing: 0) {
-            listColumn.frame(width: 300)
-            Rectangle().fill(Theme.hairline).frame(width: 1)
-            detailColumn.frame(maxWidth: .infinity, maxHeight: .infinity)
+        GeometryReader { space in
+            let width = min(max(0, space.size.width - 64), IntegrationsPageModel.contentWidth)
+            let columns = IntegrationsPageModel.columns(for: width)
+            ShotSafeScroll(renderSafe: renderSafe) {
+                VStack(alignment: .leading, spacing: 18) {
+                    IntegrationsPageHeader(search: $search, stacked: width < IntegrationsPageModel.headerRowWidth) { installing = .own }
+                    IntegrationsPagePills(selection: $tab)
+                    if let removeError { IntegrationsNotice(text: removeError) }
+                    switch tab {
+                    case .catalogue: publicPage(columns)
+                    case .personal: personalPage(columns)
+                    }
+                }
+                .frame(width: width, alignment: .leading)
+                .padding(.top, 72).padding(.bottom, 40)
+                .frame(maxWidth: .infinity)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .sheet(item: $installing) { entry in
-            IntegrationsInstallSheet(draft: NativeMCPInstallDraft(entry: entry)) { id in
-                tab = .personal
-                selectedServerID = id
+            IntegrationsInstallSheet(draft: NativeMCPInstallDraft(entry: entry)) { _ in
+                if entry.isOwn { tab = .personal }
             }
         }
         .sheet(item: $managing) { target in
-            IntegrationsManageSheet(target: target) { id in
-                tab = .personal
-                selectedServerID = id
-            }
+            IntegrationsManageSheet(target: target) { _ in }
         }
         .sheet(item: $oauthReview) { review in
             NativeMCPOAuthReviewEditor(manager: manager, review: review)
         }
-        .sheet(item: $readTest) { controller in
-            NativeMCPReadTestEditor(controller: controller)
+        .sheet(item: $detail) { target in
+            IntegrationsDetailSheet(manager: manager, target: target)
+        }
+        .confirmationDialog(removing.map { IntegrationsText.removeQuestion($0.configuration.name) } ?? "",
+                            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible,
+                            presenting: removing) { server in
+            Button("Remove", role: .destructive) { remove(server.id) }
+            Button("Cancel", role: .cancel) {}
         }
         .onDisappear {
             guard !renderSafe else { return }
-            enteredTokens.removeAll()
             manager.cancelPendingOAuth()
-            readTest?.close()
-            readTest = nil
-        }
-    }
-
-    private var listColumn: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            IntegrationsSegmented(selection: $tab)
-            switch tab {
-            case .personal: personalList
-            case .catalogue: catalogueList
-            }
-        }
-        .padding(.horizontal, 12).padding(.top, 20)
-        .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    @ViewBuilder
-    private var personalList: some View {
-        if let error = config.nativeMCPConfigurationError ?? manager.configurationError {
-            IntegrationsNotice(text: error)
-        }
-        IntegrationsAddButton { installing = .own }
-        ShotSafeScroll(renderSafe: renderSafe) {
-            VStack(spacing: 2) {
-                ForEach(manager.servers) { server in
-                    let selected = server.id == selectedServer?.id
-                    Button { selectedServerID = server.id } label: {
-                        IntegrationsServerRow(name: server.configuration.name,
-                                              state: IntegrationsText.state(server, signingIn: manager.oauthProgress[server.id] != nil, reconnecting: reconnects(server)),
-                                              live: server.connected, selected: selected)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(selected ? [.isSelected] : [])
-                }
-            }
-            .padding(.bottom, 12)
         }
     }
 
     @ViewBuilder
-    private var catalogueList: some View {
+    private func publicPage(_ columns: Int) -> some View {
         if let catalogue {
-            IntegrationsSearchField(text: $search)
-            IntegrationsFlowLayout(spacing: 6) {
-                IntegrationsPill(title: "All", selected: category == nil) { category = nil }
-                ForEach(catalogue.categories, id: \.self) { name in
-                    IntegrationsPill(title: name, selected: category == name) { category = name }
-                }
-            }
-            if matches.isEmpty {
-                Text("Nothing matches.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    .padding(.top, 6)
-                Spacer(minLength: 0)
+            let sections = IntegrationsPageModel.sections(catalogue.matching(query: search, category: nil))
+            if sections.isEmpty {
+                noMatch
             } else {
-                ShotSafeScroll(renderSafe: renderSafe) {
-                    VStack(spacing: 2) {
-                        ForEach(matches) { entry in
-                            let selected = entry.id == selectedEntry?.id
-                            Button { selectedEntryID = entry.id } label: {
-                                IntegrationsEntryRow(entry: entry, installed: installed(entry), selected: selected)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityAddTraits(selected ? [.isSelected] : [])
+                ForEach(sections) { section in
+                    let open = !closed.contains(section.title)
+                    IntegrationsPageSection(title: section.title, open: open) {
+                        if open { closed.insert(section.title) } else { closed.remove(section.title) }
+                    } content: {
+                        IntegrationsPageGrid(columns: columns) {
+                            ForEach(section.entries) { entryRow($0) }
                         }
                     }
-                    .padding(.bottom, 12)
                 }
             }
         } else {
-            Text("The list could not be loaded.")
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary).padding(.top, 6)
-            Spacer(minLength: 0)
+            Text("The list could not be loaded.").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
         }
     }
 
     @ViewBuilder
-    private var detailColumn: some View {
-        switch tab {
-        case .personal:
-            if let server = selectedServer {
-                ShotSafeScroll(renderSafe: renderSafe) {
-                    serverCard(server).id(server.id)
-                        .padding(24)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else {
-                personalEmpty
-            }
-        case .catalogue:
-            if let entry = selectedEntry {
-                ShotSafeScroll(renderSafe: renderSafe) {
-                    entryCard(entry).id(entry.id)
-                        .padding(24)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else {
-                Color.clear
+    private func personalPage(_ columns: Int) -> some View {
+        if let error = config.nativeMCPConfigurationError ?? manager.configurationError {
+            IntegrationsNotice(text: error)
+        }
+        let matches = IntegrationsPageModel.matching(manager.servers, entries: entries, query: search)
+        if manager.servers.isEmpty {
+            personalEmpty
+        } else if matches.isEmpty {
+            noMatch
+        } else {
+            IntegrationsPageGrid(columns: columns) {
+                ForEach(matches) { serverRow($0) }
             }
         }
+    }
+
+    private var noMatch: some View {
+        Text(IntegrationsPageModel.noMatch).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
     }
 
     private var personalEmpty: some View {
         VStack(spacing: 12) {
             Image(systemName: AppSection.integrations.icon).font(.system(size: 30, weight: .light))
                 .foregroundStyle(Theme.textSecondary)
-            Text("No connected services yet.").font(.system(size: 20, weight: .semibold))
-            Text("Browse Public to install one, or add your own.")
+            Text(IntegrationsPageModel.emptyTitle).font(.system(size: 20, weight: .semibold))
+            Text(IntegrationsPageModel.emptyDetail)
                 .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 380)
             IntegrationsAction(title: "Add your own…", symbol: "plus", prominent: true) {
@@ -288,7 +236,168 @@ private struct IntegrationsDestination: View {
             }
             .padding(.top, 6)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
+    }
+
+    private func entryRow(_ entry: NativeMCPStarterEntry) -> some View {
+        let servers = IntegrationsPageModel.installed(entry, in: manager.servers)
+        let state = servers.count == 1 ? servers.first.map { manager.shownState($0) } : nil
+        return IntegrationsPageRow(icon: entry.icon, name: entry.name, line: entry.description,
+                                   state: servers.isEmpty ? nil : state ?? "Installed") {
+            detail = servers.count == 1 ? servers.first.map { .server($0.id) } : .entry(entry)
+        } trailing: {
+            switch IntegrationsPageModel.trailing(entry, in: manager.servers) {
+            case .install: IntegrationsPagePlus(name: entry.name) { installing = entry }
+            case .menu: menu(entry.name, servers)
+            }
+        }
+    }
+
+    private func serverRow(_ server: NativeMCPServerState) -> some View {
+        let entry = IntegrationsPageModel.entry(for: server, in: entries)
+        let state = manager.shownState(server)
+        return IntegrationsPageRow(icon: entry?.icon, name: server.configuration.name,
+                                   line: IntegrationsPageModel.line(server, state: state, entry: entry),
+                                   lineHelp: server.connected || server.status == "Not connected" || server.status == state ? nil : server.status,
+                                   state: state) {
+            detail = .server(server.id)
+        } trailing: {
+            menu(server.configuration.name, [server])
+        }
+    }
+
+    private func menu(_ name: String, _ servers: [NativeMCPServerState]) -> some View {
+        let items = servers.map { server in
+            IntegrationsPageMenu.Item(id: server.id, name: server.configuration.name,
+                                      actions: IntegrationsPageModel.menu(manager.connection(server)),
+                                      help: manager.hasSavedToken(server.id) ? IntegrationsText.disconnectNote : nil)
+        }
+        return IntegrationsPageMenu(name: name, items: items, perform: perform)
+    }
+
+    private func perform(_ action: IntegrationsPageModel.MenuAction, _ id: String) {
+        removeError = nil
+        switch action {
+        case .manage: managing = IntegrationsManageTarget(id: id)
+        case .connect:
+            if manager.asksForToken(id) { detail = .server(id) } else { Task { await manager.connect(id) } }
+        case .signIn: oauthReview = manager.beginOAuthReview(id)
+        case .cancel, .disconnect: manager.endConnection(id)
+        case .remove: removing = manager.servers.first { $0.id == id }
+        }
+    }
+
+    private func remove(_ id: String) {
+        do { try config.removeNativeMCPServer(id: id) } catch { removeError = IntegrationsText.message(error) }
+    }
+}
+
+extension NativeMCPManager {
+    func connection(_ server: NativeMCPServerState) -> IntegrationsPageModel.Connection {
+        IntegrationsPageModel.Connection(authentication: server.configuration.authentication, connected: server.connected, connecting: server.connecting,
+                                         signingIn: oauthProgress[server.id] != nil, reconnecting: reconnects(server), kept: keeps(server))
+    }
+
+    func shownState(_ server: NativeMCPServerState) -> String {
+        IntegrationsText.state(server, signingIn: oauthProgress[server.id] != nil, reconnecting: reconnects(server))
+    }
+
+    func asksForToken(_ id: String) -> Bool {
+        servers.first { $0.id == id }?.configuration.authentication == .bearer && !hasSavedToken(id)
+    }
+
+    func endConnection(_ id: String) {
+        cancelOAuthLocally(id)
+        Task { await disconnect(id) }
+    }
+}
+
+struct IntegrationsDetailSheet: View {
+    @ObservedObject var manager: NativeMCPManager
+    let target: IntegrationsDetailTarget
+    @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var store: ChatStore
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.renderSafe) private var renderSafe
+    @State private var installing: NativeMCPStarterEntry?
+    @State private var managing: IntegrationsManageTarget?
+    @State private var oauthReview: NativeMCPOAuthReview?
+    @State private var readTest: NativeMCPReadTestController?
+    @State private var enteredTokens: [String: String] = [:]
+    @State private var consentError: String?
+    @State private var opened: String?
+
+    init(manager: NativeMCPManager, target: IntegrationsDetailTarget) {
+        self.manager = manager
+        self.target = target
+    }
+
+    private var entries: [NativeMCPStarterEntry] { (try? IntegrationsCatalogue.loaded.get())?.entries ?? [] }
+
+    private var server: NativeMCPServerState? {
+        if let opened { return manager.servers.first { $0.id == opened } }
+        guard case .server(let id) = target else { return nil }
+        return manager.servers.first { $0.id == id }
+    }
+
+    private var gone: Bool {
+        guard server == nil else { return false }
+        if case .server = target { return true }
+        return opened != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let server {
+                IntegrationsCappedHeight(cap: IntegrationsPageModel.detailHeight) {
+                    ShotSafeScroll(renderSafe: renderSafe) {
+                        serverCard(server).id(server.id)
+                            .padding(24)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .clipped()
+            } else if case .entry(let entry) = target {
+                IntegrationsCappedHeight(cap: IntegrationsPageModel.detailHeight) {
+                    ShotSafeScroll(renderSafe: renderSafe) {
+                        entryCard(entry).padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .clipped()
+            }
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+            HStack {
+                Spacer()
+                Button("Close") { dismiss() }.controlSize(.small).keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 24).padding(.vertical, 12)
+        }
+        .frame(width: 620)
+        .background(Theme.bg)
+        .sheet(item: $installing) { entry in
+            IntegrationsInstallSheet(draft: NativeMCPInstallDraft(entry: entry)) { opened = $0 }
+        }
+        .sheet(item: $managing) { target in
+            IntegrationsManageSheet(target: target) { _ in }
+        }
+        .sheet(item: $oauthReview) { review in
+            NativeMCPOAuthReviewEditor(manager: manager, review: review)
+        }
+        .sheet(item: $readTest) { controller in
+            NativeMCPReadTestEditor(controller: controller)
+        }
+        .onChange(of: gone) { _, gone in if gone, !renderSafe { dismiss() } }
+        .onDisappear {
+            guard !renderSafe else { return }
+            enteredTokens.removeAll()
+            readTest?.close()
+            readTest = nil
+        }
+    }
+
+    private func installed(_ entry: NativeMCPStarterEntry) -> Bool {
+        manager.servers.contains { entry.matches($0.configuration) }
     }
 
     private func serverCard(_ server: NativeMCPServerState) -> some View {
@@ -299,8 +408,10 @@ private struct IntegrationsDestination: View {
         let reads = server.tools.filter { $0.state == .read || $0.asksBecauseOfService }
         let changes = server.tools.filter { $0.state == .change && !$0.asksBecauseOfService }
         let unapproved = server.tools.filter { $0.state == .unapproved }
+        let listed = IntegrationsPageModel.entry(for: server, in: entries)
         return VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 12) {
+                IntegrationsEntryIcon(name: listed?.icon, size: 36)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(configuration.name).font(.system(size: 17, weight: .semibold)).lineLimit(2)
                     if let publisher = configuration.publisher {
@@ -321,6 +432,9 @@ private struct IntegrationsDestination: View {
                     }
                     primaryAction(server, progress: progress)
                 }
+            }
+            if let description = listed?.description {
+                Text(description).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
             }
             if let detail, detail != "Not connected" {
                 Text(detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -397,8 +511,7 @@ private struct IntegrationsDestination: View {
             let pending = !manager.keeps(server) && (server.connecting || progress != nil)
             IntegrationsAction(title: pending ? "Cancel connection" : "Disconnect", symbol: "xmark", prominent: true, help: saved ? IntegrationsText.disconnectNote : nil) {
                 enteredTokens.removeValue(forKey: server.id)
-                manager.cancelOAuthLocally(server.id)
-                Task { await manager.disconnect(server.id) }
+                manager.endConnection(server.id)
             }
         } else if server.configuration.authentication == .oauth {
             IntegrationsAction(title: "Sign in", symbol: "person.badge.key", prominent: true) {
@@ -493,7 +606,7 @@ private struct IntegrationsDestination: View {
     }
 }
 
-private struct IntegrationsEntryIcon: View {
+struct IntegrationsEntryIcon: View {
     let name: String?
     let size: CGFloat
 
@@ -799,7 +912,7 @@ struct IntegrationsManageSheet: View {
         }
         .padding(24).frame(width: 520)
         .onAppear(perform: load)
-        .confirmationDialog("Remove \(name)? Its tools stop being available everywhere right away.",
+        .confirmationDialog(IntegrationsText.removeQuestion(name),
                             isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive, action: remove)
             Button("Cancel", role: .cancel) {}
@@ -1013,34 +1126,7 @@ private struct IntegrationsStaticField: View {
     }
 }
 
-private struct IntegrationsSegmented: View {
-    @Binding var selection: IntegrationsTab
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(IntegrationsTab.allCases) { option in
-                let selected = option == selection
-                Button { selection = option } label: {
-                    Text(option.title).font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
-                        .frame(maxWidth: .infinity).padding(.vertical, 5)
-                        .background(selected ? Theme.surfaceSelected : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(option.title)
-                .accessibilityAddTraits(selected ? [.isSelected] : [])
-            }
-        }
-        .padding(2)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
-    }
-}
-
-private struct IntegrationsSearchField: View {
+struct IntegrationsSearchField: View {
     @Environment(\.renderSafe) private var renderSafe
     @Binding var text: String
 
@@ -1142,101 +1228,6 @@ struct IntegrationsAction: View {
     }
 }
 
-private struct IntegrationsAddButton: View {
-    @Environment(\.renderSafe) private var renderSafe
-    let action: () -> Void
-
-    var body: some View {
-        let label = HStack(spacing: 6) {
-            Image(systemName: "plus").font(.system(size: 12, weight: .medium))
-            Text("Add your own…").font(.system(size: 13, weight: .medium))
-            Spacer(minLength: 0)
-        }
-        .foregroundStyle(Theme.accent)
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
-        if renderSafe {
-            label
-        } else {
-            Button(action: action) { label.contentShape(Rectangle()) }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add your own service")
-        }
-    }
-}
-
-private struct IntegrationsServerRow: View {
-    let name: String
-    let state: String
-    let live: Bool
-    let selected: Bool
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: AppSection.integrations.icon).font(.system(size: 13))
-                .foregroundStyle(live ? Theme.accent : Theme.textSecondary)
-                .frame(width: 18).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(state).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(selected ? Theme.surfaceSelected : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-}
-
-private struct IntegrationsEntryRow: View {
-    let entry: NativeMCPStarterEntry
-    let installed: Bool
-    let selected: Bool
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            IntegrationsEntryIcon(name: entry.icon, size: 26).padding(.top, 2)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(entry.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(entry.publisher).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            }
-            Spacer(minLength: 6)
-            if installed {
-                Text("Installed").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-            }
-        }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(selected ? Theme.surfaceSelected : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-}
-
-private struct IntegrationsPill: View {
-    let title: String
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title).font(.system(size: 11, weight: .medium))
-                .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, 9).padding(.vertical, 4)
-                .background(selected ? Theme.surfaceSelected : Theme.surface)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title == "All" ? "Show all plugins" : "Show \(title)")
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-}
-
 private struct IntegrationsTag: View {
     let text: String
 
@@ -1266,7 +1257,7 @@ private struct IntegrationsLink: View {
     }
 }
 
-private struct IntegrationsNotice: View {
+struct IntegrationsNotice: View {
     let text: String
 
     var body: some View {
@@ -1291,47 +1282,6 @@ private struct IntegrationsSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.system(size: 13, weight: .semibold)).accessibilityAddTraits(.isHeader)
             content()
-        }
-    }
-}
-
-private struct IntegrationsFlowLayout: Layout {
-    var spacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var line: CGFloat = 0
-        var widest: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width {
-                y += line + spacing
-                x = 0
-                line = 0
-            }
-            x += size.width + spacing
-            line = max(line, size.height)
-            widest = max(widest, x - spacing)
-        }
-        return CGSize(width: proposal.width ?? widest, height: y + line)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var line: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.maxX {
-                y += line + spacing
-                x = bounds.minX
-                line = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            line = max(line, size.height)
         }
     }
 }
