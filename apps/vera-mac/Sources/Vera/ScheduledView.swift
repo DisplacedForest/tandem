@@ -216,7 +216,7 @@ private struct ScheduleDetail: View {
                                        onOpen: run.conversationID == nil || renderSafe ? nil : { store.openScheduleRun(run) },
                                        onStop: run.outcome.isOpen && run.taskReferenceID != nil && !renderSafe ? { store.stopScheduleRun(run) } : nil,
                                        choices: store.scheduleRunDecision(run)?.choices ?? (run.outcome == .waiting ? ["retry"] : []),
-                                       covers: store.scheduleRunDecision(run)?.covers, neverTitle: store.scheduleRunDecision(run)?.never,
+                                       covers: store.scheduleRunDecision(run)?.covers, neverTitle: store.scheduleRunDecision(run)?.never, service: store.scheduleRunDecision(run)?.service,
                                        literal: store.scheduleRunDecision(run)?.details,
                                        onChoose: renderSafe ? nil : { store.answerScheduleRun(run, choice: $0) })
                     }
@@ -260,6 +260,7 @@ private struct ScheduleRunRow: View {
     let choices: [String]
     var covers: String? = nil
     var neverTitle: String? = nil
+    var service: NativeServiceTool? = nil
     var literal: String? = nil
     let onChoose: ((String) -> Void)?
 
@@ -295,11 +296,12 @@ private struct ScheduleRunRow: View {
                         .accessibilityLabel("Action details: " + literal)
                 }
                 if isApproval {
-                    CardAnswerRow(answers: CardAnswers.task(choices: choices, covers: covers, neverTitle: neverTitle, run: true),
+                    CardAnswerRow(answers: CardAnswers.task(choices: choices, covers: covers, neverTitle: neverTitle, run: true, service: service),
                                   defaultApproval: false, allowApprove: onChoose != nil, allowDecline: onChoose != nil,
                                   onAllow: { onChoose?(NativeCardChoiceKind.allowOnce.rawValue) },
                                   onDecline: { onChoose?(NativeCardChoiceKind.decline.rawValue) },
-                                  onItem: { onChoose?($0) })
+                                  onItem: { onChoose?($0) }, onConfirmed: { _, confirmed in onChoose?(NativeCardChoices.confirmedWire(confirmed)) })
+                        .id(run.id)
                 } else if let question {
                     if let decline = question.decline {
                         CardAnswerRow(answers: question.answers, defaultApproval: false, even: question.even,

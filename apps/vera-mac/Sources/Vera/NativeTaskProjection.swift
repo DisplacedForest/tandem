@@ -122,6 +122,7 @@ enum NativeTaskProjection {
             if dot, !retryPending, let details = decision.details, details.unicodeScalars.count <= 20000 { card.details = details }
             if dot, !retryPending { card.covers = CardAnswers.shown(decision.covers) }
             if dot, !retryPending { card.neverTitle = CardAnswers.shown(decision.never) }
+            if dot, !retryPending { card.service = decision.service }
         case .failed:
             card.status = .failed
             let again = neutral ? "Start the work again" : document ? "Start a new document" : "Start a new research request"

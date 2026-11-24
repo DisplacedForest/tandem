@@ -79,6 +79,7 @@ struct NativeCardSubject: Equatable, Hashable, Sendable {
     var scheduleInstructed = false
     var phrase: String? = nil
     var alwaysAsks = false
+    var service: NativeServiceTool? = nil
 }
 
 enum NativeCardCoverage: Equatable, Sendable {
@@ -92,14 +93,39 @@ enum NativeCardCoverage: Equatable, Sendable {
 
 enum NativeCardChoices {
     static let commandNever = "never_commands"
+    static let serviceAlways = "allow_service_tool"
 
     static func wire(_ choice: NativeCardChoice, subject: NativeCardSubject) -> String {
-        choice.kind == .never && subject.toolID == NativeCommandTools.toolID ? commandNever : choice.kind.rawValue
+        if choice.kind == .never && subject.toolID == NativeCommandTools.toolID { return commandNever }
+        return choice.kind == .allowAlways && subject.service != nil ? serviceAlways : choice.kind.rawValue
     }
 
     static func kind(wire: String) -> NativeCardChoiceKind? {
-        wire == commandNever ? .never : NativeCardChoiceKind(rawValue: wire)
+        switch wire {
+        case commandNever: return .never
+        case serviceAlways: return .allowAlways
+        default: return NativeCardChoiceKind(rawValue: wire)
+        }
     }
+
+    static func confirmedWire(_ confirmed: ServiceAllowConfirmed) -> String { serviceAlways + ":" + confirmed.digest }
+
+    static func split(_ wire: String) -> (choice: String, confirmed: ServiceAllowConfirmed?) {
+        let lead = serviceAlways + ":"
+        guard wire.hasPrefix(lead), wire.count > lead.count else { return (wire, nil) }
+        return (serviceAlways, ServiceAllowConfirmed(digest: String(wire.dropFirst(lead.count))))
+    }
+
+    static func confirmation(_ kind: NativeCardChoiceKind, subject: NativeCardSubject) -> ServiceAllowConfirm? {
+        kind == .allowAlways ? subject.service.map(ServiceAllowConfirm.tool) : nil
+    }
+
+    static func earlierWires(_ subject: NativeCardSubject) -> [String] {
+        subject.service != nil && subject.action == .serviceChanges && !subject.alwaysAsks ? [NativeCardChoiceKind.allowHere.rawValue] : []
+    }
+
+    static func alwaysTitle(_ service: NativeServiceTool) -> String { "Always allow \(service.tool) everywhere" }
+    static func everything(_ service: NativeServiceTool) -> String { "Everything it can do in \(service.service)" }
 
     static let declineMenu = true
 
@@ -108,7 +134,7 @@ enum NativeCardChoices {
         case NativeCardChoiceKind.allowOnce.rawValue: return "Allow once"
         case NativeCardChoiceKind.allowHere.rawValue: return "Always allow for this"
         case NativeCardChoiceKind.allowSchedule.rawValue: return "Always allow for this schedule"
-        case NativeCardChoiceKind.allowAlways.rawValue: return "Always allow everywhere"
+        case NativeCardChoiceKind.allowAlways.rawValue, serviceAlways: return "Always allow everywhere"
         case NativeCardChoiceKind.never.rawValue: return "Never allow it for this"
         case commandNever: return "Never run commands for this"
         case NativeCardChoiceKind.decline.rawValue: return "Decline"
@@ -124,7 +150,7 @@ enum NativeCardChoices {
             let names = list(folders.map { name($0.value) })
             return subject.action == .trash ? "Moving things in \(names) to the Trash" : "Edits in \(names)"
         case .sendTargets(let targets): return "Messages to " + list(targets.map(\.value))
-        case .wholeTool: return "\(subject.toolTitle), every time"
+        case .wholeTool: return subject.service.map(everything) ?? "\(subject.toolTitle), every time"
         }
     }
 
@@ -201,6 +227,11 @@ enum NativeCardChoices {
             never = NativeCardChoice(kind: .never, title: "Never run commands \(place.neverWords)")
         case .wholeTool:
             standing = standing && remembers(subject)
+            if let service = subject.service {
+                let never = NativeCardChoice(kind: .never, title: "Never allow \(service.tool) \(place.neverWords)")
+                let always = NativeCardChoice(kind: .allowAlways, title: alwaysTitle(service))
+                return [decline] + (service.fits ? [never] : []) + (standing && service.fits ? [always] : []) + [once]
+            }
         case .folders, .sendTargets:
             break
         }
@@ -275,7 +306,7 @@ enum NativeCardChoices {
 
     static func records(_ kind: NativeCardChoiceKind, subject: NativeCardSubject, place: NativeCardPlace, originMessageID: String?,
                         originToolCallID: String? = nil, now: Date = Date()) -> [NativeRuleRecord] {
-        guard kind.saves, offered(subject, place: place).contains(where: { $0.kind == kind }),
+        guard kind.saves, offered(subject, place: place).contains(where: { $0.kind == kind }) || earlierWires(subject).contains(kind.rawValue),
               let scope = scope(kind, place: place) else { return [] }
         let effect: NativeRuleEffect = kind == .never ? .forbid : .allow
         func record(_ action: NativeActionClass?, tool: String?, target: NativeRuleTarget?, statement: String) -> NativeRuleRecord {
@@ -294,12 +325,12 @@ enum NativeCardChoices {
             case .sendTargets(let targets):
                 return targets.map { record(subject.action, tool: nil, target: $0, statement: "Never allow sending to \($0.value)") }
             case .wholeTool:
-                return [record(subject.action, tool: subject.toolID, target: nil, statement: "Never allow: \(subject.toolTitle)")]
+                return [record(subject.action, tool: subject.toolID, target: nil, statement: "Never allow: \(subject.service?.words ?? subject.toolTitle)")]
             case .none:
                 return []
             }
         }
-        let statement = covered == .wholeTool ? "\(lead(kind, place: place)): \(subject.toolTitle)" : "\(lead(kind, place: place)) \(covers(subject) ?? "this")"
+        let statement = covered == .wholeTool ? "\(lead(kind, place: place)): \(subject.service?.words ?? subject.toolTitle)" : "\(lead(kind, place: place)) \(covers(subject) ?? "this")"
         switch covered {
         case .commandPrefix(let prefix):
             return [record(.commands, tool: subject.toolID, target: prefix, statement: statement)]

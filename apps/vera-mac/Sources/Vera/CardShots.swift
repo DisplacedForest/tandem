@@ -34,17 +34,37 @@ enum CardShot {
             let chat = self.chat(variant, store: store)
             content = AnyView(ShotView(store: store, section: .chat, cardChat: chat, width: size.width))
         case "card-command-menus", "card-folder-edit-menus", "card-send-menus", "card-reminder-menus",
-             "card-send-recipient-menus", "card-send-unknown-menus", "card-send-fixed-menus":
+             "card-send-recipient-menus", "card-send-unknown-menus", "card-send-fixed-menus", "card-service-menus":
             size = CGSize(width: 640, height: 420)
             let request = self.chat(String(variant.dropLast("-menus".count)), store: store).confirmation
             let answers = CardAnswers.chat(request)
             content = AnyView(VStack(alignment: .trailing, spacing: 14) {
-                NativeToolConfirmationBar(request: request, actor: "Tandem", onDecision: { _ in }, onChoice: { _ in })
+                NativeToolConfirmationBar(request: request, actor: "Tandem", onDecision: { _ in }, onChoice: { _, _ in })
                 HStack(alignment: .top, spacing: 12) {
                     CardMenuPreview(heading: "Opens from the caret on Decline", items: answers.declineMenu)
                     CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
                 }
             }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
+        case "card-service-confirm", "card-service-confirm-long":
+            size = CGSize(width: 520, height: variant.hasSuffix("long") ? 460 : 260)
+            var tool = IntegrationsShotFixture.changeDefinition(store).service!
+            if variant.hasSuffix("long") { tool.detail = Array(repeating: "Removes an item, or everything of one kind in one place. Anything linked to it is removed too.", count: 5).joined(separator: "\n\n") }
+            content = AnyView(ServiceAllowConfirmSheet(confirm: .tool(tool), onAllow: { _ in }, onCancel: {})
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous)).padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
+        case "card-service-handed-menus":
+            size = CGSize(width: 640, height: 420)
+            content = AnyView(serviceTask(store))
+        case "card-offer-service", "card-offer-service-allowed", "card-offer-service-everywhere":
+            size = CGSize(width: 760, height: 320)
+            let tool = IntegrationsShotFixture.changeDefinition(store)
+            let subject = RuleOfferSubject.tool(id: tool.id, service: tool.service!)
+            let state: NativeRuleOffer.State = variant.hasSuffix("allowed") ? .allowedHere : variant.hasSuffix("everywhere") ? .allowedEverywhere : .waiting
+            var message = Message(role: .assistant, text: "Done.")
+            message.displayBlocks = [.ruleOffer(NativeRuleOffer(id: "shot", subject: subject, state: state))]
+            content = AnyView(VStack(alignment: .leading, spacing: 22) {
+                MessageRow(message: Message(role: .user, text: "Remove the last one."))
+                MessageRow(message: message, onRuleOffer: { _, _, _ in })
+            }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
         case "card-task", "card-task-command", "card-task-asks", "card-asked-work":
             size = CGSize(width: 1180, height: 1040)
             if variant == "card-asked-work" {
@@ -76,7 +96,7 @@ enum CardShot {
             size = CGSize(width: 640, height: 300)
             let answers = CardAnswers.offer()
             content = AnyView(VStack(alignment: .trailing, spacing: 14) {
-                RuleOfferCard(offer: NativeRuleOffer(id: "shot", action: .fileEdits), onAnswer: { _ in })
+                RuleOfferCard(offer: NativeRuleOffer(id: "shot", action: .fileEdits), onAnswer: { _, _ in })
                 HStack(alignment: .top, spacing: 12) {
                     CardMenuPreview(heading: "Opens from the caret on Decline", items: answers.declineMenu)
                     CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
@@ -146,7 +166,7 @@ enum CardShot {
         message.displayBlocks = [.ruleOffer(NativeRuleOffer(id: "shot", action: action, state: state, failed: variant == "card-offer-failed"))]
         return VStack(alignment: .leading, spacing: 22) {
             MessageRow(message: Message(role: .user, text: ask))
-            MessageRow(message: message, onRuleOffer: { _, _ in })
+            MessageRow(message: message, onRuleOffer: { _, _, _ in })
         }
         .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -261,6 +281,19 @@ enum CardShot {
             Message(role: .user, text: ask),
             Message(role: .assistant, text: "", toolActivities: [activity]),
         ], confirmation: request)
+    }
+
+    static func serviceTask(_ store: ChatStore) -> some View {
+        let definition = IntegrationsShotFixture.changeDefinition(store)
+        let subject = NativeCardSubject(action: .serviceChanges, toolID: definition.id, toolTitle: definition.title, service: definition.service)
+        let offered = NativeCardChoices.offered(subject, place: .task(taskID: "t", conversationID: "c", scheduleID: nil))
+        let answers = CardAnswers.task(choices: offered.map { NativeCardChoices.wire($0, subject: subject) }, covers: NativeCardChoices.scope(subject),
+                                       neverTitle: offered.first { $0.kind == .never }?.title, service: definition.service)
+        return HStack(alignment: .top, spacing: 12) {
+            CardMenuPreview(heading: "Opens from the caret on Decline", items: answers.declineMenu)
+            CardMenuPreview(heading: "Opens from the caret on Allow", items: answers.allowMenu)
+        }
+        .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     static func seedTask(command: Bool, asks: Bool = false, store: ChatStore) {

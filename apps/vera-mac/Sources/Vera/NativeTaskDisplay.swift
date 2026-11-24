@@ -191,6 +191,7 @@ struct NativeTaskCardPresentation: Codable, Hashable, Identifiable, Sendable {
     var details: String? = nil
     var covers: String? = nil
     var neverTitle: String? = nil
+    var service: NativeServiceTool? = nil
     var answer: String? = nil
     var why: NativeRuleWhy? = nil
     var stop: NativeTaskStop? = nil

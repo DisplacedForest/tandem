@@ -71,11 +71,12 @@ struct NativeTaskCardView: View {
                 SourcesRow(sources: NativeResearchReportSafety.sources(card.sources), numbered: false)
             }
             if isApproval {
-                CardAnswerRow(answers: CardAnswers.task(choices: card.offeredChoices, covers: card.covers, neverTitle: card.neverTitle),
+                CardAnswerRow(answers: CardAnswers.task(choices: card.offeredChoices, covers: card.covers, neverTitle: card.neverTitle, service: card.service),
                               allowApprove: onDecide != nil, allowDecline: onDecide != nil,
                               onAllow: { answer(NativeCardChoiceKind.allowOnce.rawValue) },
                               onDecline: { answer(NativeCardChoiceKind.decline.rawValue) },
-                              onItem: { answer($0) })
+                              onItem: { answer($0) }, onConfirmed: { _, confirmed in answer(NativeCardChoices.confirmedWire(confirmed)) })
+                    .id(card.details ?? card.id)
             } else if let question = CardQuestion.make(choices: card.offeredChoices,
                                                        stop: card.canCancel && onCancel != nil ? (stopTitle ?? card.stopTitle) : nil,
                                                        answerable: canAnswer) {
@@ -135,7 +136,7 @@ struct NativeDisplayBlocksView: View {
     var onRetry: ((String) -> Void)? = nil
     var onDecide: ((String, String) -> Void)? = nil
     var highlightedTaskID: String? = nil
-    var onRuleOffer: ((String, RuleOfferAnswer) -> Void)? = nil
+    var onRuleOffer: ((String, RuleOfferAnswer, ServiceAllowConfirmed?) -> Void)? = nil
     @State private var openReport: NativeResearchArtifact?
 
     var body: some View {
@@ -165,7 +166,7 @@ struct NativeDisplayBlocksView: View {
                 case .commandRun(let run):
                     NativeCommandRunCard(run: run)
                 case .ruleOffer(let offer):
-                    RuleOfferCard(offer: offer, onAnswer: onRuleOffer.map { action in { action(block.id, $0) } })
+                    RuleOfferCard(offer: offer, onAnswer: onRuleOffer.map { action in { action(block.id, $0, $1) } })
                 case .artifact(let artifact):
                     Button { openReport = artifact } label: {
                         ConversationResultRow(title: artifact.title, action: artifact.openTitle)

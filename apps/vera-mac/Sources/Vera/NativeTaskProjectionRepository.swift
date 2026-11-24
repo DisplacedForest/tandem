@@ -286,7 +286,7 @@ extension LocalChatRepository: NativeTaskProjectionRepository {
             guard let reference = try Self.readTaskReference(db, id: id), !reference.cancelRequested,
                   let snapshot = try Self.readTaskProjection(db, id: id)?.snapshot,
                   snapshot.state == .needsDecision, snapshot.decision?.id == decisionID,
-                  snapshot.decision?.choices.contains(choice) == true else { throw NativeTaskError.invalidResponse }
+                  snapshot.decision?.accepts(choice) == true else { throw NativeTaskError.invalidResponse }
             try db.execute(sql: "UPDATE native_task_projections SET request_generation = request_generation + 1 WHERE reference_id = ?",
                            arguments: [id.uuidString])
             if let row = try Row.fetchOne(db, sql: """

@@ -789,7 +789,7 @@ private struct NativeCompanionRun {
         if case .string(let value)? = arguments["command"], definition.id == NativeCommandTools.toolID { command = value }
         return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
                                  targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
-                                 fixed: definition.fixedDestination, alwaysAsks: definition.demandsConfirmation)
+                                 fixed: definition.fixedDestination, alwaysAsks: definition.demandsConfirmation, service: definition.service)
     }
 
     var resultRoom: NativeCompanionResultRoom {
@@ -817,6 +817,9 @@ private struct NativeCompanionRun {
         let offered = NativeCardChoices.offered(subject, place: cardPlace(authority))
         if offered.contains(where: { $0.kind.saves && $0.kind.approves }), let scope = NativeCardChoices.scope(subject) { extra["covers"] = scope }
         if let never = offered.first(where: { $0.kind == .never }) { extra["never"] = never.title }
+        if let service = subject.service, let data = try? JSONEncoder().encode(service), let object = try? JSONSerialization.jsonObject(with: data) {
+            extra["service"] = object
+        }
         return extra
     }
 
@@ -1432,7 +1435,11 @@ private struct NativeCompanionRun {
     }
 
     func resolve(_ pending: NativeCompanionPending, _ checkpoint: inout NativeCompanionCheckpoint) async throws -> NativeTaskStepResult? {
-        let (action, reply) = try replyAction()
+        let (given, reply) = try replyAction()
+        let (action, confirmed) = given.map { text -> (String?, ServiceAllowConfirmed?) in
+            let parts = NativeCardChoices.split(text)
+            return (parts.choice, parts.confirmed)
+        } ?? (nil, nil)
         switch pending.kind {
         case "retry":
             guard action == "retry" else {
@@ -1474,8 +1481,10 @@ private struct NativeCompanionRun {
                 return cardSubject(asked, askedArguments, action: record.proposal.action)
             }()
             let offered = shown.map { approvalChoices($0, authority: standing) } ?? ["decline", "approve"]
+            let earlier = shown.map { NativeCardChoices.earlierWires($0) } ?? []
             let unchanged = shown.map { NativeCardChoices.signature($0) == pending.coverage } ?? false
-            let honored = bound && (action.map { offered.contains($0) } ?? false)
+            let unconfirmed = chosen.flatMap { kind in shown.flatMap { NativeCardChoices.confirmation(kind, subject: $0) } }.map { !$0.accepts(confirmed) } ?? false
+            let honored = bound && !unconfirmed && (action.map { offered.contains($0) || earlier.contains($0) } ?? false)
             let refused = chosen == .never && honored && unchanged
             if action == "decline" || refused || record.state == .declined {
                 if record.state == .proposed { try environment.ledger.decline(digest: digest, decisionID: try environment.tasks.latestDecisionID(task.id), reply: reply) }

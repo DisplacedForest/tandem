@@ -24,6 +24,7 @@ enum RulesShot {
         store.adoptAssistantName(companion ?? "")
         store.ensureVeraThread()
         store.prepareRuleRecords()
+        if variant == "rules-saved-service" { seedService(store) }
         if variant == "rules-saved" || variant == "rules-saved-kind" || showsMenu { seed(store, folder: directory.appendingPathComponent("Seedlings").path) }
         if variant == "rules-questions-failing" { store.permissionCheckFailures = ChatStore.permissionFailuresBeforeNotice }
         if variant == "rules-saved-kind" { store.addRuleRecord(RuleOffer.record(.fileEdits, conversationID: "rules-greenhouse")) }
@@ -136,6 +137,17 @@ enum RulesShot {
         guard let data = bitmap.representation(using: .png, properties: [:]) else { exit(1) }
         do { try data.write(to: AppLocations.checkedOutput(path)); print("wrote \(path)"); exit(0) }
         catch { exit(1) }
+    }
+
+    static func seedService(_ store: ChatStore) {
+        let evening = Conversation(id: "rules-evening", title: "Evening list", messages: [], updatedAt: Date())
+        store.conversations.insert(evening, at: 0)
+        let definition = IntegrationsShotFixture.changeDefinition(store)
+        let subject = NativeCardSubject(action: .serviceChanges, toolID: definition.id, toolTitle: definition.title, service: definition.service)
+        let place = NativeCardPlace.chat(conversationID: evening.id)
+        for kind in [NativeCardChoiceKind.allowAlways, .never, .allowHere] {
+            for record in NativeCardChoices.records(kind, subject: subject, place: place, originMessageID: nil) { store.addRuleRecord(record) }
+        }
     }
 
     static func seed(_ store: ChatStore, folder: String) {

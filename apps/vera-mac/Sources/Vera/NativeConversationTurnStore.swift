@@ -564,7 +564,7 @@ extension ChatStore {
         return NativeCardSubject(action: action, toolID: definition.id, toolTitle: definition.title,
                                  targets: (definition.ruleSubjects?(arguments) ?? []).flatMap { $0 }, command: command,
                                  governed: definition.governed,
-                                 fixed: definition.fixedDestination, phrase: definition.wantsPhrase, alwaysAsks: definition.alwaysAsks)
+                                 fixed: definition.fixedDestination, phrase: definition.wantsPhrase, alwaysAsks: definition.alwaysAsks, service: definition.service)
     }
 
     func awaitTurnAnswer(_ activity: NativeToolActivity, turn: NativeConversationTurn, subject: NativeCardSubject?, digest: String) async -> NativeCardAnswer {
@@ -644,12 +644,14 @@ extension ChatStore {
     }
 
     func resolveTurnConfirmation(_ messageID: UUID, decision: NativeCardChoiceKind, requestID: String? = nil, token: UUID? = nil,
-                                 byPerson: Bool = true) {
+                                 byPerson: Bool = true, confirmed: ServiceAllowConfirmed? = nil) {
         guard let turn = conversationTurns.first(where: { $0.assistantMessageID == messageID }),
               let execution = turnExecutions[turn.id],
               requestID == nil || turnConfirmations[messageID]?.id == requestID,
               token == nil || turnConfirmationTokens[messageID] == token,
               let continuation = execution.continuation else { return }
+        if let subject = turnConfirmations[messageID]?.subject, let needed = NativeCardChoices.confirmation(decision, subject: subject),
+           !needed.accepts(confirmed) { return }
         execution.continuation = nil
         turnConfirmationTokens[messageID] = nil
         let request = turnConfirmations.removeValue(forKey: messageID)

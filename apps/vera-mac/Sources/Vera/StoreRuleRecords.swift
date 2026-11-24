@@ -156,6 +156,11 @@ extension ChatStore {
         }
     }
 
+    func ruleServiceTools() -> [String: NativeServiceTool] {
+        guard let authority = nativeMCP?.authority else { return [:] }
+        return Dictionary(authority.access.snapshot().flatMap(\.tools).map { ($0.id, authority.serviceTool($0)) }, uniquingKeysWith: { first, _ in first })
+    }
+
     func rulePlaces(for records: [NativeRuleRecord]) -> RulePlaces {
         var places = RulePlaces()
         places.companionThreadID = veraThreadID
@@ -169,6 +174,11 @@ extension ChatStore {
             let spoken = declaration.name.replacingOccurrences(of: "_", with: " ")
             entries.removeAll { $0.id == declaration.id }
             entries.append((id: declaration.id, title: declaration.title, hints: [host, spoken].filter { !$0.isEmpty }))
+        }
+        places.services = ruleServiceTools()
+        for (id, service) in places.services {
+            entries.removeAll { $0.id == id }
+            entries.append((id: id, title: service.words, hints: [service.host ?? ""].filter { !$0.isEmpty }))
         }
         places.tools = RuleRows.toolNames(entries)
         for record in records where !places.contains(record.scope) && ruleScopeExists(record.scope) != false {
@@ -211,9 +221,12 @@ extension ChatStore {
     }
 
     @discardableResult
-    func widenRule(_ row: RuleRow) -> Bool {
+    func widenRule(_ row: RuleRow, confirmed: ServiceAllowConfirmed? = nil) -> Bool {
         guard case .saved(let id) = row.source, row.widens,
               let record = try? nativeRuleRecordStore?.record(id: id), RuleRows.widens(record) else { return false }
+        if record.effect == .allow, RuleRows.wholeServiceTool(record) {
+            guard let needed = RuleRows.confirm(record, places: rulePlaces(for: [record])), needed.accepts(confirmed) else { return false }
+        }
         return updateRuleRecord(id: id) { $0.scope = .everywhere } != nil
     }
 

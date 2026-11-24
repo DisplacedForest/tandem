@@ -68,7 +68,7 @@ Discovery lists every tool the service offers, as it describes them. A tool with
 
 The persistent workspace offers only reads, never changes. A task whose MCP authorization became stale after disconnect or a permission change stays refused on retry. Start a new explicitly approved task after reconnecting.
 
-A change runs only as the Make changes through connected services rule allows, with the same cards and refusals as other changes, and is never sent twice on its own. Changing a provider or execution path does not authorize a different tool, create a memory store, or replace the Python task authority.
+A change runs only as the Make changes through connected services rule allows, with the same cards and refusals as other changes, and is never sent twice on its own. Always allowing a tool everywhere is saved only after a confirm that shows the service's own description of it. Changing a provider or execution path does not authorize a different tool, create a memory store, or replace the Python task authority.
 
 ## The list in Public
 
