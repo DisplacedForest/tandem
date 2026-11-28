@@ -340,7 +340,7 @@ extension SelfTest {
             let wire = try await TaskLimitsWire(pieces: pieces, closes: false)
             defer { wire.stop() }
             do {
-                _ = try await limitsComplete(wire, job: limitsJob())
+                _ = try await limitsComplete(wire, job: limitsJob(), limits: NativeTaskTransportLimits(connectAndSend: 10, firstReply: 10, replyIdle: 10, request: 60))
                 throw NativeTaskFixture.Failure.assertion("\(what) must fail")
             } catch let failure as NativeTaskGenerationFailure {
                 try require(failure.code == "response_too_large", "\(what) is too large: \(failure.code)")
@@ -350,13 +350,13 @@ extension SelfTest {
         try await tooLarge([.init(at: 0, bytes: opening + Data(repeating: 97, count: cap + 1024))], "An unterminated data line over the cap")
         try await tooLarge([.init(at: 0, bytes: TaskLimitsWire.event(["content": String(repeating: "b", count: cap + 1024)]))],
                            "A single event over the cap")
-        let thinking = (0..<12).map { index in
+        let thinking = (0..<(cap / 100_000 + 2)).map { index in
             TaskLimitsWire.Piece(at: Double(index) * 0.02, bytes: TaskLimitsWire.event(["reasoning_content": String(repeating: "r", count: 100_000)]))
         }
-        try await tooLarge(thinking + [.init(at: 0.3, bytes: TaskLimitsWire.event(["content": "ok"]))], "Reasoning over the cap")
+        try await tooLarge(thinking + [.init(at: Double(thinking.count) * 0.02, bytes: TaskLimitsWire.event(["content": "ok"]))], "Reasoning over the cap")
         let named = (0..<2).map { index in
             TaskLimitsWire.Piece(at: Double(index) * 0.02, bytes: TaskLimitsWire.event(["tool_calls": [
-                ["index": index, "id": String(repeating: "i", count: 600_000), "function": ["name": "lookup", "arguments": "{}"]]]]))
+                ["index": index, "id": String(repeating: "i", count: cap / 2 + 1024), "function": ["name": "lookup", "arguments": "{}"]]]]))
         }
         try await tooLarge(named, "Call identifiers over the cap")
         let many = TaskLimitsWire.event(["tool_calls": (0...NativeTaskReplyReader.maximumCalls).map { index in
@@ -365,15 +365,19 @@ extension SelfTest {
         try await tooLarge([.init(at: 0, bytes: many)], "More calls than a reply may carry")
 
         let word = "abcdefghi "
-        let batch = (0..<1000).reduce(into: Data()) { data, _ in data.append(TaskLimitsWire.event(["content": word])) }
+        let text = String(repeating: word, count: 1000)
+        let framing = Data((":" + String(repeating: " ", count: cap / 16) + "\n\n").utf8)
+        let batch = framing + TaskLimitsWire.event(["content": text])
+        let batches = 20
         var pieces = [TaskLimitsWire.Piece(at: 0, bytes: TaskLimitsWire.event(["role": "assistant", "content": ""]))]
-        pieces += (0..<16).map { TaskLimitsWire.Piece(at: Double($0) * 0.02, bytes: batch) }
-        pieces += [.init(at: 0.4, bytes: TaskLimitsWire.event([:], finish: "stop")), .init(at: 0.4, bytes: TaskLimitsWire.done)]
+        pieces += (0..<batches).map { TaskLimitsWire.Piece(at: Double($0) * 0.02, bytes: batch) }
+        pieces += [.init(at: 0.5, bytes: TaskLimitsWire.event([:], finish: "stop")), .init(at: 0.5, bytes: TaskLimitsWire.done)]
         let raw = pieces.reduce(0) { $0 + $1.bytes.count }
         let wire = try await TaskLimitsWire(pieces: pieces)
         defer { wire.stop() }
-        let report = try await limitsComplete(wire, job: limitsJob())
-        try require(raw > cap && report.content.utf8.count == 16000 * word.utf8.count && report.content.utf8.count < cap,
+        let report = try await limitsComplete(wire, job: limitsJob(),
+            limits: NativeTaskTransportLimits(connectAndSend: 10, firstReply: 10, replyIdle: 10, request: 60))
+        try require(raw > cap && report.content == String(repeating: text, count: batches) && report.content.utf8.count < cap,
                     "A long report whose stream framing passes the cap still completes: \(raw)")
     }
 

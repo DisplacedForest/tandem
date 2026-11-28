@@ -69,7 +69,8 @@ struct NativeTaskStepResult: Sendable {
 final class NativeTaskStore: Sendable {
     static let maximumJSONBytes = 262144
     static let maximumCheckpointBytes = 720896
-    static let maximumSnapshotBytes = 1048576
+    static let maximumResultBytes = 6_000_000
+    static let maximumSnapshotBytes = 8_000_000
     static let maximumEventBytes = 16384
     static let emptyObject = Data("{}".utf8)
     let database: DatabaseQueue
@@ -264,7 +265,7 @@ final class NativeTaskStore: Sendable {
             throw NativeTaskStoreError.invalid("A decision is required only when waiting for a decision")
         }
         let checkpoint = try Self.canonical(step.checkpoint, limit: Self.maximumCheckpointBytes)
-        let result = try step.result.map { try Self.canonical($0) }
+        let result = try step.result.map { try Self.canonical($0, limit: Self.maximumResultBytes) }
         var decisionData: Data?
         if let decision = step.decision {
             var object = try Self.object(decision)

@@ -255,7 +255,7 @@ final class NativeTaskLocalEngine: Sendable {
         NativeTaskLocalEngine(database: database, workers: { exchange in
             ["research": NativeResearchWorker.make(exchange: exchange, search: search, identity: identity),
              "document": NativeDocumentWorker.make(exchange: exchange, identity: identity),
-             "companion": companion.map { NativeCompanionWorker.make(exchange: exchange, environment: $0.environment(database: database)) }
+             "companion": companion.map { NativeDSHWorker.make(exchange: exchange, environment: $0.environment(database: database)) }
                 ?? companionPlaceholder()]
         })
     }

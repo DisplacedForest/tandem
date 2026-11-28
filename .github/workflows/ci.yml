@@ -46,6 +46,11 @@ jobs:
           path: apps/vera-mac/.build
           key: spm-${{ runner.os }}-${{ github.repository }}-${{ hashFiles('apps/vera-mac/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-${{ github.repository }}-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.3"
+      - name: Install execution runtime
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix services/dsh-runtime
       - name: Build
         working-directory: apps/vera-mac
         run: swift build
@@ -53,7 +58,8 @@ jobs:
         working-directory: apps/vera-mac
         run: |
           if [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ]; then
-            .build/debug/Vera --selftest
+            .build/debug/Tandem --selftest
+            TANDEM_DSH_SELFTEST=1 .build/debug/Tandem --selftest
           else
             echo "runner macOS $(sw_vers -productVersion) is below the app's macOS 26 floor; the build is the check here and the selftest runs on deployments"
           fi
@@ -97,3 +103,20 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_words_ratchet.py'
       - name: Check the data folder resolver
         run: python3 scripts/data-folder-check.py
+
+  dsh-runtime:
+    name: dsh-runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.3"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Runtime contracts
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund --prefix services/dsh-runtime
+          npm test --prefix services/dsh-runtime
+          python3 -m unittest discover -s scripts/tests -p 'test_runtime_package.py' -v

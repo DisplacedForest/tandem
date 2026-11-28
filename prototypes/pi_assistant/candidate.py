@@ -12,7 +12,7 @@ def main() -> int:
     parser.add_argument('--contract-test', action='store_true')
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
-    binary = repo / 'apps/vera-mac/.build/debug/Vera'
+    binary = repo / 'apps/vera-mac/.build/debug/Tandem'
     node = shutil.which('node')
     if not binary.is_file() or not node:
         print('Build with mise run mac-build and configure Node before opening the candidate.', file=sys.stderr)

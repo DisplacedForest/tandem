@@ -323,6 +323,11 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
 @MainActor
 enum SelfTest {
     static func run() async {
+        if ProcessInfo.processInfo.environment["TANDEM_DSH_SELFTEST"] == "1" {
+            do { try await NativeDSHSelftest.run() }
+            catch { print("DSH SELFTEST FAILED: \(error)"); exit(1) }
+            exit(0)
+        }
         if let probe = ProcessInfo.processInfo.environment[OwnSettingsSelftest.probeSetting] { OwnSettingsSelftest.probe(probe) }
         if ProcessInfo.processInfo.environment["VERA_OWN_SETTINGS_SELFTEST"] == "1" {
             do { try AppLocationsSelftest.run(); try await OwnSettingsSelftest.run(); print("OWN SETTINGS SELFTEST OK") }

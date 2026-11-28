@@ -420,6 +420,18 @@ struct NativeKeychainOperations {
     var update: (CFDictionary, CFDictionary) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemUpdate($0, $1) }
     var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemAdd($0, $1) }
     var delete: (CFDictionary) -> OSStatus = { AppLocations.refuseRealKeychain(); return SecItemDelete($0) }
+    var refreshLabel: (CFDictionary) -> OSStatus = { query in
+        AppLocations.refuseRealKeychain()
+        var matching = query as! [String: Any]
+        matching.removeValue(forKey: kSecReturnData as String)
+        matching.removeValue(forKey: kSecMatchLimit as String)
+        matching[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        matching[kSecUseAuthenticationContext as String] = context
+        return SecItemUpdate(matching as CFDictionary, [kSecAttrLabel as String: "Tandem model API key"] as CFDictionary)
+    }
+
 }
 
 protocol NativeCredentialStore {
@@ -497,6 +509,7 @@ struct KeychainNativeCredentialStore: NativeCredentialStore {
         guard status == errSecSuccess else { throw NativeCredentialError.read }
         guard let data = result as? Data,
               let value = String(data: data, encoding: .utf8) else { throw NativeCredentialError.format }
+        _ = operations.refreshLabel(query as CFDictionary)
         return value
     }
 
@@ -507,7 +520,7 @@ struct KeychainNativeCredentialStore: NativeCredentialStore {
             guard status == errSecSuccess || status == errSecItemNotFound else { throw NativeCredentialError.removal }
             return
         }
-        let attributes = [kSecValueData as String: Data(value.utf8)]
+        let attributes: [String: Any] = [kSecValueData as String: Data(value.utf8), kSecAttrLabel as String: "Tandem model API key"]
         let status = operations.update(query as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound { try addIfAbsent(value, for: profileID) }
         else if status != errSecSuccess { throw NativeCredentialError.write }
@@ -516,6 +529,7 @@ struct KeychainNativeCredentialStore: NativeCredentialStore {
     func addIfAbsent(_ value: String, for profileID: String) throws {
         var item = query(for: profileID)
         item[kSecValueData as String] = Data(value.utf8)
+        item[kSecAttrLabel as String] = "Tandem model API key"
         let status = operations.add(item as CFDictionary, nil)
         if status == errSecDuplicateItem { throw NativeCredentialError.migrationConflict }
         guard status == errSecSuccess else { throw NativeCredentialError.write }

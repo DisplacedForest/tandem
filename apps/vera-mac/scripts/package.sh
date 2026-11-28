@@ -4,7 +4,7 @@ set -euo pipefail
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$APP_ROOT"
 
-NAME="Vera"
+NAME="Tandem"
 DISPLAY_NAME="Tandem"
 BUNDLE_NAME="Tandem"
 BUNDLE_ID="app.vera.mac"
@@ -27,17 +27,16 @@ APP="$BUILD_DIR/$BUNDLE_NAME.app"
 VERSION="$(cat "$APP_ROOT/../../VERSION" 2>/dev/null || cat VERSION 2>/dev/null || echo 0.0.0)"
 BUILD_NUM="$(git rev-parse --short HEAD 2>/dev/null || echo 0)"
 
-echo "==> Vera $VERSION ($BUILD_NUM)"
+echo "==> Tandem $VERSION ($BUILD_NUM)"
 
-# 1. Icon: vera-icon.png -> Vera.icns
 echo "==> Icon"
-ICONSET="$BUILD_DIR/Vera.iconset"
+ICONSET="$BUILD_DIR/Tandem.iconset"
 rm -rf "$ICONSET" && mkdir -p "$ICONSET"
 for size in 16 32 128 256 512; do
   sips -z "$size" "$size"       "$LOGO" --out "$ICONSET/icon_${size}x${size}.png"      >/dev/null
   sips -z $((size*2)) $((size*2)) "$LOGO" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
 done
-iconutil -c icns "$ICONSET" -o "$BUILD_DIR/Vera.icns"
+iconutil -c icns "$ICONSET" -o "$BUILD_DIR/Tandem.icns"
 
 RUNTIME_STAGE="$(mktemp -d "$BUILD_DIR/.runtime.XXXXXX")"
 SEAL="Sources/Vera/VeraPackagedRuntimeSeal.swift"
@@ -50,7 +49,7 @@ RUNTIME_SHA="$(shasum -a 256 "$RUNTIME_STAGE/PiRuntime/manifest.json" | cut -d '
 
 # 2. Release build
 echo "==> swift build -c release"
-swift build -c release -Xswiftc -DVERA_PACKAGED_RUNTIME
+swift build -c release --product "$NAME" -Xswiftc -DVERA_PACKAGED_RUNTIME
 
 BIN="$(swift build -c release --show-bin-path)"
 
@@ -59,7 +58,7 @@ echo "==> Assemble $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/$NAME" "$APP/Contents/MacOS/$NAME"
-cp "$BUILD_DIR/Vera.icns" "$APP/Contents/Resources/Vera.icns"
+cp "$BUILD_DIR/Tandem.icns" "$APP/Contents/Resources/Tandem.icns"
 for b in "$BIN"/*.bundle; do [ -e "$b" ] && cp -R "$b" "$APP/Contents/Resources/"; done
 
 cp -R "$RUNTIME_STAGE/PiRuntime" "$APP/Contents/Resources/PiRuntime"
@@ -73,7 +72,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleExecutable</key><string>$NAME</string>
-  <key>CFBundleIconFile</key><string>Vera</string>
+  <key>CFBundleIconFile</key><string>Tandem</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD_NUM</string>
@@ -88,7 +87,7 @@ PLIST
 mkdir -p "$APP/Contents/Helpers"
 xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx26.0" \
   Sources/Vera/SafeAppReplacement.swift scripts/app-replacement/main.swift \
-  -o "$APP/Contents/Helpers/VeraAppReplacement"
+  -o "$APP/Contents/Helpers/TandemAppReplacement"
 
 "$PYTHON" "$APP_ROOT/scripts/sign.py" "$APP"
 "$PYTHON" "$APP_ROOT/scripts/package_runtime.py" --verify --destination "$APP/Contents/Resources/PiRuntime" --manifest-sha256 "$RUNTIME_SHA"

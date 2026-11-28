@@ -9,7 +9,7 @@ A successful replacement prints a `receipt.json` path beneath a private `.Vera-r
 Packaged apps include a standalone repair command. Inspection needs no compiler or checkout:
 
 ```sh
-/Applications/Tandem.app/Contents/Helpers/VeraAppReplacement --inspect /path/to/receipt.json
+/Applications/Tandem.app/Contents/Helpers/TandemAppReplacement --inspect /path/to/receipt.json
 ```
 
 For development builds, compile the same command from the repository root:
@@ -22,10 +22,10 @@ xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx26.0" \
 /tmp/vera-app-replacement --inspect /path/to/receipt.json
 ```
 
-To restore a retained app, quit Vera and run:
+To restore a retained app, quit Tandem and run:
 
 ```sh
-/Applications/Tandem.app/Contents/Helpers/VeraAppReplacement --rollback /path/to/receipt.json
+/Applications/Tandem.app/Contents/Helpers/TandemAppReplacement --rollback /path/to/receipt.json
 ```
 
 Rollback requires the current installation and retained app to match that receipt and pass signature validation. It uses another atomic exchange and retains the displaced replacement under a new receipt. A receipt marked `changed` cannot be used to roll back. Each successful replacement or rollback keeps only the rollback directory it just wrote. It removes an older rollback directory only when its receipt is a regular file that names the same installed app and the directory holds nothing besides that receipt and the retained app. It also removes a leftover from an interrupted install that holds only a partial copy of that app. Directories for a different app, directories with anything else in them, empty directories, links, and anything it cannot identify are left alone. A failed replacement removes nothing, so the last good rollback copy stays. Keep your own backup of any earlier version you may want back.

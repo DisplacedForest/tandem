@@ -168,13 +168,62 @@ def verify(root: Path, expected: str) -> None:
         raise ValueError('Runtime inventory mismatch')
 
 
+def assemble_npm(source: Path, destination: Path, cache: Path, offline: bool) -> list[dict[str, object]]:
+    npm = json.loads((source / 'package-lock.json').read_text())
+    package = json.loads((source / 'package.json').read_text())
+    if npm.get('lockfileVersion') != 3 or npm.get('packages', {}).get('', {}).get('dependencies', {}) != package.get('dependencies', {}):
+        raise ValueError('Package manifest and lock dependencies differ')
+    audit = []
+    for name, dependency in sorted(npm['packages'].items(), key=lambda pair: (pair[0].count('/'), pair[0])):
+        if not name:
+            continue
+        relative(name)
+        if not name.startswith('node_modules/') or not dependency.get('license') or dependency.get('link'):
+            raise ValueError('Unlicensed or unexpected npm dependency')
+        if not isinstance(dependency.get('version'), str) or not dependency['version']:
+            raise ValueError('Unpinned npm dependency')
+        algorithm, encoded = dependency['integrity'].split('-', 1)
+        if algorithm != 'sha512':
+            raise ValueError('Expected SHA-512 npm integrity')
+        digest = base64.b64decode(encoded, validate=True)
+        if len(digest) != 64:
+            raise ValueError('Invalid SHA-512 npm integrity')
+        archive = download(dependency['resolved'], digest.hex(), cache, offline, algorithm)
+        target = destination / name
+        if target.exists():
+            if target.is_symlink() or not target.is_dir():
+                raise ValueError('Invalid nested dependency directory')
+            shutil.rmtree(target)
+        with tarfile.open(archive) as bundle:
+            prefix = relative(bundle.getmembers()[0].name).parts[0]
+        extract_tar(archive, target, prefix)
+        audit.append({'path': name, 'version': dependency['version'], 'license': dependency['license'],
+                      'integrity': dependency['integrity'], 'scripts_executed': False})
+    return audit
+
+
+def copy_application(source: Path, destination: Path) -> list[str]:
+    package = json.loads((source / 'package.json').read_text())
+    files = package.get('files')
+    if not isinstance(files, list) or not files or not all(isinstance(name, str) for name in files):
+        raise ValueError('Application requires an explicit source file list')
+    names = sorted(set(['package.json', 'package-lock.json', *files]))
+    for name in names:
+        relative(name)
+        path = source / name
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(source.resolve()):
+            raise ValueError('Invalid application source file')
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+    return names
+
+
 def assemble(destination: Path, cache: Path, offline: bool) -> dict:
     if destination.exists():
         raise ValueError('Runtime destination already exists')
     lock_path = APP / 'runtime/runtime-lock.json'
     lock = json.loads(lock_path.read_text())
-    npm_path = REPO / 'prototypes/pi_assistant/package-lock.json'
-    npm = json.loads(npm_path.read_text())
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.pi-runtime-', dir=destination.parent) as temporary:
         stage = Path(temporary) / 'PiRuntime'
@@ -211,30 +260,15 @@ def assemble(destination: Path, cache: Path, offline: bool) -> dict:
             target = stage / 'repo' / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO / name, target)
-        npm_audit = []
-        for name, package in sorted(npm['packages'].items(), key=lambda pair: (pair[0].count('/'), pair[0])):
-            if not name:
-                continue
-            relative(name)
-            if not name.startswith('node_modules/') or not package.get('license'):
-                raise ValueError('Unlicensed or unexpected npm dependency')
-            algorithm, encoded = package['integrity'].split('-', 1)
-            if algorithm != 'sha512':
-                raise ValueError('Expected SHA-512 npm integrity')
-            archive = download(package['resolved'], base64.b64decode(encoded, validate=True).hex(), cache, offline, algorithm)
-            target = stage / 'repo/prototypes/pi_assistant' / name
-            if target.exists():
-                if target.is_symlink() or not target.is_dir():
-                    raise ValueError('Invalid nested dependency directory')
-                shutil.rmtree(target)
-            with tarfile.open(archive) as bundle:
-                prefix = relative(bundle.getmembers()[0].name).parts[0]
-            extract_tar(archive, target, prefix)
-            npm_audit.append({'path': name, 'version': package['version'], 'license': package['license'], 'integrity': package['integrity'], 'scripts_executed': False})
+        npm_audit = assemble_npm(REPO / 'prototypes/pi_assistant', stage / 'repo/prototypes/pi_assistant', cache, offline)
+        dsh_source = REPO / 'services/dsh-runtime'
+        dsh_target = stage / 'repo/services/dsh-runtime'
+        copy_application(dsh_source, dsh_target)
+        dsh_audit = assemble_npm(dsh_source, dsh_target, cache, offline)
         shutil.copyfile(lock_path, stage / 'runtime-lock.json')
         shutil.copyfile(APP / 'runtime/NOTICE.md', stage / 'NOTICE.md')
         materialize_links(stage)
-        manifest = {'schema': 1, 'platform': lock['platform'], 'python': 'python/bin/python3', 'node': 'node/bin/node', 'repo': 'repo', 'npm': npm_audit, 'files': validate_tree(stage)}
+        manifest = {'schema': 1, 'platform': lock['platform'], 'python': 'python/bin/python3', 'node': 'node/bin/node', 'repo': 'repo', 'npm': npm_audit, 'dsh_npm': dsh_audit, 'files': validate_tree(stage)}
         (stage / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True, separators=(',', ':')) + '\n')
         stage.rename(destination)
     return manifest

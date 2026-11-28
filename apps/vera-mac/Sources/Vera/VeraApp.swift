@@ -7,9 +7,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        // Only force the Dock/cmd-tab icon when running UNBUNDLED (`swift run`), where there's
-        // no .icns. In a packaged .app the bundle's Vera.icns is the correct, mipmapped icon —
-        // overriding it with the raw full-bleed PNG is what made the Dock icon look wrong.
         let bundled = Bundle.main.bundleURL.pathExtension == "app"
         if !bundled, let icon = Brand.icon { NSApp.applicationIconImage = icon }
     }

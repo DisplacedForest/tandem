@@ -34,8 +34,13 @@ struct NativeTaskProvider {
                ["none", "minimal", "low", "medium", "high"].contains(effort) { reasoning["effort"] = .string(effort) }
             if !reasoning.isEmpty { options.topLevel.append(.init(key: "reasoning", value: .object(reasoning), source: .saved)) }
         }
-        if let limit = NativeTaskConfiguration.outputLimit(config.options) {
+        if let limit = NativeTaskConfiguration.outputLimit(config.options) ?? (job.phase.hasPrefix("work-") ? NativeDSHWorker.defaultOutputTokens(contextTokens: binding.contextTokens) : nil) {
             options.topLevel.append(.init(key: "max_tokens", value: .number(Double(limit)), source: .saved))
+        }
+        if let effort = config.options.topLevel.first(where: { $0.key == "reasoning_effort" }),
+           case .string(let value) = effort.value,
+           ["none", "minimal", "low", "medium", "high", "xhigh"].contains(value) {
+            options.topLevel.append(effort)
         }
         options.kwargs = config.options.kwargs
         let bounded = NativeChatConfig(baseURL: binding.provider.base, apiKey: config.apiKey,
@@ -51,7 +56,7 @@ struct NativeTaskProvider {
         if job.toolChoice == "none", job.tools != nil, let body = request.httpBody,
            var object = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
             object["tool_choice"] = "none"
-            request.httpBody = try JSONSerialization.data(withJSONObject: object)
+            request.httpBody = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
         }
         let remaining = try job.reducingDeadline(by: nativeTaskSeconds(started.duration(to: .now))).deadlineSeconds
         request.timeoutInterval = remaining
@@ -176,13 +181,13 @@ struct NativeTaskProvider {
         guard snapshot.toolCalls.isEmpty else { throw failure("response_tool_calls") }
         guard snapshot.finishReason == "stop" else { throw failure("response_finish") }
         guard !snapshot.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw failure("response_empty") }
-        guard snapshot.content.utf8.count <= 262144 else { throw failure("response_too_large") }
+        guard snapshot.content.utf8.count <= NativeTaskGenerationCompletion.maximumBytes else { throw failure("response_too_large") }
         return snapshot.content
     }
 }
 
 struct NativeTaskReplyReader {
-    static let maximumBytes = 1048576
+    static let maximumBytes = NativeTaskGenerationCompletion.maximumBytes
     static let maximumCalls = 64
 
     private enum Mode { case undecided, body, events }

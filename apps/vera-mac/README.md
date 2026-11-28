@@ -9,9 +9,9 @@ the Pulse header; the Plugins manager lives in Settings.
 ```bash
 swift run                       # dev build + launch
 swift build                     # compile check
-.build/debug/Vera --selftest    # headless: native transport, persistence, importers, stores
-.build/debug/Vera --shot out.png --view chat|pulse|memory|agentic|veins|settings-plugins|settings|settings-advanced|onboarding   # render a screenshot
-.build/debug/Vera --dump-context   # print the assembled per-request system context, section by section
+.build/debug/Tandem --selftest    # headless: native transport, persistence, importers, stores
+.build/debug/Tandem --shot out.png --view chat|pulse|memory|agentic|veins|settings-plugins|settings|settings-advanced|onboarding   # render a screenshot
+.build/debug/Tandem --dump-context   # print the assembled per-request system context, section by section
 ```
 Config lives in `~/.vera/config.json`, editable in-app via Settings (⌘,): `model_base`,
 `model_api_key`, `model`, `vera_api_base`, and `owner_name`. The model base must
@@ -65,14 +65,16 @@ chip above the composer.
 
 ## Package & install
 
-Packaging requires Python 3.14 or later on the build machine. `package.sh` bundles an arm64 Python 3.12 runtime, Node 22 and the pinned Pi 1.0.4 SDK, so the packaged Pi experiment does not need a checkout or developer tools on its destination Mac. This app requires macOS 26 or later. Normal launch still opens the existing native app; bundling the runtime does not enable a live Pi assistant automatically.
+Packaging requires Python 3.14 or later on the build machine. `package.sh` bundles an arm64 Python 3.12 runtime, Node 24, the pinned Pi 1.0.4 SDK and the DSH execution libraries, so the packaged Pi experiment does not need a checkout or developer tools on its destination Mac. This app requires macOS 26 or later. Normal launch still opens the existing native app; bundling the runtime does not enable a live Pi assistant automatically.
 
-Runtime inputs are pinned in `runtime/runtime-lock.json` and the Pi npm lock. Assembly verifies every download and never executes package installation scripts. `VERA_RUNTIME_CACHE` chooses the download cache; `VERA_RUNTIME_OFFLINE=1` requires all pinned inputs already present. The bundle includes dependency notices and a complete inventory whose digest is compiled into the executable. Startup checks this seal and every runtime file before execution. Developer-path overrides remain available only as a complete `--repo`, `--python`, `--node` set; ordinary development builds cannot implicitly load a bundled runtime.
+Runtime inputs are pinned in `runtime/runtime-lock.json` and the Pi and DSH npm locks. Assembly verifies every download and never executes package installation scripts. `VERA_RUNTIME_CACHE` chooses the download cache; `VERA_RUNTIME_OFFLINE=1` requires all pinned inputs already present. The bundle includes dependency notices and a complete inventory whose digest is compiled into the executable. Startup checks this seal and every runtime file before execution. Developer-path overrides remain available only as a complete `--repo`, `--python`, `--node` set; ordinary development builds cannot implicitly load a bundled runtime.
+
+General companion work uses the bundled DSH libraries through app-owned model and tool adapters. The package carries its exact dependency tree and needs no global DSH installation. For a source build, install `services/dsh-runtime` dependencies from the repository root with `npm ci --ignore-scripts --no-audit --no-fund --prefix services/dsh-runtime` and make Node 24.9 or newer available on PATH. The app never installs packages at launch.
 
 The packaged headless fixture uses a fresh explicit data directory and injected credentials and model responses:
 
 ```sh
-build/Tandem.app/Contents/MacOS/Vera --pi-candidate-contract --root /tmp/vera-packaged-fixture
+build/Tandem.app/Contents/MacOS/Tandem --pi-candidate-contract --root /tmp/vera-packaged-fixture
 ```
 
 For checkout-denied cancellation, real process-kill recovery and integrity checks, copy the package outside the checkout and run the portable contract from the repository with the development Python environment:

@@ -48,8 +48,8 @@ final class TaskReplyCauseWire: URLProtocol, @unchecked Sendable {
         case "empty": return (200, choice(" \n ", finish: "stop"))
         case "unreadable": return (200, Data("not a reply".utf8))
         case "error": return (200, (try? JSONSerialization.data(withJSONObject: ["error": ["message": "Upstream failed", "code": 500]])) ?? Data())
-        case "large": return (200, choice(String(repeating: "a", count: 262145), finish: "stop"))
-        case "huge": return (200, Data(repeating: 32, count: 1048600))
+        case "large": return (200, choice(String(repeating: "a", count: NativeTaskGenerationCompletion.maximumBytes + 1), finish: "stop"))
+        case "huge": return (200, Data(repeating: 32, count: NativeTaskGenerationCompletion.maximumBytes + 100))
         default: return (503, Data("{}".utf8))
         }
     }
@@ -524,7 +524,7 @@ extension SelfTest {
         ("empty", "response_empty", 200, "stop"),
         ("unreadable", "response_unreadable", 200, nil),
         ("error", "provider_error", 200, nil),
-        ("large", "response_too_large", 200, "stop"),
+        ("large", "response_too_large", 200, nil),
         ("huge", "response_too_large", 200, nil),
         ("status", "provider_unavailable", 503, nil),
         ("timeout", "request_timeout", nil, nil),
