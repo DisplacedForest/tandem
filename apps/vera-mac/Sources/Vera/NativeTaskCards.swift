@@ -9,9 +9,11 @@ struct NativeTaskCardView: View {
     var onRetry: (() -> Void)? = nil
     var onDecide: ((String) -> Void)? = nil
     var highlighted = false
+    var companionThread = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if !companionThread {
             Label { Text(statusTitle ?? card.statusTitle) } icon: { InterfaceIconView(icon: card.statusIcon, size: InterfaceIconSize.small) }
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
@@ -20,11 +22,15 @@ struct NativeTaskCardView: View {
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
+            }
+            if companionThread, card.milestone.isEmpty {
+                Text(card.statusTitle).font(.system(size: ConversationMetrics.bodySize))
+            }
             if let stop = card.stoppedStep {
                 StoppedStepView(stop: stop, why: card.why)
             }
-            if !card.milestone.isEmpty, card.stoppedStep == nil, !Self.repeatsStatus(card.milestone, status: statusTitle ?? card.statusTitle) {
-                CompanionLineText(line: card.milestoneLine)
+            if !card.milestone.isEmpty, card.stoppedStep == nil, companionThread || !Self.repeatsStatus(card.milestone, status: statusTitle ?? card.statusTitle) {
+                CompanionLineText(line: milestoneLine)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -44,8 +50,8 @@ struct NativeTaskCardView: View {
                 }
             }
             if let details = card.details, !details.isEmpty, card.status == .needsInput {
-                let block = Text(details)
-                    .font(.system(size: 11, design: .monospaced))
+                let block = Text(plainDetails ? CompanionPermissionText.savedDetails(details, service: card.service?.service) : details)
+                    .font(.system(size: companionThread ? 13 : 11, design: plainDetails ? .default : .monospaced))
                     .foregroundStyle(Theme.textPrimary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -59,7 +65,7 @@ struct NativeTaskCardView: View {
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.bg))
-                .accessibilityLabel("Action details: " + details)
+                .accessibilityLabel("Action details: " + (plainDetails ? CompanionPermissionText.savedDetails(details, service: card.service?.service) : details))
             }
             if let note = card.connectionNote.map(SavedWording.current) {
                 Text(note)
@@ -71,7 +77,7 @@ struct NativeTaskCardView: View {
                 SourcesRow(sources: NativeResearchReportSafety.sources(card.sources), numbered: false)
             }
             if isApproval {
-                CardAnswerRow(answers: CardAnswers.task(choices: card.offeredChoices, covers: card.covers, neverTitle: card.neverTitle, service: card.service),
+                CardAnswerRow(answers: (companionThread || card.isCompanion) && card.service != nil ? CardAnswers() : CardAnswers.task(choices: card.offeredChoices, covers: card.covers, neverTitle: card.neverTitle, service: card.service),
                               allowApprove: onDecide != nil, allowDecline: onDecide != nil,
                               onAllow: { answer(NativeCardChoiceKind.allowOnce.rawValue) },
                               onDecline: { answer(NativeCardChoiceKind.decline.rawValue) },
@@ -95,8 +101,8 @@ struct NativeTaskCardView: View {
         }
         .padding(14)
         .frame(maxWidth: 480, alignment: .leading)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(companionThread ? Theme.assistantBubble : Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: companionThread ? ConversationMetrics.bubbleRadius : 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .stroke(highlighted ? Theme.sage : Theme.hairline, lineWidth: highlighted ? 2 : 1))
         .animation(.easeOut(duration: 0.3), value: highlighted)
@@ -109,6 +115,15 @@ struct NativeTaskCardView: View {
             return value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }
         return plain(line) == plain(status)
+    }
+
+    private var plainDetails: Bool { companionThread || card.isCompanion || card.service != nil }
+
+    private var milestoneLine: CompanionLine {
+        if plainDetails, isApproval, let service = card.service {
+            return .literal(CompanionPermissionText.question(service: service.service, action: service.tool, details: card.details))
+        }
+        return card.milestoneLine
     }
 
     private var isApproval: Bool {
@@ -130,6 +145,7 @@ struct NativeTaskCardView: View {
 
 struct NativeDisplayBlocksView: View {
     let blocks: [NativeDisplayBlock]
+    var companionThread = false
     var engineConfigured = true
     var connectedTaskIDs: Set<String>? = nil
     var onCancel: ((String) -> Void)? = nil
@@ -149,7 +165,8 @@ struct NativeDisplayBlocksView: View {
                         onCancel: connected(card) ? onCancel.map { action in { action(card.id) } } : nil,
                         onRetry: connected(card) ? onRetry.map { action in { action(card.id) } } : nil,
                         onDecide: connected(card) ? onDecide.map { action in { action(card.id, $0) } } : nil,
-                        highlighted: highlightedTaskID == card.id)
+                        highlighted: highlightedTaskID == card.id,
+                        companionThread: companionThread)
                 case .link(let link):
                     if let destination = link.destination {
                         Link(destination: destination) {

@@ -163,9 +163,15 @@ enum NativeTaskDelivery {
         } else {
             text = body
         }
-        return delivered(text: text, kind: NativeDeliveredMessage.result,
-                         delivery: NativeDeliveredMessage(referenceID: id, kind: NativeDeliveredMessage.result,
-                                                          title: title ?? "", finished: true), now: now)
+        var message = delivered(text: text, kind: NativeDeliveredMessage.result,
+                                delivery: NativeDeliveredMessage(referenceID: id, kind: NativeDeliveredMessage.result,
+                                                                 title: title ?? "", finished: true), now: now)
+        if workerType == "companion", let weather = result.weatherResult {
+            message.toolActivities = [NativeToolActivity(id: id + "-weather", toolID: NativeWeatherTools.toolID,
+                name: NativeWeatherTools.toolName, title: "Check the weather", round: 1, request: "{}", result: weather,
+                state: .succeeded, confirmationRequired: false)]
+        }
+        return message
     }
 
     static func lineMessage(referenceID: UUID, text: String, now: Date) -> Message {

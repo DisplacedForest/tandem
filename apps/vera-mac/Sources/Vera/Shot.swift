@@ -399,7 +399,9 @@ enum Shot {
         } else if view.hasPrefix("integrations-manage"), let seed = integrationsSeed {
             content = AnyView(
                 IntegrationsManageSheet(target: IntegrationsManageTarget(id: view == "integrations-manage-reports" ? IntegrationsShotFixture.reportsID : IntegrationsShotFixture.codeID),
-                                        filled: view == "integrations-manage-reports" ? IntegrationsShotFixture.reportsRow : IntegrationsShotFixture.codeRow) { _ in }
+                                        filled: view == "integrations-manage-reports"
+                                            ? seed.config.nativeMCPServerRows.first { $0["id"] as? String == IntegrationsShotFixture.reportsID } ?? IntegrationsShotFixture.reportsRow
+                                            : IntegrationsShotFixture.codeRow) { _ in }
                     .background(Theme.surface)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))

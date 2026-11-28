@@ -35,6 +35,7 @@ enum NativeDSHSelftest {
     }
 
     static func run() async throws {
+        try await CompanionDelegationSelftest.run()
         try NativeDSHRuntimePathsSelftest.run()
         try require(NativeDSHWorker.defaultOutputTokens(contextTokens: 32768) == 16384, "Small contexts retain input capacity")
         try require(NativeDSHWorker.defaultOutputTokens(contextTokens: 262144) == 65536, "Large contexts retain the full output allowance")

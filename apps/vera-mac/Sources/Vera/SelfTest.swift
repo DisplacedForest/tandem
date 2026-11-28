@@ -438,6 +438,7 @@ enum SelfTest {
         runPure()
         runNativeSettings()
         runModelParameters()
+        do { try await NativeWeatherSelftest.run() } catch { print("SELFTEST ERROR: weather \(error)"); exit(1) }
         runNativeContext()
         await runNativeTools()
         await runNativeWebTools()
@@ -918,6 +919,7 @@ enum SelfTest {
               first.sections[1].content == "You are Vera.",
               first.sections[2].content.contains("Thursday, August 6, 2026"),
               first.sections[2].content.contains("America/Chicago"),
+              first.sections[2].content.contains("Mac system clock"),
               first.sections[2].content.contains("You are speaking with Riley."),
               first.sections[3].content.contains("apple_reminders_get_lists"),
               first.sections[3].content.contains("Do not claim that you lack access") else {

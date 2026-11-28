@@ -44,6 +44,7 @@ extension SelfTest {
         try require(ConversationPresence.replyFigure(companionThread: store.isVeraThread(store.selectedID)) == .companion,
                     "The companion thread is the one place the companion figure appears")
         try conversationRows()
+        try plainCompanionRows()
     }
 
     static func conversationRows() throws {

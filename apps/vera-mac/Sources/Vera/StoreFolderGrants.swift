@@ -235,9 +235,10 @@ extension ChatStore {
         }
         let decide: @Sendable ([String: NativeJSONValue]) -> (NativeActionClass, NativeRuleVerdict) = { arguments in
             let action = original.actionClass(for: arguments) ?? .otherChanges
-            var verdict = toolDecision(rules, store: store, conversationID: conversationID, requestText: requestText, typed: typed, uses: uses,
-                                       asked: claim(arguments), toolID: original.id,
-                                       action: action, subjects: original.ruleSubjects?(arguments) ?? [])
+            var resolver = toolResolver(rules, conversationID: conversationID, requestText: requestText, typed: typed, uses: uses,
+                                        asked: claim(arguments), toolID: original.id, subjects: original.ruleSubjects?(arguments) ?? [])
+            resolver.connectionPermission = original.connectionPermission?() == true
+            var verdict = instructedVerdict(resolver, action: action, rules: rules, store: store)
             if case .act = verdict.decision, original.demandsConfirmation { verdict.why = NativeRuleWhy.tool(action) }
             return (action, verdict)
         }

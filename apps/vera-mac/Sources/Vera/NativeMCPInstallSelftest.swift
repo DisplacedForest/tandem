@@ -27,6 +27,7 @@ enum NativeMCPInstallSelftest {
 
     @MainActor
     static func run() async throws {
+        try await NativeMCPStandingPermissionSelftest.run()
         let disk = Disk()
         disk.contents = ["unrelated_setting": "kept"]
         let manager = NativeMCPManager(servers: [])

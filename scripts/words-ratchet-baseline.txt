@@ -21,7 +21,6 @@
 4 apps/vera-mac/Sources/Vera/MessageReactionsSelftest.swift
 2 apps/vera-mac/Sources/Vera/NativeCardChoicesSelftest.swift
 13 apps/vera-mac/Sources/Vera/NativeChatLedgerSelftest.swift
-1 apps/vera-mac/Sources/Vera/NativeChatRulesSelftest.swift
 8 apps/vera-mac/Sources/Vera/NativeCompanionFinishSelftest.swift
 4 apps/vera-mac/Sources/Vera/NativeCompanionHarnessRecords.swift
 2 apps/vera-mac/Sources/Vera/NativeCompanionLive.swift
@@ -29,7 +28,7 @@
 1 apps/vera-mac/Sources/Vera/NativeContext.swift
 6 apps/vera-mac/Sources/Vera/NativeDocumentContract.swift
 1 apps/vera-mac/Sources/Vera/NativeDomainRepositorySelftest.swift
-16 apps/vera-mac/Sources/Vera/NativeEffectLedgerSelftest.swift
+15 apps/vera-mac/Sources/Vera/NativeEffectLedgerSelftest.swift
 2 apps/vera-mac/Sources/Vera/NativeInstructionSpentSelftest.swift
 7 apps/vera-mac/Sources/Vera/NativeMCPAuthority.swift
 4 apps/vera-mac/Sources/Vera/NativeMCPAuthorityAuthSelftest.swift

@@ -62,12 +62,12 @@ struct CompanionProfileLayout<Conversation: View>: View {
     var body: some View {
         GeometryReader { proxy in
             HStack(spacing: 0) {
-                conversation
-                    .environment(\.companionProfileOpener, shown ? CompanionProfileOpener(open: open) : nil)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay {
-                        ConversationTopBar(profile: shown ? $state : nil, fixed: fixed)
-                    }
+                VStack(spacing: 0) {
+                    ConversationTopBar(profile: shown ? $state : nil, fixed: fixed)
+                    conversation
+                        .environment(\.companionProfileOpener, shown ? CompanionProfileOpener(open: open) : nil)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                 if shown, state.isOpen {
                     HStack(spacing: 0) {
                         Rectangle().fill(Theme.hairline).frame(width: CompanionProfileMetrics.divider)

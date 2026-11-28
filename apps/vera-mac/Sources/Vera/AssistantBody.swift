@@ -104,7 +104,7 @@ struct AssistantBody: View {
 
     @ViewBuilder private var extras: some View {
         let parsed = parsed
-        let groups = ToolCallParser.group(parsed.calls)
+        let groups = companionThread ? [] : ToolCallParser.group(parsed.calls)
         let sources = replyCitations(parsed.clean)?.sources ?? []
         if !groups.isEmpty || message.ask != nil || !message.artifacts.isEmpty || !sources.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
@@ -281,8 +281,7 @@ struct ToolGroupChip: View {
                     }
                 }
                 .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 9).padding(.vertical, 4)
-                .background(.quaternary, in: Capsule())
+                .padding(.vertical, 2)
             }
             .buttonStyle(.plain)
             if open {

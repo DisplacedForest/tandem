@@ -66,7 +66,7 @@ enum IntegrationsShotFixture {
         store.section = .integrations
         let manage = variant.hasPrefix("integrations-manage")
         let changes = variant == "integrations-changes" || manage
-        let rows: [[String: Any]] = ["integrations-empty", "integrations-public"].contains(variant) ? [] : variant == "integrations-locked" ? [reportsRow.merging(["address_saved": true]) { $1 }] : variant.hasPrefix("integrations-long") ? [longRow, codeRow] : variant == "integrations-states" ? [docsRow, codeRow, installedRow] : variant == "integrations-listed" ? [installedRow, codeRow] : variant == "integrations-reports" || variant == "integrations-manage-reports" ? [reportsRow] : variant == "integrations-signed-in" ? [signedInRow] : changes ? [codeRow] : [
+        var rows: [[String: Any]] = ["integrations-empty", "integrations-public"].contains(variant) ? [] : variant == "integrations-locked" ? [reportsRow.merging(["address_saved": true]) { $1 }] : variant.hasPrefix("integrations-long") ? [longRow, codeRow] : variant == "integrations-states" ? [docsRow, codeRow, installedRow] : variant == "integrations-listed" ? [installedRow, codeRow] : variant == "integrations-reports" || variant == "integrations-manage-reports" ? [reportsRow] : variant == "integrations-signed-in" ? [signedInRow] : changes ? [codeRow] : [
             [
                 "id": wikiID, "name": "DeepWiki", "url": "https://mcp.deepwiki.com/mcp",
                 "read_tools": ["read_wiki_structure", "read_wiki_contents", "ask_question"],
@@ -80,6 +80,7 @@ enum IntegrationsShotFixture {
                 "publisher": "GitHub", "source_url": "https://github.com/github/github-mcp-server",
             ],
         ]
+        if variant == "integrations-manage-reports" { rows = rows.map { NativeMCPStandingPermission(all: true).applying(to: $0) } }
         let disk = Disk(rows.isEmpty ? [:] : ["native_mcp_servers": rows])
         let (servers, _) = NativeMCPServerConfiguration.load(disk.contents)
         let keys = NativeCredentialFixtureStore()

@@ -321,11 +321,10 @@ enum CompanionAskedWorkFixture {
         defer { harness.store.conversationTurnLoop?.cancel() }
         let answer = try await send(harness, ask)
         let refused = results(answer).first ?? ""
-        try require(answer.toolActivities.first?.name == "notes_lookup" && answer.toolActivities.first?.state == .succeeded,
-                    "The notes page was read first")
-        try require(refused.contains(NativeTaskTools.laterRound) && refused.contains("\"started\":false")
-                    && (try harness.repository.taskReferences(conversationID: nil)).isEmpty,
-                    "Work asked for by a page in a later round is refused and nothing is saved: \(refused)")
+        try require(answer.toolActivities.first?.name == "notes_lookup" && answer.toolActivities.first?.state != .succeeded,
+                    "A stale direct lookup cannot execute in the companion")
+        try require(refused.contains(NativeTaskTools.laterRound) && (try harness.repository.taskReferences(conversationID: nil)).isEmpty,
+                    "A later handoff still cannot be initiated by a tool response: \(refused)")
         let researched = try await send(harness, research)
         try require(results(researched).first?.contains("Saved.") == true
                     && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
@@ -399,8 +398,9 @@ enum CompanionAskedWorkFixture {
         defer { harness.store.conversationTurnLoop?.cancel() }
         let refused = try await send(harness, lookupFirst)
         try require((results(refused).first ?? "").contains(NativeTaskTools.laterRound)
+                    && refused.toolActivities.first?.state != .succeeded
                     && (try harness.repository.taskReferences(conversationID: nil)).isEmpty,
-                    "Work asked for after another tool ran in the same reply is refused and nothing is saved")
+                    "A stale direct lookup cannot execute or initiate a later handoff")
         let started = try await send(harness, generalFirst)
         try require((results(started).first ?? "").contains("Saved.") && (try harness.repository.taskReferences(conversationID: nil)).count == 1,
                     "Work asked for before any other tool runs starts")

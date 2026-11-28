@@ -45,7 +45,11 @@ struct ContentView: View {
                     switch store.section {
                     case .vera:
                         CompanionProfileLayout(state: $companionProfile, shown: companionThread) { ChatPane() }
-                    case .chat: ChatPane().overlay { ConversationTopBar(conversation: store.selected) }
+                    case .chat:
+                        VStack(spacing: 0) {
+                            ConversationTopBar(conversation: store.selected)
+                            ChatPane()
+                        }
                     case .pulse: PulseView()
                     case .memory: MemoryView()
                     case .agentic: AgenticView(workflowEditor: workflowEditor)
@@ -598,9 +602,9 @@ struct EmptyChatView: View {
         return "Good \(part), \(name)"
     }
 
-    private let starters = [
-        "What's on today?", "What's the weather?", "Research a topic for me",
-    ]
+    private var starters: [String] {
+        ["What's on today?"] + (NativeWeatherTools.isAvailable ? ["What's the weather?"] : []) + ["Research a topic for me"]
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -814,6 +818,7 @@ struct MessageRow: View {
     var onRuleOffer: ((String, RuleOfferAnswer, ServiceAllowConfirmed?) -> Void)? = nil
     var companionThread = false
     var body: some View {
+        if !companionThread || NativeTaskTranscript.showsCompanionMessage(message, awaitingDecision: pendingConfirmation != nil) {
         HStack(alignment: .top, spacing: 10) {
             if message.role == .assistant {
                 if ConversationPresence.replyFigure(companionThread: companionThread) == .companion {
@@ -823,7 +828,7 @@ struct MessageRow: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     AssistantBody(message: message, section: .bubble, companionThread: companionThread, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
-                    ForEach(NativeTaskTranscript.visibleActivities(in: message)) { activity in
+                    ForEach(NativeTaskTranscript.visibleActivities(in: message, companionThread: companionThread)) { activity in
                         let awaiting = pendingConfirmation?.id == activity.id
                         switch NativeToolActivityPresentation.forActivity(activity) {
                         case .chip:
@@ -845,12 +850,35 @@ struct MessageRow: View {
                                 onChoice: { onToolDecision?($0, $1) }, companionThread: companionThread)
                         }
                     }
-                    AssistantBody(message: message, section: .extras, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    if companionThread {
+                        if let pendingConfirmation {
+                            NativeToolConfirmationBar(request: pendingConfirmation,
+                                prompt: NativeToolConfirmationBar.prompt(for: pendingConfirmation),
+                                actor: CompanionSentence.placeholder,
+                                onDecision: { onToolDecision?($0 ? .allowOnce : .decline, nil) },
+                                onChoice: { onToolDecision?($0, $1) }, companionThread: true)
+                        } else if let status = NativeTaskTranscript.companionStatus(in: message, awaitingDecision: false) {
+                            HStack(spacing: 12) {
+                                Text(status).font(.system(size: ConversationMetrics.bodySize))
+                                if nativeActions, message.toolActivities.contains(where: { $0.state == .pending }) {
+                                    Button("Stop") { store.stopAnswer(message.id, reason: "Stopped.") }
+                                        .buttonStyle(ConversationButtonStyle(kind: .secondary))
+                                }
+                            }
+                            .padding(.horizontal, ConversationMetrics.bubblePaddingH)
+                            .padding(.vertical, ConversationMetrics.bubblePaddingV)
+                            .background(Theme.assistantBubble)
+                            .clipShape(RoundedRectangle(cornerRadius: ConversationMetrics.bubbleRadius, style: .continuous))
+                        }
+                    }
+                    AssistantBody(message: message, section: .extras, companionThread: companionThread, nativeActions: nativeActions, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    NativeWeatherAttributionView(activities: message.toolActivities)
                     ForEach(message.attachments.filter(\.isImage)) { attachment in
                         GeneratedImageView(attachment: attachment, store: attachmentStore)
                     }
                     if nativeActions && !message.displayBlocks.isEmpty {
-                        NativeDisplayBlocksView(blocks: message.displayBlocks,
+                        NativeDisplayBlocksView(blocks: NativeTaskTranscript.visibleBlocks(in: message, companionThread: companionThread),
+                            companionThread: companionThread,
                             connectedTaskIDs: store.connectedNativeTaskIDs,
                             onCancel: store.cancelNativeTask, onRetry: store.retryNativeTask,
                             onDecide: store.answerNativeTask,
@@ -863,7 +891,13 @@ struct MessageRow: View {
                     } else if nativeActions, let note = store.answerNote(message.id) {
                         Text(note).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
                     } else if nativeActions, let status = store.replyStatus(message.id) {
-                        Text(status).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
+                        if message.toolActivities.contains(where: { $0.state == .pending }) {
+                            if companionThread, NativeTaskTranscript.companionStatus(in: message, awaitingDecision: false) == nil {
+                                Text("Working on your request.").font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
+                            }
+                        } else {
+                            Text(status).font(.system(size: ConversationMetrics.metaSize)).foregroundStyle(Theme.warmTextSecondary)
+                        }
                     }
                     if nativeActions && message.state == .interrupted {
                         Label { Text(message.failure.map(SavedWording.current) ?? "The response was interrupted") } icon: { InterfaceIconView(icon: .warning, size: InterfaceIconSize.small) }
@@ -900,6 +934,7 @@ struct MessageRow: View {
                     }
                 }
             }
+        }
         }
     }
 }
@@ -1110,8 +1145,21 @@ struct NativeToolActivityChip: View {
         activity.confirmationRequired && activity.state == .pending && awaitingDecision
     }
 
+    static func failureSummary(_ activity: NativeToolActivity) -> String? {
+        guard activity.state == .failed, activity.why == nil, !isDeclined(activity),
+              let result = activity.result, let values = fields(result), case .string(let error)? = values["error"] else { return nil }
+        return shownError(error, cut: values["truncated"] == .bool(true))
+    }
+
+    static func activityLabel(_ activity: NativeToolActivity) -> String {
+        guard activity.toolID.hasPrefix("mcp_"), let split = activity.title.range(of: ": ") else { return activity.title }
+        return String(activity.title[..<split.lowerBound])
+    }
+
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        VStack(alignment: .leading, spacing: 5) {
+            summary
+            if expanded {
             VStack(alignment: .leading, spacing: 8) {
                 if let reason = ranBecause {
                     Text(reason.title).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
@@ -1122,16 +1170,26 @@ struct NativeToolActivityChip: View {
                 if activity.why == nil, let result = activity.result.map({ Self.shownResult($0, toolID: activity.toolID) }), !result.isEmpty { inspected("Result", result) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 8)
-        } label: {
+            .padding(.top, 6)
+            Button("Hide details") { expanded = false }.buttonStyle(.plain).font(.system(size: 11))
+            }
+        }
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .focusable()
+        .contextMenu { Button("Inspect request and result") { expanded = true } }
+        .accessibilityAction(named: Text("Inspect request and result")) { expanded = true }
+    }
+
+    private var summary: some View {
             VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 if Self.showsSpinner(activity, awaitingDecision: awaitingDecision) {
                     ProgressView().controlSize(.mini)
                 } else {
-                    InterfaceIconView(icon: icon, size: InterfaceIconSize.regular).foregroundStyle(iconColor)
+                    InterfaceIconView(icon: icon, size: InterfaceIconSize.small).foregroundStyle(iconColor)
                 }
-                Text(activity.title).font(.system(size: 12, weight: .medium))
+                Text(Self.activityLabel(activity)).font(.system(size: 11))
                 Text(status).font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
                 if activity.state == .pending, let progress = activity.progress {
                     ProgressView(value: progress.fraction)
@@ -1145,16 +1203,13 @@ struct NativeToolActivityChip: View {
                         .accessibilityLabel("Cancel \(activity.title)")
                 }
             }
-            .foregroundStyle(Theme.warmTextPrimary)
+            .foregroundStyle(Theme.warmTextSecondary)
             if let why = activity.why, activity.toolID != NativeCommandTools.toolID { RefusalReasonLine(why: why) }
+            if let failure = Self.failureSummary(activity) {
+                Text(failure).font(.system(size: 11)).foregroundStyle(Theme.warmTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        }
-        .disclosureGroupStyle(.automatic)
-        .padding(.horizontal, 11).padding(.vertical, 8)
-        .frame(maxWidth: 480, alignment: .leading)
-        .background(Theme.cardFill)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.cardStroke, lineWidth: 1))
+            }
     }
 
     private func inspected(_ title: String, _ value: String) -> some View {
@@ -1232,10 +1287,21 @@ struct NativeToolConfirmationBar: View {
     }
 
     var answers: CardAnswers {
-        onChoice == nil ? CardAnswers() : CardAnswers.chat(request)
+        onChoice == nil || (companionThread && request.subject?.service != nil) ? CardAnswers() : CardAnswers.chat(request)
+    }
+
+    private var sentenceLine: CompanionLine {
+        if let service = request.subject?.service {
+            return .literal(CompanionPermissionText.question(service: service.service, action: service.tool, details: request.request))
+        }
+        return Self.sentenceLine(for: request, prompt: prompt, actor: actor)
     }
 
     private var block: String? {
+        if request.subject?.service != nil {
+            return CompanionPermissionText.arguments(request.request, service: request.subject?.service?.service)
+                ?? "The request details couldn't be read. Decline and try again."
+        }
         if let prompt {
             let rest = prompt.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
             return rest.isEmpty ? nil : rest
@@ -1250,7 +1316,7 @@ struct NativeToolConfirmationBar: View {
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.sage.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 6) {
-                    CompanionLineText(line: Self.sentenceLine(for: request, prompt: prompt, actor: actor))
+                    CompanionLineText(line: sentenceLine)
                         .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.warmTextPrimary)
                     if let block {
                         ShotSafeScroll(renderSafe: renderSafe, axis: .vertical) {
@@ -1261,7 +1327,7 @@ struct NativeToolConfirmationBar: View {
                                     CompanionLineText(line: closing)
                                 }
                             }
-                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.warmTextPrimary)
+                            .font(.system(size: 12, design: companionThread || request.subject?.service != nil ? .default : .monospaced)).foregroundStyle(Theme.warmTextPrimary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(maxHeight: renderSafe ? nil : 180)
@@ -1276,7 +1342,10 @@ struct NativeToolConfirmationBar: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            CardAnswerRow(answers: answers, defaultApproval: defaultApproval, allowApprove: allowApprove, allowDecline: allowDecline,
+            CardAnswerRow(answers: answers, defaultApproval: defaultApproval,
+                          allowApprove: allowApprove && (request.subject?.service == nil
+                            || CompanionPermissionText.arguments(request.request, service: request.subject?.service?.service) != nil),
+                          allowDecline: allowDecline,
                           onAllow: { onDecision(true) }, onDecline: { onDecision(false) },
                           onItem: { id in if let kind = NativeCardChoiceKind(rawValue: id) { onChoice?(kind, nil) } },
                           onConfirmed: { id, confirmed in if let kind = NativeCardChoiceKind(rawValue: id) { onChoice?(kind, confirmed) } })

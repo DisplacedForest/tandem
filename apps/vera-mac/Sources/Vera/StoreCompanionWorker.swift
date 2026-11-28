@@ -94,6 +94,7 @@ extension ChatStore {
         if !tools.contains(where: { $0.id == NativeWebTools.searchToolID }) {
             context.searchNote = nativeSearchAvailable() ? NativeCompanionWorkerContext.searchNotOn : NativeCompanionWorkerContext.noSearchURL
         }
+        context.localAccessNotes = NativeFolderTools.accessNotes(enabledIDs: enabled, grants: source.grants(for: threadID))
         return context
     }
 }

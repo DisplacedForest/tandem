@@ -12,7 +12,7 @@ enum ConversationShot {
                               attachmentStore: NativeAttachmentStore(directory: directory))
         store.newConversation()
         let companion = view.contains("companion")
-        let messages = [
+        var messages = [
             Message(role: .user, text: "Compare the two plans and explain the tradeoffs."),
             Message(role: .assistant, text: """
             The first plan is the best fit if you want to start this week.
@@ -33,13 +33,42 @@ enum ConversationShot {
             Message(role: .user, text: "What should I prepare first?"),
             Message(role: .assistant, text: view.contains("streaming") ? "Gather the materials you already have, then" : "Gather the materials you already have and write down the main question you want to answer.", state: view.contains("streaming") ? .streaming : .complete)
         ]
+        var confirmation: NativeToolConfirmationRequest?
+        var confirmationMessageID: UUID?
+        if view.contains("tools") {
+            let activity = NativeToolActivity(id: "fixture-read", toolID: "mcp_fixture", name: "catalog__find_items",
+                title: "Garden service: catalog__find_items", round: 1, request: "{\"area\":\"greenhouse\"}",
+                result: "{\"level\":50}", state: .succeeded, confirmationRequired: false)
+            var failed = activity
+            failed.state = .failed
+            failed.result = "{\"error\":\"The service isn't responding. Try again later.\"}"
+            messages = [
+                Message(role: .user, text: "Set the greenhouse lights to 50%."),
+                Message(role: .assistant, text: "The greenhouse lights are at 50%.", toolActivities: [activity]),
+                Message(role: .assistant, text: "", toolActivities: [activity]),
+                Message(role: .user, text: "Return them to their earlier brightness."),
+            ]
+            var pending = activity
+            pending.state = .pending
+            pending.request = #"{"name":"garden__read_history","arguments":"{\"item_ids\":[\"greenhouse-lights\"],\"start_time\":\"2026-11-28T08:00:00\"}"}"#
+            let message = Message(role: .assistant, text: "", toolActivities: [view.hasSuffix("failure") ? failed : pending])
+            messages.append(message)
+            if !view.hasSuffix("failure") && !view.hasSuffix("progress") {
+                var request = NativeToolConfirmationRequest(activity: pending)
+                request.subject = NativeCardSubject(action: .serviceChanges, toolID: pending.toolID, toolTitle: pending.title,
+                    service: NativeServiceTool(tool: "Dispatch", service: "Garden service", detail: "Runs the requested operation."))
+                confirmation = request
+                confirmationMessageID = message.id
+            }
+        }
         let config = ConfigStore(credentialStore: NativeCredentialFixtureStore(), readConfiguration: { [:] }, writeConfiguration: { _ in })
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let hosting = NSHostingView(rootView: VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     ForEach(messages) { message in
-                        MessageRow(message: message, companionThread: companion)
+                        MessageRow(message: message, pendingConfirmation: message.id == confirmationMessageID ? confirmation : nil,
+                                   onToolDecision: { _, _ in }, companionThread: companion)
                     }
                 }
                 .padding(28)

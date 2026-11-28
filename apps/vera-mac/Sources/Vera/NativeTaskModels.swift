@@ -646,6 +646,7 @@ struct NativeResearchTaskResult: Codable, Equatable, Hashable, Sendable {
     var why: NativeRuleWhy? = nil
     var stop: NativeTaskStop? = nil
     var keep: Bool? = nil
+    var weatherResult: String? = nil
 }
 
 struct NativeTaskStop: Codable, Equatable, Hashable, Sendable {

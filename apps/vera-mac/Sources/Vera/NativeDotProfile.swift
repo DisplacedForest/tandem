@@ -220,7 +220,7 @@ enum NativeDotContext {
         let sentence = list(held)
         return sentence.prefix(1).uppercased() + sentence.dropFirst() + " \(verb) always handed to the user. " + clickLine
     }
-    static let coordinatorNote = "You coordinate rather than grind: you do longer work yourself while the conversation carries on, and what it finds comes back into this conversation, so keep your own replies short and conversational, sum up what your longer work found instead of repeating its output, and never paste long transcripts into this thread."
+    static let coordinatorNote = NativeCompanionRouting.instruction
 
     static func wording(_ choice: NativeRuleChoice) -> String {
         switch choice {
