@@ -41,6 +41,8 @@ final class NativeDSHOrdinal: @unchecked Sendable {
 }
 
 enum NativeDSHWorker {
+    static let unavailableMessage = "Some Tandem files are missing or damaged. Reinstall Tandem, then start this work again."
+    static let stoppedMessage = "This work stopped before finishing. Earlier confirmed changes are saved."
     typealias Driver = @Sendable (Data, @escaping @Sendable (Data) async throws -> Data) async throws -> Data
 
     static func generationAttempt(_ attempt: String, nonce: String) -> String {
@@ -196,9 +198,8 @@ enum NativeDSHWorker {
             return try NativeCompanionWorker.decide(checkpoint, NativeTaskWorkerFailures.retryPrompt(NativeTaskWorkerFailures.pauseMessage(failure.code)), ["retry"])
         } catch let failure as NativeDSHFailure {
             if AppLocations.isHeadless { print("DSH diagnostic: \(failure.code)") }
-            let message = failure.code == "unavailable"
-                ? "The execution component is missing. Reinstall Tandem or prepare its runtime before trying again."
-                : "The execution component stopped before finishing. Earlier confirmed changes are saved."
+            checkpoint.failureReason = failure.code == "unavailable" ? "execution_unavailable" : "execution_failed"
+            let message = failure.code == "unavailable" ? unavailableMessage : stoppedMessage
             return try NativeCompanionWorker.fail(&checkpoint, code: "worker_error", message: message)
         }
     }

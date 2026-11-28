@@ -73,12 +73,14 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var note: NativeTaskNote?
     var finishing: Bool?
     var repairs: NativeToolRepairs?
+    var failureReason: String?
     var dshAttempt: String?
     var dshRevision: String?
     var dsh: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases, note, finishing, repairs, dshRevision, dsh, dshAttempt
+        case failureReason = "failure_reason"
         case refused = "instruction_refused"
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"

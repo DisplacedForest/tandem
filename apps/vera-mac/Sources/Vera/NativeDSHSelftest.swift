@@ -123,6 +123,14 @@ enum NativeDSHSelftest {
         _ = try unavailable.create()
         let failed = try await step(unavailable, driver: { _, _ in throw NativeDSHFailure(code: "unavailable") })
         try require(failed.state == .failed, "A missing runtime does not silently use the previous backend")
+        let missingRequest = try NativeResearchTaskRequest(dot: NativeCompanionTaskPayload(assignment: "Water the north bed", mode: "manual"))
+        var missingReference = try unavailable.repository.prepareTaskReference(origin: NativeTaskFixture.origin(unavailable.repository),
+            engine: NativeTaskLocalEngine.identity, request: missingRequest, profile: nil)
+        missingReference.remoteTaskID = failed.id
+        let missingSnapshot = try JSONDecoder().decode(NativeTaskSnapshot.self, from: failed.snapshotJSON())
+        let missingCard = try NativeTaskProjection.display(reference: missingReference, snapshot: missingSnapshot).card
+        try require(missingCard.milestone == NativeDSHWorker.unavailableMessage, "Missing or damaged files show the recovery action in the conversation")
+
 
         let falseFinal = try NativeCompanionHarness(rules: [:]) { _ in .text("unused") }
         _ = try falseFinal.create()
