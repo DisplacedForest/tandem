@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 
 enum NativeWeatherSelftest {
@@ -5,6 +6,30 @@ enum NativeWeatherSelftest {
         try await NativeWeatherLiveCheckSelftest.run()
         func require(_ value: Bool, _ message: String) throws {
             guard value else { throw NativeToolError.failed(message) }
+        }
+        for status: CLAuthorizationStatus in [.notDetermined, .denied, .restricted, .authorizedAlways] {
+            let failure = await NativeWeatherLocation.accessFailure(servicesEnabled: false, status: status)
+            try require(failure == .locationServicesDisabled, "Global location switch takes precedence over per-app authorization")
+        }
+        for (status, expected): (CLAuthorizationStatus, NativeWeatherFailure?) in [
+            (.notDetermined, nil), (.authorizedAlways, nil),
+            (.denied, .locationAccessDenied), (.restricted, .locationRestricted),
+        ] {
+            let failure = await NativeWeatherLocation.accessFailure(servicesEnabled: true, status: status)
+            try require(failure == expected, "First use may request permission; denied and restricted access keep their own causes")
+        }
+        let reasons: [NativeWeatherFailure] = [.locationServicesDisabled, .locationAccessDenied, .locationRestricted,
+            .locationUnavailable, .locationPermissionPending]
+        try require(Set(reasons.compactMap(\.errorDescription)).count == reasons.count,
+            "Location failures retain distinct actionable messages")
+        for reason in reasons {
+            let failedLocation = NativeWeatherTools.definitions(source: NativeWeatherSource(available: { true }, fetch: { _ in throw reason }))[0]
+            do {
+                _ = try await failedLocation.execute([:])
+                throw NativeToolError.failed("Location failure must not become a weather result")
+            } catch let actual as NativeWeatherFailure {
+                try require(actual == reason, "The model receives the observed cause rather than a generic missing city")
+            }
         }
         let fixture = report()
         let absent = NativeWeatherSource(available: { false }, fetch: { _ in fixture })

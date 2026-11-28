@@ -115,15 +115,16 @@ final class NativeWeatherLocation: NSObject, @preconcurrency CLLocationManagerDe
 
     func current() async throws -> CLLocation {
         guard pending == nil else { throw NativeWeatherFailure.busy }
-        guard CLLocationManager.locationServicesEnabled(), manager.authorizationStatus != .denied,
-              manager.authorizationStatus != .restricted else { throw NativeWeatherFailure.placeNeeded }
+        if let failure = accessFailure { throw failure }
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
                 pending = continuation
                 timeout = Task { [weak self] in
                     do { try await Task.sleep(for: .seconds(25)) } catch { return }
-                    self?.finish(.failure(NativeWeatherFailure.placeNeeded))
+                    guard let self else { return }
+                    self.finish(.failure(self.accessFailure ?? (self.manager.authorizationStatus == .notDetermined
+                        ? NativeWeatherFailure.locationPermissionPending : .locationUnavailable)))
                 }
                 if manager.authorizationStatus == .notDetermined {
                     manager.requestWhenInUseAuthorization()
@@ -138,9 +139,12 @@ final class NativeWeatherLocation: NSObject, @preconcurrency CLLocationManagerDe
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         guard pending != nil else { return }
+        if let failure = accessFailure {
+            finish(.failure(failure))
+            return
+        }
         switch manager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse: manager.requestLocation()
-        case .denied, .restricted: finish(.failure(NativeWeatherFailure.placeNeeded))
         default: break
         }
     }
@@ -151,7 +155,21 @@ final class NativeWeatherLocation: NSObject, @preconcurrency CLLocationManagerDe
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        finish(.failure(NativeWeatherFailure.placeNeeded))
+        finish(.failure(accessFailure ?? NativeWeatherFailure.locationUnavailable))
+    }
+
+    private var accessFailure: NativeWeatherFailure? {
+        Self.accessFailure(servicesEnabled: CLLocationManager.locationServicesEnabled(), status: manager.authorizationStatus)
+    }
+
+    static func accessFailure(servicesEnabled: Bool, status: CLAuthorizationStatus) -> NativeWeatherFailure? {
+        guard servicesEnabled else { return .locationServicesDisabled }
+        switch status {
+        case .denied: return .locationAccessDenied
+        case .restricted: return .locationRestricted
+        case .notDetermined, .authorizedAlways, .authorizedWhenInUse: return nil
+        @unknown default: return .locationUnavailable
+        }
     }
 
     private func finish(_ result: Result<CLLocation, Error>) {

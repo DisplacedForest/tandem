@@ -69,11 +69,17 @@ struct NativeWeatherReport: Codable, Equatable, Sendable {
     }
 }
 
-enum NativeWeatherFailure: Error, LocalizedError {
+enum NativeWeatherFailure: Error, LocalizedError, Equatable {
     case placeNeeded, placeNotFound, unavailable, busy
+    case locationServicesDisabled, locationAccessDenied, locationRestricted, locationUnavailable, locationPermissionPending
 
     var errorDescription: String? {
         switch self {
+        case .locationServicesDisabled: return "Location Services is turned off for this Mac, so macOS cannot show Tandem a location permission prompt. Turn it on in System Settings > Privacy & Security > Location Services, or tell me a city."
+        case .locationAccessDenied: return "Tandem doesn't have location access. Allow Tandem in System Settings > Privacy & Security > Location Services, or tell me a city."
+        case .locationRestricted: return "Location access is restricted on this Mac. Tell me a city to check the weather."
+        case .locationUnavailable: return "Your Mac couldn't determine its current location. Try again shortly or tell me a city."
+        case .locationPermissionPending: return "Location permission hasn't been resolved. Open Tandem and try again, or tell me a city."
         case .placeNeeded: return "Tell me a city or place to check the weather."
         case .placeNotFound: return "I couldn't find that place. Try a city and country."
         case .unavailable: return "I couldn't get the weather right now. Try again shortly."
@@ -113,7 +119,7 @@ enum NativeWeatherTools {
         guard source.available() else { return [] }
         return [NativeToolDefinition(
             id: toolID, name: toolName, title: "Check the weather",
-            description: "Reads current conditions and up to ten days of forecast from Apple Weather. When to use: the person asks about weather for a place or their current location. When not to use: historical weather or unattended updates. Effects: read only; a request without a place may ask for Mac location permission once. Returns current conditions, forecast, units, alerts and attribution. Use the returned units and facts. Include weather attribution and preserve alert headlines, issuing agencies and links exactly. If location is unavailable, ask for a city. If weather fails, say so plainly without inventing conditions.",
+            description: "Reads current conditions and up to ten days of forecast from Apple Weather. When to use: the person asks about weather for a place or their current location. When not to use: historical weather or unattended updates. Effects: read only; a request without a place may ask for Mac location permission once. Returns current conditions, forecast, units, alerts and attribution. Use the returned units and facts. Include weather attribution and preserve alert headlines, issuing agencies and links exactly. If location fails, explain only the specific cause returned by the tool and offer a city lookup. Never infer that the person declined permission or that a prompt appeared. If weather fails, say so plainly without inventing conditions.",
             parameters: .object([
                 "type": .string("object"),
                 "properties": .object([
