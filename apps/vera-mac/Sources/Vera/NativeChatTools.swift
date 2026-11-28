@@ -225,6 +225,7 @@ struct NativeToolDefinition: Sendable {
     var access: NativeToolAccess? = nil
     var wants: String? = nil
     var service: NativeServiceTool? = nil
+    var connectionPermission: (@Sendable () -> Bool)? = nil
     var governed = false
     var proposes = false
     var alwaysAsks = false

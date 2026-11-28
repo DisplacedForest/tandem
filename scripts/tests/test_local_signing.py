@@ -1,4 +1,7 @@
+import datetime
+import hashlib
 import importlib.util
+import plistlib
 import json
 from pathlib import Path
 import subprocess
@@ -81,6 +84,60 @@ class SigningTests(unittest.TestCase):
         self.save({"identity": self.identity})
         other = "b2" * 20
         self.assertEqual(signing.settings({**self.environment, "VERA_SIGNING_IDENTITY": other})[0], other.upper())
+
+
+class WeatherSigningTests(SigningTests):
+    def profile(self):
+        certificate = b"fixture certificate"
+        self.identity = hashlib.sha1(certificate).hexdigest().upper()
+        return {
+            "DeveloperCertificates": [certificate], "ProvisionsAllDevices": True,
+            "ExpirationDate": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1),
+            "TeamIdentifier": ["EXAMPLETEAM"],
+            "Entitlements": {"com.apple.developer.weatherkit": True,
+                "com.apple.application-identifier": "EXAMPLETEAM.app.example.weather",
+                "com.apple.developer.team-identifier": "EXAMPLETEAM"},
+        }
+
+    def test_profile_checks_expiry_capability_app_and_certificate(self):
+        profile = self.profile()
+        result = signing.weather_entitlements(profile, "app.example.weather", self.identity)
+        self.assertTrue(result["com.apple.developer.weatherkit"])
+        for field, value in [("ProvisionsAllDevices", False), ("ExpirationDate", datetime.datetime(2000, 1, 1)), ("DeveloperCertificates", [])]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                signing.weather_entitlements({**profile, field: value}, "app.example.weather", self.identity)
+        with self.assertRaises(ValueError):
+            signing.weather_entitlements(profile, "app.other.weather", self.identity)
+        with self.assertRaises(ValueError):
+            signing.weather_entitlements(profile, "app.example.weather", "-")
+        profile["Entitlements"]["com.apple.developer.weatherkit"] = False
+        with self.assertRaises(ValueError):
+            signing.weather_entitlements(profile, "app.example.weather", self.identity)
+
+    def test_profile_is_optional_but_invalid_explicit_path_fails(self):
+        self.assertIsNone(signing.weather_profile(self.environment))
+        with self.assertRaises(ValueError):
+            signing.weather_profile({**self.environment, "VERA_WEATHER_PROFILE": "relative"})
+
+    def test_entitlements_apply_only_to_outer_bundle(self):
+        profile = self.profile()
+        profile["ExpirationDate"] = profile["ExpirationDate"].replace(tzinfo=None)
+        path = self.root / "weather.provisionprofile"
+        path.write_bytes(b"profile")
+        (self.app / "Contents").mkdir()
+        (self.app / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "app.example.weather"}))
+        self.save({"identity": self.identity, "weather_profile": str(path)})
+        decoded = subprocess.CompletedProcess([], 0, stdout=plistlib.dumps(profile))
+        with patch.object(signing.subprocess, "run", return_value=decoded) as run:
+            signing.sign(self.app, self.environment)
+        commands = [call.args[0] for call in run.call_args_list]
+        nested = commands[1]
+        outer = commands[2]
+        self.assertIn("--deep", nested)
+        self.assertNotIn("--entitlements", nested)
+        self.assertIn("--entitlements", outer)
+        self.assertNotIn("--deep", outer)
+        self.assertEqual((self.app / "Contents/embedded.provisionprofile").read_bytes(), b"profile")
 
 
 if __name__ == "__main__":

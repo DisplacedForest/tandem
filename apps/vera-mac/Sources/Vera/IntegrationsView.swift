@@ -729,12 +729,13 @@ struct IntegrationsInstallSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(height: writesOpen || readsOpen ? 360 : 80).clipped()
+        NativeMCPPermissionControls(permission: $draft.permissions)
         IntegrationsField(label: "Available in") {
             IntegrationsScopeToggles(scopes: $draft.scopes).tint(Theme.accent)
         }
     }
 
-    private static let ruleNote = "Reads run when they're needed. Writes follow your settings in Rules."
+    private static let ruleNote = "Choose which tools can be used and which changes can run without asking."
 
     @ViewBuilder
     private func group(_ title: String, _ offers: [NativeMCPInstallOffer], open: Binding<Bool>) -> some View {
@@ -758,7 +759,11 @@ struct IntegrationsInstallSheet: View {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(offers) { offer in
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(verbatim: offer.label).font(.system(size: 13, weight: .medium))
+                                HStack(alignment: .top) {
+                                    Text(verbatim: offer.label).font(.system(size: 13, weight: .medium))
+                                    Spacer(minLength: 12)
+                                    NativeMCPToolPermissionPicker(offer: offer, permission: $draft.permissions, off: $draft.offTools)
+                                }
                                 if !offer.usable {
                                     Text("Tandem can't use this one.").font(.system(size: 11)).foregroundStyle(Theme.accent)
                                 }
@@ -807,6 +812,8 @@ struct IntegrationsManageSheet: View {
     @State private var timeout = "20"
     @State private var error: String?
     @State private var confirmingRemove = false
+    @State private var permissions = NativeMCPStandingPermission()
+    @State private var offTools: Set<String> = []
 
     init(target: IntegrationsManageTarget, filled row: [String: Any]? = nil, onSaved: @escaping (String) -> Void) {
         self.target = target
@@ -821,6 +828,8 @@ struct IntegrationsManageSheet: View {
         _scopes = State(initialValue: fields.scopes)
         _authentication = State(initialValue: fields.authentication)
         if let timeout = fields.timeout { _timeout = State(initialValue: timeout) }
+        _permissions = State(initialValue: NativeMCPServerConfiguration.load(["native_mcp_servers": [row]]).0.first?.permissions ?? NativeMCPStandingPermission())
+        _offTools = State(initialValue: Set(row["off_tools"] as? [String] ?? []))
     }
 
     private var existingRow: [String: Any]? {
@@ -857,7 +866,10 @@ struct IntegrationsManageSheet: View {
                         IntegrationsAction(title: "Change", symbol: "pencil") { changingAddress = true; newAddress = "" }
                     }
                 } else {
-                    TextField("https://", text: $newAddress).textFieldStyle(.roundedBorder).accessibilityLabel("New service address")
+                    VStack(alignment: .leading, spacing: 5) {
+                        TextField("https://", text: $newAddress).textFieldStyle(.roundedBorder).accessibilityLabel("New service address")
+                        Text("Changing the address removes its saved setup permissions.").font(.callout).foregroundStyle(Theme.textSecondary)
+                    }
                 }
             }
             if !reportsTools {
@@ -878,6 +890,8 @@ struct IntegrationsManageSheet: View {
                 }
             }
             }
+            NativeMCPPermissionControls(permission: $permissions).disabled(changingAddress)
+            toolPermissions.disabled(changingAddress)
             IntegrationsField(label: "Available in") {
                 IntegrationsScopeToggles(scopes: $scopes).tint(Theme.accent)
             }
@@ -916,6 +930,32 @@ struct IntegrationsManageSheet: View {
                             isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive, action: remove)
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    @ViewBuilder private var toolPermissions: some View {
+        let server = config.nativeMCP.servers.first { $0.id == target.id }
+        if let server, !server.tools.isEmpty {
+            ShotSafeScroll(renderSafe: renderSafe) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(server.tools) { tool in
+                        let offer = NativeMCPInstallOffer(name: tool.remoteName, label: config.nativeMCP.authority.shown(tool),
+                            detail: tool.description, change: tool.state == .change, usable: tool.callable)
+                        HStack(alignment: .top, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(verbatim: offer.label).font(.callout.weight(.medium))
+                                if !offer.detail.isEmpty {
+                                    Text(verbatim: offer.detail).font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                                }
+                            }
+                            Spacer(minLength: 10)
+                            NativeMCPToolPermissionPicker(offer: offer, permission: $permissions, off: $offTools)
+                        }
+                    }
+                }
+            }.frame(maxHeight: 190)
+        } else {
+            Text("Connect this service to choose individual tools.").font(.callout).foregroundStyle(Theme.textSecondary)
         }
     }
 
@@ -974,6 +1014,8 @@ struct IntegrationsManageSheet: View {
         acts = fields.acts
         scopes = fields.scopes
         authentication = fields.authentication
+        permissions = NativeMCPServerConfiguration.load(["native_mcp_servers": [row]]).0.first?.permissions ?? NativeMCPStandingPermission()
+        offTools = Set(row["off_tools"] as? [String] ?? [])
         if let seconds = fields.timeout { timeout = seconds }
     }
 
@@ -994,8 +1036,10 @@ struct IntegrationsManageSheet: View {
             }
             existing.removeValue(forKey: NativeMCPAddressBook.marker)
         }
-        let row = Self.row(existing, id: target.id, name: name, endpoint: changingAddress ? newAddress : existing["url"] as? String ?? endpoint, reads: reads, acts: acts,
+        var row = Self.row(existing, id: target.id, name: name, endpoint: changingAddress ? newAddress : existing["url"] as? String ?? endpoint, reads: reads, acts: acts,
                            scopes: scopes, seconds: seconds, authentication: authentication)
+        row = permissions.applying(to: row)
+        if offTools.isEmpty { row.removeValue(forKey: "off_tools") } else { row["off_tools"] = offTools.sorted() }
         do {
             try config.updateNativeMCPServer(row)
             onSaved(target.id)

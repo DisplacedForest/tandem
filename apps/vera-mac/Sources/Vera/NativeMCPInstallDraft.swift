@@ -18,6 +18,8 @@ final class NativeMCPInstallDraft: ObservableObject {
     let entry: NativeMCPStarterEntry
     let id = UUID().uuidString.lowercased()
     @Published var values: [String: String] = [:]
+    @Published var permissions = NativeMCPStandingPermission()
+    @Published var offTools: Set<String> = []
     @Published var scopes = Set(IntegrationsText.scopeKeys)
     @Published private(set) var step: Step = .fill
     @Published private(set) var offers: [NativeMCPInstallOffer] = []
@@ -142,8 +144,10 @@ final class NativeMCPInstallDraft: ObservableObject {
         }
         error = nil
         self.config = config
-        let row = catalogue.configurationRow(for: entry, name: name, endpoint: endpoint, authentication: authentication,
+        var row = catalogue.configurationRow(for: entry, name: name, endpoint: endpoint, authentication: authentication,
                                              scopes: IntegrationsText.scopeKeys.filter { scopes.contains($0) }, id: id)
+        row = permissions.applying(to: row)
+        if !offTools.isEmpty { row["off_tools"] = offTools.sorted() }
         do {
             if stored { try config.updateNativeMCPServer(row) } else { try config.addNativeMCPServer(row) }
         } catch {

@@ -30,6 +30,7 @@ enum OutboundGuard {
 
     static func policy(for mode: LaunchPlan.Mode, environment: [String: String]) -> Policy {
         guard LaunchPlan.isHeadless(mode, environment: environment) else { return .open }
+        if mode == .run(LaunchPlan.weatherLiveMode) { return .open }
         if mode == .run(LaunchPlan.toolEvalLiveMode) { return .loopbackOnly(evaluationHost(environment).map { Set([$0]) } ?? []) }
         return .loopbackOnly(optInHosts(environment))
     }

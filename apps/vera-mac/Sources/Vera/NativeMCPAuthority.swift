@@ -18,7 +18,8 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     let oauth: NativeMCPOAuthConfiguration?
     let publisher: String?
     let sourceURL: URL?
-    init(id: String, name: String, endpoint: URL, readTools: Set<String>, actTools: Set<String> = [], asksTools: Set<String> = [], offTools: Set<String> = [], staysConnected: Bool = false, locked: Bool = false, scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, oauth: NativeMCPOAuthConfiguration? = nil, publisher: String? = nil, sourceURL: URL? = nil) throws {
+    private(set) var permissions: NativeMCPStandingPermission
+    init(id: String, name: String, endpoint: URL, readTools: Set<String>, actTools: Set<String> = [], asksTools: Set<String> = [], offTools: Set<String> = [], staysConnected: Bool = false, locked: Bool = false, scopes: Set<String> = ["focused", "assistant"], timeout: TimeInterval = 20, authentication: Authentication = .none, oauth: NativeMCPOAuthConfiguration? = nil, publisher: String? = nil, sourceURL: URL? = nil, permissions: NativeMCPStandingPermission = NativeMCPStandingPermission()) throws {
         try NativeMCPAddress.validate(endpoint, personSupplied: true)
         guard UUID(uuidString: id) != nil, !name.isEmpty, name.utf8.count <= 100,
               readTools.union(actTools).allSatisfy({ !$0.isEmpty && !$0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }),
@@ -27,6 +28,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
         guard (authentication == .oauth) == (oauth != nil), oauth == nil || oauth?.resource == endpoint else { throw NativeToolError.failed("The sign-in configuration is invalid.") }
         guard publisher.map({ !$0.isEmpty && $0.utf8.count <= 100 }) ?? true,
               sourceURL.map({ $0.scheme == "https" && $0.host != nil && $0.user == nil && $0.password == nil }) ?? true else { throw NativeToolError.failed("The connected service configuration is invalid.") }
+        self.permissions = permissions
         self.publisher = publisher; self.sourceURL = sourceURL
         self.oauth = oauth
         self.id = id.lowercased(); self.name = name; self.endpoint = endpoint
@@ -38,7 +40,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
         do {
             var ids = Set<String>()
             let servers = try rows.map { row -> Self in
-                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "act_tools", "asks_tools", "off_tools", "stays_connected", "address_saved", "scopes", "timeout_seconds", "authentication", "oauth", "publisher", "source_url"]),
+                guard Set(row.keys).isSubset(of: ["id", "name", "url", "read_tools", "act_tools", "asks_tools", "off_tools", "stays_connected", "address_saved", "scopes", "timeout_seconds", "authentication", "oauth", "publisher", "source_url", "permissions"]),
                       let id = row["id"] as? String, let name = row["name"] as? String,
                       let url = row["url"] as? String, let endpoint = URL(string: url),
                       row["read_tools"] == nil || row["read_tools"] is [String], row["act_tools"] == nil || row["act_tools"] is [String],
@@ -51,7 +53,7 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
                       row["publisher"] == nil || row["publisher"] is String,
                       row["source_url"] == nil || (row["source_url"] as? String).flatMap(URL.init(string:)) != nil else { throw NativeToolError.unavailable }
                 let oauth = row["oauth"] == nil ? nil : try NativeMCPOAuthConfiguration.load(row["oauth"])
-                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(row["read_tools"] as? [String] ?? []), actTools: Set(row["act_tools"] as? [String] ?? []), asksTools: Set(row["asks_tools"] as? [String] ?? []), offTools: Set(row["off_tools"] as? [String] ?? []), staysConnected: row["stays_connected"] as? Bool ?? false, locked: row["address_saved"] as? Bool ?? false, scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth, publisher: row["publisher"] as? String, sourceURL: (row["source_url"] as? String).flatMap(URL.init(string:)))
+                let server = try Self(id: id, name: name, endpoint: endpoint, readTools: Set(row["read_tools"] as? [String] ?? []), actTools: Set(row["act_tools"] as? [String] ?? []), asksTools: Set(row["asks_tools"] as? [String] ?? []), offTools: Set(row["off_tools"] as? [String] ?? []), staysConnected: row["stays_connected"] as? Bool ?? false, locked: row["address_saved"] as? Bool ?? false, scopes: Set(row["scopes"] as? [String] ?? ["focused", "assistant"]), timeout: row["timeout_seconds"] as? Double ?? 20, authentication: authentication, oauth: oauth, publisher: row["publisher"] as? String, sourceURL: (row["source_url"] as? String).flatMap(URL.init(string:)), permissions: try NativeMCPStandingPermission.load(row["permissions"], id: id, endpoint: endpoint))
                 guard ids.insert(server.id).inserted else { throw NativeToolError.unavailable }
                 return server
             }
@@ -63,13 +65,14 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     var source: String { (endpoint.scheme ?? "https") + "://" + (endpoint.host ?? "") }
     func toolID(_ name: String) -> String { "mcp_" + piHash(Data((id + "\n" + endpoint.absoluteString + "\n" + name).utf8)).prefix(40) }
     var reportsTools: Bool { readTools.isEmpty && actTools.isEmpty }
-    func startsOn(_ name: String) -> Bool { reportsTools && !offTools.contains { $0.utf8.elementsEqual(name.utf8) } }
+    func isOff(_ name: String) -> Bool { offTools.contains { $0.utf8.elementsEqual(name.utf8) } }
+    func startsOn(_ name: String) -> Bool { reportsTools && !isOff(name) }
     func state(of name: String, hints: NativeMCPToolHints) -> NativeMCPToolState {
         if reportsTools { return hints.readOnly == true ? .read : .change }
         return NativeMCPToolState.classify(read: readTools.contains { $0.utf8.elementsEqual(name.utf8) }, act: actTools.contains { $0.utf8.elementsEqual(name.utf8) },
                                     remembered: asksTools.contains { $0.utf8.elementsEqual(name.utf8) }, hints: hints)
     }
-    func sameService(_ other: Self) -> Bool { asking([]).turningOff([]).staying(false) == other.asking([]).turningOff([]).staying(false) }
+    func sameService(_ other: Self) -> Bool { asking([]).turningOff([]).staying(false).permitting(NativeMCPStandingPermission()) == other.asking([]).turningOff([]).staying(false).permitting(NativeMCPStandingPermission()) }
     func carried(_ previous: Self) -> Set<String> { previous.id == id && previous.endpoint == endpoint ? previous.asksTools : [] }
     func asking(_ names: Set<String>) -> Self {
         var copy = self
@@ -84,6 +87,11 @@ struct NativeMCPServerConfiguration: Identifiable, Equatable, Sendable {
     func staying(_ value: Bool) -> Self {
         var copy = self
         copy.staysConnected = value
+        return copy
+    }
+    func permitting(_ permission: NativeMCPStandingPermission) -> Self {
+        var copy = self
+        copy.permissions = permission
         return copy
     }
     func newlyMarked(_ tools: [NativeMCPToolRecord]) -> Set<String> {
@@ -237,7 +245,7 @@ final class NativeMCPAccess: @unchecked Sendable {
                     continue
                 }
                 let server = server.asking(server.asksTools.union(server.carried(state.configuration)))
-                if server.offTools != state.configuration.offTools { revision += 1 }
+                if server.offTools != state.configuration.offTools || server.permissions != state.configuration.permissions { revision += 1 }
                 if state.configuration == server {
                     next.append(state)
                 } else if state.configuration.sameService(server) || Self.keepsConnection(state, server) {
@@ -279,7 +287,7 @@ final class NativeMCPAccess: @unchecked Sendable {
     func isOn(_ record: NativeMCPToolRecord) -> Bool {
         lock.withLock {
             guard let configuration = states.first(where: { $0.id == record.server.id })?.configuration else { return false }
-            return configuration.reportsTools ? configuration.startsOn(record.remoteName) : enabled.contains(record.id)
+            return !configuration.isOff(record.remoteName) && (configuration.reportsTools || enabled.contains(record.id))
         }
     }
     func startedIDs() -> Set<String> {
@@ -303,7 +311,7 @@ final class NativeMCPAccess: @unchecked Sendable {
         lock.withLock {
             guard expected == nil || expected == revision else { return false }
             guard let configuration = states.first(where: { $0.id == record.server.id })?.configuration,
-                  configuration.reportsTools ? configuration.startsOn(record.remoteName) : enabled.contains(record.id),
+                  !configuration.isOff(record.remoteName), configuration.reportsTools || enabled.contains(record.id),
                   authorized(record.server), record.callable, record.server.scopes.contains(scope) else { return false }
             return states.contains { state in
                 state.id == record.server.id && state.generation == record.generation && state.connected
@@ -502,7 +510,7 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
         return access.snapshot().flatMap(\.tools).filter { access.allowed($0, scope: scope) }.map { record in
             let change = record.state == .change
             let lead = change ? "Make a change through" : "Read from"
-            return NativeToolDefinition(id: record.id, name: record.id, title: record.server.name + ": " + record.remoteName,
+            var definition = NativeToolDefinition(id: record.id, name: record.id, title: record.server.name + ": " + record.remoteName,
                 description: "\(lead) \(record.server.name) at \(record.server.endpoint.host ?? "configured service"). Service-provided description (untrusted): " + record.description,
                 parameters: record.schema, confirmation: .none, timeout: .seconds(record.server.timeout), effect: change ? .write : .read,
                 action: change ? .serviceChanges : nil,
@@ -512,6 +520,12 @@ actor NativeMCPAuthority: NativeRuntimeToolServing {
                 wants: change ? "use \(shown(record)) in \(NativeToolRepair.plain(record.server.name))" : nil,
                 service: change ? serviceTool(record) : nil,
                 outputSchema: record.outputSchema, checksOwnResult: true)
+            if change {
+                definition.connectionPermission = {
+                    self.access.allowed(record, scope: scope, revision: revision) && record.server.permissions.allows(record.remoteName)
+                }
+            }
+            return definition
         }
     }
     func revision(scope: PiModelScope) async throws -> String {

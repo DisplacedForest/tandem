@@ -46,7 +46,8 @@ extension ChatStore {
             capabilities: capabilityProfile, tools: activeTools, contracts: contracts,
             unavailableNotes: (NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : [])
                 + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : [])
-                + systemAccessNotes(registry, enabledIDs: enabledToolIDs),
+                + systemAccessNotes(registry, enabledIDs: enabledToolIDs)
+                        + NativeFolderTools.accessNotes(enabledIDs: enabledNativeToolIDs, grants: turnGrants),
             assistantProfile: dotContext(for: conversationID, requestText: "")))
         let companionInstruction = companionProfileInstruction(conversationID: conversationID)
         let grantNote = NativeFolderTools.turnGrantNote(enabledIDs: enabledToolIDs, grants: turnGrants)

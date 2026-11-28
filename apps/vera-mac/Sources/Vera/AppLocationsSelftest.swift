@@ -22,6 +22,12 @@ enum AppLocationsSelftest {
         try checkSettledOnce(scratch.appendingPathComponent("settled", isDirectory: true))
         try checkAssistantRoot(scratch.appendingPathComponent("assistant", isDirectory: true))
         try checkLaunchPlan()
+        let migrated = AppLocations.migratedPreferences(current: ["sidebarCollapsed": false],
+                                                        previous: ["sidebarCollapsed": true, "savedChoice": "keep"])
+        try NativeTaskFixture.require(migrated?["sidebarCollapsed"] as? Bool == false
+            && migrated?["savedChoice"] as? String == "keep", "Identity migration keeps preferences and preserves new choices")
+        try NativeTaskFixture.require(AppLocations.migratedPreferences(current: migrated ?? [:],
+            previous: ["removedChoice": "stale"]) == nil, "Identity migration runs once without restoring removed choices")
     }
 
     static func checkLetterCase(_ root: URL) throws {

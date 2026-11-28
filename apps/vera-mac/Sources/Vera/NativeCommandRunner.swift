@@ -31,7 +31,13 @@ enum NativeCommandRunner {
         for name in inheritedVariables {
             if let value = source[name], !value.isEmpty, !value.contains("\0") { scrubbed[name] = value }
         }
-        scrubbed["PATH"] = searchPath
+        let home = scrubbed["HOME"]
+        if let home, home.hasPrefix("/"), !home.contains(":"), !home.contains("\n"), !home.contains("\r") {
+            let local = URL(fileURLWithPath: home, isDirectory: true).appendingPathComponent(".local/bin", isDirectory: true).path
+            scrubbed["PATH"] = searchPath + ":" + local
+        } else {
+            scrubbed["PATH"] = searchPath
+        }
         if scrubbed["LANG"] == nil { scrubbed["LANG"] = "en_US.UTF-8" }
         if scrubbed["TERM"] == nil { scrubbed["TERM"] = "dumb" }
         return scrubbed

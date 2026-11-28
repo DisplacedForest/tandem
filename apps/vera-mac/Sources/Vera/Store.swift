@@ -464,6 +464,7 @@ final class ChatStore: ObservableObject {
         return NativeToolRegistry(
             definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared)
                 + NativeWebTools.definitions(searchBase: { NativeWebSearch.resolvedBase() })
+                + NativeWeatherTools.definitions()
                 + NativeImageTools.definitions(base: imageBase, attachments: attachments)
                 + NativeCapabilityTools.definitions(declarations, base: base))
     }
@@ -2406,6 +2407,7 @@ final class ChatStore: ObservableObject {
 
     func turnAllowsDispatch(_ turn: NativeConversationTurn, activity: NativeToolActivity) -> Bool {
         guard turnOwned(turn), turn.profile == turnProfile(for: turn.history.last?.routeNote) else { return false }
+        if isVeraThread(turn.conversationID), !NativeCompanionRouting.foregroundIDs.contains(activity.toolID) { return false }
         let (authority, consented) = turnToolAuthority(for: turn)
         var allowed = NativeScheduleTools.turnEnabledIDs(snapshot: turn.enabledToolIDs, consented: consented, authority: authority,
             hasEngine: nativeTaskEngine.base != nil, hasRepository: nativeTaskRepository != nil, hasStore: nativeScheduleStore != nil)
@@ -2462,7 +2464,8 @@ final class ChatStore: ObservableObject {
     func turnToolRegistry(for turn: NativeConversationTurn, typed: NativeTypedWords, grantsAvailable: Bool,
                           includeTasks: Bool, prepareTasks: Bool) -> (registry: NativeToolRegistry, profileTool: NativeToolDefinition?) {
         let id = turn.conversationID
-        let sharedDefinitions = nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
+        let companion = isVeraThread(id)
+        let sharedDefinitions = companion ? [] : nativeToolRegistry.definitions + (turn.mode == .continuous ? [] : (nativeMCP?.authority.definitions(scope: "focused") ?? []))
         var turnRegistry = NativeToolRegistry(definitions: sharedDefinitions)
         if let service = nativeTaskService, nativeTaskEngine.base != nil, includeTasks {
             let origin = NativeTaskOrigin(conversationID: id,
@@ -2487,7 +2490,7 @@ final class ChatStore: ObservableObject {
         let said = typed.said
         let uses = turnInstructionUses(for: turn)
         let resolver = ruleResolver(for: id, requestText: said, typed: typed)
-        if grantsAvailable && folderConsented {
+        if !companion && grantsAvailable && folderConsented {
             let rules = nativeRuleSource
             let records = nativeRuleRecordStore
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + folderToolDefinitions(
@@ -2501,7 +2504,7 @@ final class ChatStore: ObservableObject {
                 },
                 alwaysAvailable: true))
         }
-        if grantsAvailable && commandsConsented {
+        if !companion && grantsAvailable && commandsConsented {
             turnRegistry = NativeToolRegistry(definitions: turnRegistry.definitions + commandToolDefinitions(
                 for: turn, decision: resolver.decision(for: .commands),
                 record: { [weak self] run in
@@ -2553,6 +2556,7 @@ final class ChatStore: ObservableObject {
             enabledToolIDs.remove(NativeCommandTools.toolID)
         }
         if profileTool && supportsTools { enabledToolIDs.insert(NativeCompanionProfileTools.toolID) }
+        if isVeraThread(turn.conversationID) { enabledToolIDs.formIntersection(NativeCompanionRouting.foregroundIDs) }
         return enabledToolIDs
     }
 
@@ -2769,7 +2773,8 @@ final class ChatStore: ObservableObject {
                     contracts: contracts,
                     unavailableNotes: (NativeImageTools.resolvedBase() == nil ? [NativeImageTools.unavailableNote] : [])
                         + (NativeWebSearch.resolvedBase() == nil ? [NativeWebSearch.unavailableNote] : [])
-                        + accessNotes,
+                        + accessNotes
+                        + NativeFolderTools.accessNotes(enabledIDs: enabledNativeToolIDs, grants: turnGrants),
                     assistantProfile: turnDotContext(turn)))
                 turnMessages = companionRequestMessages(turnMessages, turn: turn)
                 let otherWorkRule = NativeSystemPrompt.otherWorkRule(talking: talk != nil)

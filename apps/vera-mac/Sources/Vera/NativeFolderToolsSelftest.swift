@@ -335,6 +335,11 @@ extension SelfTest {
         let capped2 = NativeFileChange(path: "/tmp/big", kind: .created, after: String(repeating: "x", count: NativeFileChange.contentCap + 10))
         try require(capped2.truncated && capped2.after == nil && capped2.before == nil, "Oversized content is marked too large instead of diffing a prefix")
         try require(NativeFolderTools.grantNote([grant])?.contains(grant.path) == true && NativeFolderTools.grantNote([]) == nil, "The prompt note lists granted paths")
+        let missingAccess = NativeFolderTools.accessNotes(enabledIDs: [], grants: [])
+        try require(missingAccess.count == 3 && missingAccess.joined().contains("Work in a folder")
+                    && missingAccess.joined().contains("Commands in shared folders"), "Missing access names the actual setup controls")
+        try require(NativeFolderTools.accessNotes(enabledIDs: [NativeFolderTools.toolID, NativeCommandTools.toolID], grants: [grant]).isEmpty,
+                    "An enabled shared folder adds no misleading unavailable note")
         print("  native folder tools OK (grants, identity, bookmarks, path guard, symlink refusal, swapped root, list, bounded reads, binary, search caps, write, edit, CRLF, permissions, long names, move, mkdir, ledger, advertisement, scripted loop, revocation, persistence, diff)")
     }
 }

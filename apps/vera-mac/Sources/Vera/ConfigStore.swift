@@ -226,6 +226,7 @@ final class ConfigStore: ObservableObject {
         if row["url"] as? String != rows[index]["url"] as? String || row["authentication"] as? String != rows[index]["authentication"] as? String {
             row.removeValue(forKey: "stays_connected")
         }
+        if row["url"] as? String != rows[index]["url"] as? String { row.removeValue(forKey: "permissions") }
         rows[index] = row
         try commitNativeMCPServers(rows, pruning: before.subtracting(after))
     }

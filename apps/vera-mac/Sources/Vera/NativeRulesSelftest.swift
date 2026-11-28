@@ -167,7 +167,10 @@ extension SelfTest {
         setenv("VERA_RULES_SELFTEST_SECRET", "hunter2", 1)
         defer { unsetenv("VERA_RULES_SELFTEST_SECRET") }
         let environment = NativeCommandRunner.environment()
-        try require(environment["VERA_RULES_SELFTEST_SECRET"] == nil && environment["PATH"] == NativeCommandRunner.searchPath && environment["HOME"] == ProcessInfo.processInfo.environment["HOME"], "The child environment is an allowlist with a fixed PATH")
+        try require(environment["VERA_RULES_SELFTEST_SECRET"] == nil && environment["PATH"]?.hasPrefix(NativeCommandRunner.searchPath + ":") == true && environment["HOME"] == ProcessInfo.processInfo.environment["HOME"], "The child environment is an allowlist with system tools and the user local bin")
+        try require(NativeCommandRunner.environment(from: ["HOME": "/fixture/home"])["PATH"] == NativeCommandRunner.searchPath + ":/fixture/home/.local/bin"
+                    && NativeCommandRunner.environment(from: ["HOME": "/fixture:injected"])["PATH"] == NativeCommandRunner.searchPath,
+                    "User-installed CLIs are discoverable without accepting injected PATH entries")
         let envRun = try await NativeCommandRunner.run(command: "env; pwd", directory: directory, timeout: .seconds(10))
         try require(envRun.exitCode == 0 && !envRun.stdout.contains("hunter2") && envRun.stdout.contains("PATH=" + NativeCommandRunner.searchPath)
                     && envRun.stdout.hasSuffix(root + "\n"), "A secret in the app's environment never reaches the child, and the grant is the working directory")

@@ -32,6 +32,20 @@ enum NativeFolderTools {
         return (object["path"] ?? object["from"]) as? String
     }
 
+    static func accessNotes(enabledIDs: Set<String>, grants: [FolderGrant]) -> [String] {
+        var notes: [String] = []
+        if !enabledIDs.contains(toolID) {
+            notes.append("Tandem can read and edit local files. Files in shared folders is currently off in Settings, Tools. Ask the person to enable Files in shared folders and share the relevant folder when their request needs local files.")
+        }
+        if !enabledIDs.contains(NativeCommandTools.toolID) {
+            notes.append("Tandem can run local shell commands. Commands in shared folders is currently off in Settings, Tools. Ask the person to enable Commands in shared folders and share a working folder when their request needs a local command.")
+        }
+        if grants.isEmpty {
+            notes.append("No folder is shared with this chat. Local files and commands need a shared folder. Ask the person to use Work in a folder in the chat's attachment menu, or share a folder with its project. Do not claim Tandem lacks filesystem or shell capabilities, and do not substitute a web search for inspecting an installed local program.")
+        }
+        return notes
+    }
+
     static func turnGrantNote(enabledIDs: Set<String>, grants: [FolderGrant]) -> String? {
         enabledIDs.contains(toolID) || enabledIDs.contains(NativeCommandTools.toolID) ? grantNote(grants) : nil
     }

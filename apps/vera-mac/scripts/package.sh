@@ -7,7 +7,7 @@ cd "$APP_ROOT"
 NAME="Tandem"
 DISPLAY_NAME="Tandem"
 BUNDLE_NAME="Tandem"
-BUNDLE_ID="app.vera.mac"
+BUNDLE_ID="app.tandem.mac"
 LOGO="Sources/Vera/Resources/vera-icon.png"
 BUILD_DIR="build"
 
@@ -79,6 +79,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>NSLocationWhenInUseUsageDescription</key><string>Tandem uses your location when you ask for local weather.</string>
+  <key>NSLocationUsageDescription</key><string>Tandem uses your location when you ask for local weather.</string>
   <key>NSRemindersFullAccessUsageDescription</key><string>Tandem reads and writes your Reminders lists.</string>
 </dict>
 </plist>

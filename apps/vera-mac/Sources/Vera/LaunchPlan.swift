@@ -11,6 +11,7 @@ enum LaunchPlan {
     static let documentArtifactMode = "--document-artifact-selftest"
     static let shotMode = "--shot"
     static let selftestMode = "--selftest"
+    static let weatherLiveMode = "--weather-live-check"
     static let toolEvalLiveMode = "--tool-eval-live"
     static let namedModes = ["--openrouter-smoke", "--provider-smoke-selftest", "--mcp-selftest", "--domain-state-selftest", "--domain-extraction-selftest", "--shared-runtime-memory-selftest", "--memory-gate-selftest", "--tool-eval-selftest", toolEvalLiveMode, "--companion-live", "--memory-gate-live", "--memory-evidence-selftest", "--companion-introduction-selftest", "--rule-records-selftest", "--preferences-selftest", "--preferences-live", selftestMode, "--dump-context"]
 
@@ -25,6 +26,10 @@ enum LaunchPlan {
     static var isShotRun: Bool { drawsBuiltInSiteIcon(current) }
 
     static func mode(_ arguments: [String], isolatedModes piModes: Set<String>) -> Mode {
+        if arguments.contains(weatherLiveMode) {
+            guard arguments.first == weatherLiveMode, (try? NativeWeatherLiveCheck.place(Array(arguments.dropFirst()))) != nil else { return .refused(weatherLiveMode) }
+            return .run(weatherLiveMode)
+        }
         switch SelectedCredentialAuthorization.dispatch(arguments) {
         case .authorize, .reject:
             return .run(credentialMode)

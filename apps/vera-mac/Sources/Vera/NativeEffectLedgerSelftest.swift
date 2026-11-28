@@ -419,7 +419,7 @@ extension SelfTest {
         var governedTool = demanding
         governedTool.governed = true
         try require(!governedTool.demandsConfirmation && !undeclared.demandsConfirmation, "Only an ungoverned tool with a fixed required flag demands confirmation")
-        try require(NativeCompanionWorker.excludedToolIDs.contains(NativeRemindersTools.toolID) && effects["apple_reminders_create"] != nil, "Background work is never offered the reminder tools")
+        try require(!NativeCompanionWorker.allowsTool(NativeRemindersTools.toolID, unattended: true, typedRequest: "Add a reminder") && !NativeCompanionWorker.allowsTool(NativeRemindersTools.toolID, unattended: false, typedRequest: "") && NativeCompanionWorker.allowsTool(NativeRemindersTools.toolID, unattended: false, typedRequest: "Add a reminder") && effects["apple_reminders_create"] != nil, "Unattended work is never offered the reminder tools")
         let heldWhy = NativeRuleWhy(kind: .held, action: .payments, handsOff: true, item: .payments)
         let heldText = NativeCompanionWorker.handOffText(title: "Pay the invoice", why: heldWhy)
         try require(heldText.contains(NativeFloorItem.payments.title) && heldText.contains("Advanced") && heldText.hasSuffix(RefusalCopy.plain(heldWhy)),

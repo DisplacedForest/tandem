@@ -116,7 +116,7 @@ final class UpdateChecker: ObservableObject {
             try AppUpdateArchive.extract(zip, to: expanded)
             let staged = expanded.appendingPathComponent("Tandem.app")
             let installed = Bundle.main.bundleURL
-            let identifier = Bundle.main.bundleIdentifier ?? "app.vera.mac"
+            let identifier = Bundle.main.bundleIdentifier ?? "app.tandem.mac"
             let version = release.version
             let receipt = try await Task.detached {
                 try SafeAppReplacement.replace(source: staged, target: installed,

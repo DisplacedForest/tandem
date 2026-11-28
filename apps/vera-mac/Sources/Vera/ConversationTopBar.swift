@@ -8,8 +8,8 @@ enum ConversationTopBarMetrics {
     static let height: CGFloat = SidebarRoundButtonStyle.size
     static let iconSize: CGFloat = 18
     static let gap: CGFloat = 8
-    static let transcriptTop: CGFloat = CompanionProfileMetrics.transcriptTop
-    static let clearance: CGFloat = top + height + 10
+    static let transcriptTop: CGFloat = 16
+    static let clearance: CGFloat = 16
 }
 
 enum ConversationTopBarAction: Hashable, Sendable {
@@ -166,27 +166,6 @@ enum ConversationTopBarModel {
     }
 }
 
-struct TopBarPillStyle: ButtonStyle {
-    var selected = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        PillBody(configuration: configuration, selected: selected)
-    }
-
-    private struct PillBody: View {
-        let configuration: Configuration
-        let selected: Bool
-        @State private var hovering = false
-
-        var body: some View {
-            configuration.label
-                .background(Capsule().fill(CompanionTileStyle.fill(selected: selected, hovering: hovering, pressed: configuration.isPressed)))
-                .contentShape(Capsule())
-                .onHover { hovering = $0 }
-        }
-    }
-}
-
 struct ConversationTopBar: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
@@ -225,24 +204,17 @@ struct ConversationTopBar: View {
 
     var body: some View {
         HStack(spacing: ConversationTopBarMetrics.gap) {
-            Color.clear.frame(width: max(ConversationTopBarMetrics.height, leadingClearance - ConversationTopBarMetrics.edge),
+            Color.clear.frame(width: max(0, leadingClearance - ConversationTopBarMetrics.edge),
                               height: ConversationTopBarMetrics.height)
-            Spacer(minLength: 0)
             pill
             Spacer(minLength: 0)
             slot { moreButton }
         }
         .padding(.horizontal, ConversationTopBarMetrics.edge)
         .padding(.top, ConversationTopBarMetrics.top)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(alignment: .top) {
-            LinearGradient(stops: [.init(color: Theme.conversationBackground, location: 0),
-                                   .init(color: Theme.conversationBackground.opacity(0.85), location: 0.55),
-                                   .init(color: Theme.conversationBackground.opacity(0), location: 1)],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: ConversationTopBarMetrics.fade)
-                .allowsHitTesting(false)
-        }
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.conversationBackground)
         .opacity(messageActions?.open == nil ? 1 : 0)
         .alert("Rename chat", isPresented: $renaming, presenting: renameTarget) { target in
             TextField("Title", text: $renameText)
@@ -276,11 +248,11 @@ struct ConversationTopBar: View {
         if companion {
             let title = ConversationTopBarModel.pillTitle(name: mention, profileOpen: profileOpen)
             if renderSafe {
-                companionPillLabel.background(Capsule().fill(CompanionTileStyle.fill(selected: profileOpen, hovering: false, pressed: false)))
+                companionPillLabel
                     .accessibilityLabel(title)
             } else {
                 Button(action: toggleProfile) { companionPillLabel }
-                    .buttonStyle(TopBarPillStyle(selected: profileOpen))
+                    .buttonStyle(.plain)
                     .help(title).accessibilityLabel(title)
             }
         } else if let chatTitle {
@@ -288,9 +260,7 @@ struct ConversationTopBar: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.warmTextPrimary)
                 .lineLimit(1).truncationMode(.tail)
-                .padding(.horizontal, 14)
                 .frame(height: ConversationTopBarMetrics.height)
-                .background(Capsule().fill(CompanionTileStyle.fill(selected: false, hovering: false, pressed: false)))
                 .help(chatTitle)
                 .accessibilityAddTraits(.isHeader)
         }
@@ -304,9 +274,9 @@ struct ConversationTopBar: View {
                 .foregroundStyle(Theme.warmTextPrimary)
                 .lineLimit(1).truncationMode(.tail)
         }
-        .padding(.leading, 6).padding(.trailing, 14)
+        .padding(.trailing, 8)
         .frame(height: ConversationTopBarMetrics.height)
-        .contentShape(Capsule())
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder private var moreButton: some View {

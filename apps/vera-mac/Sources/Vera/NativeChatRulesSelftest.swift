@@ -346,7 +346,7 @@ extension SelfTest {
         let completeHanded = await run(ruled(complete, reminderHandOff), completeArguments, confirmed: true)
         try require(createHanded == handedOff(.reminders) && completeHanded == handedOff(.reminders)
                     && reminders.createCalls == 1 && reminders.completeCalls == 1, "Handed off reminders are refused and nothing is written")
-        try require(NativeCompanionWorker.excludedToolIDs.contains(NativeRemindersTools.toolID), "Background work never gets the reminder tools")
+        try require(!NativeCompanionWorker.allowsTool(NativeRemindersTools.toolID, unattended: true, typedRequest: "Add a reminder") && !NativeCompanionWorker.allowsTool(NativeRemindersTools.toolID, unattended: false, typedRequest: "") && NativeCompanionWorker.allowsTool(NativeRemindersTools.toolID, unattended: false, typedRequest: "Add a reminder"), "Reminder tools require an explicit manual request")
         let always = NativeToolDefinition(id: "fixture-always", name: "always_ask", title: "Publish the newsletter", description: "",
                                           parameters: .object(["type": .string("object")]), confirmation: .required, effect: .write,
                                           action: .networkSends, isAvailable: { true }, execute: { _ in .null })

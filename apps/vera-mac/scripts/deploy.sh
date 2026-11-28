@@ -32,17 +32,23 @@ if [ -d /Applications/Vera.app ]; then
   mv /Applications/Vera.app "$(dirname "$RECEIPT")/Vera.app"
   printf '%s\n' '    moved the previous Vera.app beside the rollback receipt'
 fi
-app_running() { osascript -e 'application id "app.vera.mac" is running' 2>/dev/null; }
-if [ "$(app_running)" = true ]; then
-  osascript -e 'tell application id "app.vera.mac" to quit' >/dev/null 2>&1 || true
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [ "$(app_running)" = true ] || break
-    sleep 1
-  done
-  if [ "$(app_running)" != false ]; then
-    printf '%s\n' '    installed, but the running app did not quit; quit it and open /Applications/Tandem.app' >&2
-    exit 1
+RELAUNCH=0
+for APP_ID in app.tandem.mac app.vera.mac; do
+  app_running() { osascript -e "application id \"$APP_ID\" is running" 2>/dev/null; }
+  if [ "$(app_running)" = true ]; then
+    RELAUNCH=1
+    osascript -e "tell application id \"$APP_ID\" to quit" >/dev/null 2>&1 || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      [ "$(app_running)" = true ] || break
+      sleep 1
+    done
+    if [ "$(app_running)" != false ]; then
+      printf '%s\n' '    installed, but the running app did not quit; quit it and open /Applications/Tandem.app' >&2
+      exit 1
+    fi
   fi
+done
+if [ "$RELAUNCH" = 1 ]; then
   open /Applications/Tandem.app
   printf '%s\n' '    relaunched Tandem from /Applications/Tandem.app'
 fi

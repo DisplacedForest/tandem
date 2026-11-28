@@ -387,7 +387,7 @@ enum NativeChatToolCatalog {
                 available: true,
                 setup: "Enable this tool to allow research and documents."),
             NativeImageTools.descriptor(configured: imageConfigured),
-        ]
+        ] + NativeWeatherTools.descriptor()
     }
 
     static func exposed(enabledIDs: Set<String>) -> [NativeChatToolDescriptor] {

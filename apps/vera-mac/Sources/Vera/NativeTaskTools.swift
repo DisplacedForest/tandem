@@ -12,7 +12,7 @@ enum NativeTaskTools {
     static let acknowledged = "Saved. Reply with one short first-person sentence saying what you'll do, then end your turn."
 
     static let generalWorkerType = "general"
-    static let generalDescription = " In this conversation you may also use worker_type general for anything the person wants done that takes more than a reply, such as work across several steps or tools: the objective says what to do, at whatever length it needs, and deliverables are not needed. Make one call per separate thing asked, at the start of your reply, never for something you can simply answer."
+    static let generalDescription = "Starts work while you keep the conversation available. Use worker_type general for every lookup or action the person requests, including a single service call, a quick web search, reading a file or changing a device. Use research for a multi-source cited report and document for a written piece to save. Answer directly only when no lookup or action is needed. Include the specific request, relevant prior facts and confirmed results in objective; this work cannot see the conversation. If a previous state is unknown, ask it to verify rather than guess. Make one call per separate request at the start of your reply. A successful result means the work was saved and started, not completed. After it starts, give one short natural acknowledgment and end your turn. Results arrive automatically. Never expose internal identifiers, tool names or execution details. If it did not start, say so plainly."
     static let laterRound = "This can only be started from what the person asked, at the start of a reply."
     static let notStarted = "Nothing was started. Ask again in a moment."
     static let pausedReply = "I'm paused, so this wasn't started. Resume me and ask again."
@@ -35,7 +35,7 @@ enum NativeTaskTools {
                            didSave: @escaping @Sendable (NativeTaskReference) async -> Void) -> NativeToolDefinition {
         let kinds: [NativeJSONValue] = [.string("research"), .string("document")] + (general == nil ? [] : [.string(generalWorkerType)])
         var built = NativeToolDefinition(id: toolID, name: toolName, title: "Start work",
-            description: description + (general == nil ? "" : generalDescription),
+            description: general == nil ? description : generalDescription,
             parameters: .object([
                 "type": .string("object"), "additionalProperties": .bool(false),
                 "required": .array([.string("worker_type"), .string("objective")]),

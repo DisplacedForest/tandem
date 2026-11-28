@@ -74,14 +74,17 @@ struct ShotView: View {
                                      initialSearch: integrationsSeed?.search ?? "")
                 case .vera, .chat:
                     if emptyChat, companionPanel == nil, section != .vera {
-                        emptyChatShot.overlay { ConversationTopBar() }
+                        VStack(spacing: 0) { ConversationTopBar(); emptyChatShot }
                     } else {
                         HStack(alignment: .top, spacing: 0) {
                             if let companionPanel {
                                 CompanionProfileLayout(state: .constant(shotProfileState), fixed: companionPanel,
                                                        selectedID: companionSelection) { conversationColumn }
                             } else {
-                                conversationColumn.overlay { ConversationTopBar(conversation: emptyChat ? nil : store.selected) }
+                                VStack(spacing: 0) {
+                                    ConversationTopBar(conversation: emptyChat ? nil : store.selected)
+                                    conversationColumn
+                                }
                             }
                             if workColumn {
                                 OngoingWorkPanel(conversationID: store.selectedID, onSelect: { _ in })

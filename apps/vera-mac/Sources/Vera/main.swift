@@ -28,7 +28,9 @@ if case .refused(let flag) = launchMode {
     FileHandle.standardError.write(Data((LaunchPlan.refusal(flag) + "\n").utf8))
     exit(2)
 }
-if arguments.dropFirst().first == "--document-artifact-selftest" {
+if launchMode == .run(LaunchPlan.weatherLiveMode) {
+    NativeWeatherLiveCheck.main(Array(arguments.dropFirst(2)))
+} else if arguments.dropFirst().first == "--document-artifact-selftest" {
     if arguments.contains("--shot") {
         do {
             try NativeApplicationEntry.prepare { await NativeDocumentArtifactSelftest.run(Array(arguments.dropFirst(2))) }

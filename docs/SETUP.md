@@ -258,7 +258,7 @@ One caveat while this is the whole of it: the header is trusted. The roster sepa
 
 **From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Tandem.app.zip` from the [latest release](https://github.com/DisplacedForest/tandem/releases/latest), unzip, and drag `Tandem.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch: right-click → **Open** once, and it runs normally from then on. The app checks Releases. An update must pass signature validation and match the installed app's designated signing requirement before an atomic replacement retains the previous bundle for rollback. Different ad-hoc builds normally fail that identity check. See [app replacement and recovery](../apps/vera-mac/scripts/app-replacement/README.md) for receipt inspection and rollback.
 
-Releases before the bundle was renamed shipped `Vera.app.zip`, and an app installed from one of them cannot download the renamed asset. Upgrade from those once by hand: download `Tandem.app.zip`, drag `Tandem.app` to Applications and remove `Vera.app`. Saved keys, settings and conversations carry over because the bundle identifier is unchanged. Builds installed from `deploy.sh` migrate on the next deploy.
+Releases before the bundle was renamed shipped `Vera.app.zip`, and an app installed from one of them cannot download the renamed asset. Upgrade from those once by hand: download `Tandem.app.zip`, drag `Tandem.app` to Applications and remove `Vera.app`. The current bundle identifier is `app.tandem.mac`. Existing settings and conversations retain their storage locations. Builds installed from `deploy.sh` migrate the previous app identity while verifying its signing identity and retaining a rollback copy. macOS may ask you to authorize existing keychain credentials or grant app permissions again after the identity changes.
 
 **From source** (Swift toolchain):
 
@@ -744,3 +744,15 @@ Packaged Mac builds include the pinned DSH runtime and Node executable. No globa
 The runtime uses the model profile selected in Tandem. General delegated generations default to 65,536 output tokens, reduced to half the context window for smaller models, unless the profile specifies an output allowance. The endpoint must support the configured context and output sizes. Reasoning settings are passed through without adding a separate thinking-token limit. Credentials and tool execution stay in the app. Missing or damaged runtime files stop the work with a recoverable installation error.
 
 For the host protocol, plugin composition and current text-only boundary, see [DSH integration](../services/dsh-runtime/README.md).
+
+### Local files and commands
+
+Use **Work in a folder** in the message box to share a working folder with a chat. This enables file and command tools for that chat. Project folders also apply to chats in that project. Their individual switches remain in Settings, Tools. Command lookup includes system tools, Homebrew and the account's `.local/bin`; other executables can be addressed by their full path. macOS may still ask for access to protected folders.
+
+The current date and time come from the Mac system clock with each message. A connected service is not needed for ordinary local time questions.
+
+### Apple Weather signing
+
+Built-in weather uses WeatherKit and appears only in a signed app with its matching provisioning profile. In Apple Developer, enable WeatherKit under both Capabilities and App Services for `app.tandem.mac`, then generate a Developer ID provisioning profile with the app's signing certificate. Set `VERA_WEATHER_PROFILE` to that local profile when packaging, or set `weather_profile` in the local signing configuration. The profile stays outside the repository. Packaging validates its identifier, team, certificate, expiration and WeatherKit entitlement.
+
+People using the app need no developer account. A named place needs no location permission; current-location weather asks through macOS when first needed. If location is declined, use a named place.

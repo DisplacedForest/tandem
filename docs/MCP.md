@@ -4,7 +4,7 @@ Tandem uses the official Swift MCP client for explicitly configured remote tools
 
 No server is configured by default. A service with no stored tool list uses every tool the service reports, and the service's own labels decide which are reads. A service with a list offers only what's on it. Before configuring a service, review its maintained implementation, destination, read semantics, authentication requirements and compatibility.
 
-A declaration with neither `read_tools` nor `act_tools` takes every tool the service reports, with the service's own name and description. A tool the service marks read-only is a read and runs without asking. Anything else is a change. All of them are on once the service connects, including tools it adds later, and you can turn any of them off, which is kept in `off_tools`. Here the service's word decides what is a read, so connect only services you trust.
+A declaration with neither `read_tools` nor `act_tools` takes every tool the service reports, with the service's own name and description. A tool the service marks read-only is a read and runs without asking. Anything else is a change. They start enabled unless you turn them off during setup or in Manage. Tools added later start enabled too, and disabled choices are kept in `off_tools`. Here the service's word decides what is a read, so connect only services you trust.
 
 In a declaration with either list, a tool stays off until you approve it, either as a read or as a change. Reads are listed in `read_tools` and run without asking. Changes are listed in `act_tools` and follow the Make changes through connected services rule in Settings, Rules, which asks first by default. A tool named in both lists counts as a change. A saved Always allow or Never for a change covers that whole tool. With a list, what a service says about its own tools can only make Tandem more careful: an approved read that the service marks as not read-only, or as destructive without also marking it read-only, starts asking first like a change, and nothing it says turns a tool on or makes a change a read. In a chat, these changes are not yet listed in a history of what changed.
 
@@ -68,7 +68,7 @@ Discovery lists every tool the service offers, as it describes them. A tool with
 
 The persistent workspace offers only reads, never changes. A task whose MCP authorization became stale after disconnect or a permission change stays refused on retry. Start a new explicitly approved task after reconnecting.
 
-A change runs only as the Make changes through connected services rule allows, with the same cards and refusals as other changes, and is never sent twice on its own. Always allowing a tool everywhere is saved only after a confirm that shows the service's own description of it. Changing a provider or execution path does not authorize a different tool, create a memory store, or replace the Python task authority.
+A change follows its saved setup permission and the Make changes through connected services rule. Explicit Ask and Never restrictions still apply, and a change is never sent twice on its own. From a per-call card, always allowing a tool everywhere is saved only after a confirm that shows the service's own description of it. Changing a provider or execution path does not authorize a different tool, create a memory store, or replace the Python task authority.
 
 ## The list in Public
 
@@ -102,7 +102,7 @@ An entry looks like this:
 
 An entry that breaks these rules is skipped with a reason and can't be installed.
 
-Installing checks the address, then connects once to ask the server what it offers. Nothing is saved at that point. The sheet shows every tool with the server's own name and description. A tool the server marks as read-only is a read, and anything else is a write. Install connects all of them: reads run, and writes follow the Make changes through connected services rule.
+Installing checks the address, then connects once to ask the server what it offers. Nothing is saved at that point. The sheet shows every tool with the server's own name and description. A tool the server marks as read-only is a read, and anything else is a write. Before installing, choose which tools are available and whether to allow selected tools or the whole service without asking. Reads run when enabled; writes use those choices while preserving explicit saved restrictions.
 
 Entries are remote HTTP servers only. Listing a publisher is not a verification of the service. The list does not supply OAuth client details, so an OAuth entry still needs the publisher's preregistered public client in its configuration as described above.
 
@@ -111,3 +111,11 @@ A row written from the list may carry two optional keys, `publisher` and `source
 Local stdio servers, a remote registry fetch, plugin packages and publisher verification are not part of this.
 
 Run `mise run native-mcp-test` for schema, shared-authority and synthetic HTTP SDK tests, and `mise run check` for the repository regressions. The HTTP fixture binds only to loopback and makes no paid model calls. Synthetic test results do not establish live-service compatibility. See [SDK evaluation](MCP_SDK.md) for the exact dependency pin and transport boundaries.
+
+## Permissions chosen at setup
+
+The install review and Manage let you turn individual tools off and choose which changes may run without asking. A selected-tool permission covers that tool only. Allow this service without asking covers every enabled tool from that service, including tools it adds later and tools that dispatch other service actions. Disabled tools stay unavailable. The same choices apply to focused chat and work you delegate to the companion.
+
+These choices are saved against the service and its address. Existing connections keep their current policy until you edit them. Changing the address removes setup permissions, while renaming the service or replacing its token keeps them. Disconnecting immediately makes the service unavailable; reconnecting to the same address restores its saved choices. Removing the service removes those choices. Turn off the standing choice in Manage to require approval again.
+
+Saved Ask and Never rules, conversation restrictions and the existing read-only boundary for scheduled or self-started work still apply. A tool or service description cannot create a permission.

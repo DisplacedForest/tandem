@@ -256,6 +256,7 @@ enum NativeContextAssembler {
         var lines = [
             sessionHeading,
             "Current date and time: \(formatter.string(from: input.timestamp)) (\(input.timeZone.identifier)).",
+            "This is the Mac system clock for this message. Use it directly for the current local time or date; no service lookup is needed.",
         ]
         if input.companionThread {
             if let name = input.assistantName?.trimmingCharacters(in: .whitespaces), !name.isEmpty {

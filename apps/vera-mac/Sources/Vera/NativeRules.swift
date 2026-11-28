@@ -925,6 +925,7 @@ struct NativeRuleResolver: Sendable {
     var typed: NativeTypedWords = .none
     var asked: NativeInstructionClaim?
     var uses: NativeInstructionUses?
+    var connectionPermission = false
 
     init(global: NativeRules, conversation: NativeConversationRules, requestText: String, revision: Int = 0,
          records: [NativeRuleRecord] = [], context: NativeRuleContext? = nil, now: Date = Date()) {
@@ -958,7 +959,9 @@ struct NativeRuleResolver: Sendable {
     private func baseDecision(for action: NativeActionClass) -> NativeRuleDecision {
         switch choice(for: action) {
         case .act: return .act(.rule)
-        case .ask: return .ask
+        case .ask:
+            if action == .serviceChanges, connectionPermission, conversation.choices[action] == nil { return .act(.grant) }
+            return .ask
         case .handOff: return .handOff
         }
     }
