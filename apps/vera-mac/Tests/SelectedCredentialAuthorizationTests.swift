@@ -80,7 +80,7 @@ struct SelectedCredentialAuthorizationTests {
             passed += 1
         }
         var requirement: SecRequirement?
-        let text = "identifier \"app.vera.mac\" and certificate leaf = H\"\(request.certificate)\" and cdhash H\"\(request.codeHash)\""
+        let text = "identifier \"app.tandem.mac\" and certificate leaf = H\"\(request.certificate)\" and cdhash H\"\(request.codeHash)\""
         try require(SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess && requirement != nil)
         passed += 1
         print("PASS: \(passed) selected-credential authorization fixtures; no actual credential operations")

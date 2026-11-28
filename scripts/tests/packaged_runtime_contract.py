@@ -38,7 +38,7 @@ def main() -> None:
     metadata = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     assert metadata['CFBundleExecutable'] == 'Tandem'
     assert metadata['CFBundleDisplayName'] == 'Tandem'
-    assert metadata['CFBundleIdentifier'] == 'app.vera.mac'
+    assert metadata['CFBundleIdentifier'] == 'app.tandem.mac'
     assert (app / 'Contents/Resources' / (metadata['CFBundleIconFile'] + '.icns')).is_file()
     assert (app / 'Contents/Resources/Vera_Vera.bundle').is_dir()
     assert binary.is_file() and os.access(binary, os.X_OK)

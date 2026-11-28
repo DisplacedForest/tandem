@@ -52,7 +52,7 @@ do {
                 }
             }
         }
-        let identifier = args.count > 6 ? args[6] : "app.vera.mac"
+        let identifier = args.count > 6 ? args[6] : "app.tandem.mac"
         let receipt = try SafeAppReplacement.replace(source: URL(fileURLWithPath: args[1]),
             target: URL(fileURLWithPath: args[2]), version: args[3], identifier: identifier,
             allowFirstInstall: args[4] == "first", hooks: hooks)

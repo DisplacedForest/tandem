@@ -2,6 +2,7 @@ import Foundation
 
 enum NativeWeatherSelftest {
     static func run() async throws {
+        try await NativeWeatherLiveCheckSelftest.run()
         func require(_ value: Bool, _ message: String) throws {
             guard value else { throw NativeToolError.failed(message) }
         }

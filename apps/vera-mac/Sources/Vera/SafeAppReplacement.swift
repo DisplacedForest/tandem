@@ -29,6 +29,7 @@ struct AppFileIdentity: Codable, Equatable {
 struct AppReplacementReceipt: Codable {
     let target: URL
     let identifier: String
+    let previousIdentifier: String?
     let staged: AppFileIdentity
     let previous: AppFileIdentity?
     let stagedManifest: String
@@ -62,7 +63,7 @@ struct SafeAppReplacement {
     private static let transactionPrefix = ".Vera-replacement-"
 
     static func replace(source: URL, target requestedTarget: URL, version: String,
-                        identifier: String = "app.vera.mac", allowFirstInstall: Bool = false,
+                        identifier: String = "app.tandem.mac", allowFirstInstall: Bool = false,
                         expectedTarget: AppFileIdentity? = nil, expectedTargetManifest: String? = nil,
                         expectedSourceManifest: String? = nil, hooks: Hooks = Hooks()) throws -> URL {
         let fm = FileManager.default
@@ -84,7 +85,13 @@ struct SafeAppReplacement {
         guard previous != nil || allowFirstInstall else { throw AppReplacementError("The installed app is missing") }
         if let expectedTarget, expectedTarget != previous { throw AppReplacementError("The installed app has changed") }
         let reference = previous == nil ? nil : target
-        if let reference { _ = try validateBundle(reference, identifier: identifier) }
+        let previousIdentifier = try reference.map { try bundleIdentifier($0) }
+        if let reference, let previousIdentifier {
+            guard previousIdentifier == identifier || isIdentityMigration(from: previousIdentifier, to: identifier) else {
+                throw AppReplacementError("The installed app identity does not match")
+            }
+            _ = try validateBundle(reference, identifier: previousIdentifier)
+        }
         let previousManifest = try reference.map { try manifest($0) }
         if let expectedTargetManifest, expectedTargetManifest != previousManifest {
             throw AppReplacementError("The installed app contents have changed")
@@ -107,7 +114,7 @@ struct SafeAppReplacement {
         if let expectedSourceManifest, expectedSourceManifest != stagedManifest {
             throw AppReplacementError("The rollback app contents have changed")
         }
-        let receipt = AppReplacementReceipt(target: target, identifier: identifier, staged: staged, previous: previous,
+        let receipt = AppReplacementReceipt(target: target, identifier: identifier, previousIdentifier: previousIdentifier, staged: staged, previous: previous,
                                             stagedManifest: stagedManifest, previousManifest: previousManifest)
         try JSONEncoder().encode(receipt).write(to: receiptURL, options: .atomic)
         try hooks.checkpoint("prepared")
@@ -164,9 +171,10 @@ struct SafeAppReplacement {
             throw AppReplacementError("This receipt does not describe the current installation")
         }
         let previous = receiptURL.deletingLastPathComponent().appendingPathComponent(receipt.target.lastPathComponent)
-        let version = try validateBundle(previous, identifier: receipt.identifier)
+        let identifier = receipt.previousIdentifier ?? receipt.identifier
+        let version = try validateBundle(previous, identifier: identifier)
         return try replace(source: previous, target: receipt.target, version: version,
-                           identifier: receipt.identifier, expectedTarget: receipt.staged,
+                           identifier: identifier, expectedTarget: receipt.staged,
                            expectedTargetManifest: receipt.stagedManifest, expectedSourceManifest: receipt.previousManifest,
                            hooks: hooks)
     }
@@ -242,6 +250,19 @@ struct SafeAppReplacement {
         return foundVersion
     }
 
+    private static func bundleIdentifier(_ app: URL) throws -> String {
+        let data = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+        guard let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let identifier = plist["CFBundleIdentifier"] as? String else {
+            throw AppReplacementError("The app identifier is missing")
+        }
+        return identifier
+    }
+
+    private static func isIdentityMigration(from previous: String, to candidate: String) -> Bool {
+        Set([previous, candidate]) == Set(["app.vera.mac", "app.tandem.mac"])
+    }
+
     static func copyBundle(_ source: URL, _ destination: URL) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
@@ -269,6 +290,26 @@ struct SafeAppReplacement {
             let result = SecCodeCopyDesignatedRequirement(installed, [], &requirement)
             guard result == errSecSuccess, requirement != nil else {
                 throw AppReplacementError("Cannot establish installed signing identity: \(result)")
+            }
+            let previousID = try bundleIdentifier(reference)
+            let candidateID = try bundleIdentifier(candidate)
+            if previousID != candidateID {
+                guard isIdentityMigration(from: previousID, to: candidateID), let original = requirement else {
+                    throw AppReplacementError("The app identity migration is not supported")
+                }
+                var description: CFString?
+                guard SecRequirementCopyString(original, [], &description) == errSecSuccess, let description else {
+                    throw AppReplacementError("Cannot read the installed signing requirement")
+                }
+                let text = description as String
+                let oldIdentifier = "identifier \"\(previousID)\""
+                guard text.components(separatedBy: oldIdentifier).count == 2 else {
+                    throw AppReplacementError("Cannot preserve the installed signing requirement")
+                }
+                let migrated = text.replacingOccurrences(of: oldIdentifier, with: "identifier \"\(candidateID)\"")
+                guard SecRequirementCreateWithString(migrated as CFString, [], &requirement) == errSecSuccess else {
+                    throw AppReplacementError("Cannot establish the migrated signing requirement")
+                }
             }
         }
         let result = SecStaticCodeCheckValidity(try code(candidate), flags, requirement)

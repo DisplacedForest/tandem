@@ -13,17 +13,13 @@ final class NativeWeatherService {
         let place: String
         let timeZone: TimeZone
         if let named = request.place {
-            guard let query = MKGeocodingRequest(addressString: named),
-                  let match = try await query.mapItems.first else {
-                throw NativeWeatherFailure.placeNotFound
-            }
-            coordinate = match.location
+            let match = try await NativeWeatherGeocoding.named(named)
+            coordinate = CLLocation(latitude: match.latitude, longitude: match.longitude)
             place = match.name ?? named
             timeZone = match.timeZone ?? .current
         } else {
             coordinate = try await location.current()
-            let query = MKReverseGeocodingRequest(location: coordinate)
-            let match = try? await query?.mapItems.first
+            let match = try? await NativeWeatherGeocoding.nearby(latitude: coordinate.coordinate.latitude, longitude: coordinate.coordinate.longitude)
             place = match?.name ?? "Current location"
             timeZone = match?.timeZone ?? .current
         }
@@ -56,7 +52,32 @@ final class NativeWeatherService {
         )
     }
 
+}
 
+struct NativeWeatherPlace: Sendable {
+    let latitude: Double
+    let longitude: Double
+    let name: String?
+    let timeZone: TimeZone?
+}
+
+enum NativeWeatherGeocoding {
+    nonisolated static func named(_ place: String) async throws -> NativeWeatherPlace {
+        guard let query = MKGeocodingRequest(addressString: place),
+              let match = try await query.mapItems.first else { throw NativeWeatherFailure.placeNotFound }
+        return value(match)
+    }
+
+    nonisolated static func nearby(latitude: Double, longitude: Double) async throws -> NativeWeatherPlace? {
+        guard let query = MKReverseGeocodingRequest(location: CLLocation(latitude: latitude, longitude: longitude)),
+              let match = try await query.mapItems.first else { return nil }
+        return value(match)
+    }
+
+    nonisolated private static func value(_ item: MKMapItem) -> NativeWeatherPlace {
+        NativeWeatherPlace(latitude: item.location.coordinate.latitude, longitude: item.location.coordinate.longitude,
+            name: item.name, timeZone: item.timeZone)
+    }
 }
 
 struct NativeWeatherUnits {

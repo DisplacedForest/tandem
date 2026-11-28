@@ -51,7 +51,7 @@ class ReplacementTests(unittest.TestCase):
         self.bundle(self.target, "1.0.0", "old")
         self.bundle(self.source, "2.0.0", "new")
 
-    def bundle(self, path: Path, version: str, text: str, identifier: str = "app.vera.mac", executable_name: str = "Tandem") -> None:
+    def bundle(self, path: Path, version: str, text: str, identifier: str = "app.tandem.mac", executable_name: str = "Tandem") -> None:
         executable = path / "Contents/MacOS" / executable_name
         executable.parent.mkdir(parents=True)
         executable.write_text(f"#!/bin/sh\nprintf '%s' '{text}'\n")
@@ -104,6 +104,42 @@ class ReplacementTests(unittest.TestCase):
         self.assertEqual(rollback.returncode, 0, rollback.stderr)
         self.assertTrue((self.target / "Contents/MacOS/Vera").is_file())
         self.assertFalse((self.target / "Contents/MacOS/Tandem").exists())
+        self.assertEqual(self.output(), "old")
+
+    def test_legacy_identifier_upgrade_and_rollback(self) -> None:
+        import json
+        metadata = self.target / "Contents/Info.plist"
+        values = plistlib.loads(metadata.read_bytes())
+        values["CFBundleIdentifier"] = "app.vera.mac"
+        metadata.write_bytes(plistlib.dumps(values))
+        result = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = Path(result.stdout.strip())
+        self.assertEqual(json.loads(receipt.read_text())["previousIdentifier"], "app.vera.mac")
+        self.assertEqual(plistlib.loads(metadata.read_bytes())["CFBundleIdentifier"], "app.tandem.mac")
+        rollback = subprocess.run([str(self.runner), "rollback-mock", str(receipt)], capture_output=True, text=True)
+        self.assertEqual(rollback.returncode, 0, rollback.stderr)
+        self.assertEqual(plistlib.loads(metadata.read_bytes())["CFBundleIdentifier"], "app.vera.mac")
+        self.assertEqual(self.output(), "old")
+
+    def test_unrelated_installed_identity_is_preserved(self) -> None:
+        metadata = self.target / "Contents/Info.plist"
+        values = plistlib.loads(metadata.read_bytes())
+        values["CFBundleIdentifier"] = "unrelated.app"
+        metadata.write_bytes(plistlib.dumps(values))
+        self.assertNotEqual(self.run_fixture().returncode, 0)
+        self.assertEqual(self.output(), "old")
+
+    def test_old_receipt_without_previous_identifier_can_roll_back(self) -> None:
+        import json
+        result = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = Path(result.stdout.strip())
+        values = json.loads(receipt.read_text())
+        values.pop("previousIdentifier", None)
+        receipt.write_text(json.dumps(values))
+        rollback = subprocess.run([str(self.runner), "rollback-mock", str(receipt)], capture_output=True, text=True)
+        self.assertEqual(rollback.returncode, 0, rollback.stderr)
         self.assertEqual(self.output(), "old")
 
     def test_copy_signature_and_swap_failures_preserve_old_app(self) -> None:

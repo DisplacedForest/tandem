@@ -296,7 +296,20 @@ struct AppLocations: Equatable, Sendable {
 
     static var standardPreferences: UserDefaults {
         if isHeadless { stop("This test run keeps its own preferences in memory, but it was about to use the app's real preferences.") }
-        return .standard
+        let defaults = UserDefaults.standard
+        if Bundle.main.bundleIdentifier == "app.tandem.mac",
+           let migrated = migratedPreferences(current: defaults.persistentDomain(forName: "app.tandem.mac") ?? [:],
+                                              previous: defaults.persistentDomain(forName: "app.vera.mac") ?? [:]) {
+            defaults.setPersistentDomain(migrated, forName: "app.tandem.mac")
+        }
+        return defaults
+    }
+
+    static func migratedPreferences(current: [String: Any], previous: [String: Any]) -> [String: Any]? {
+        guard current["tandemIdentityMigrated"] as? Bool != true else { return nil }
+        var migrated = previous.merging(current) { _, new in new }
+        migrated["tandemIdentityMigrated"] = true
+        return migrated
     }
 
     static let runPreferences = MemoryPreferences()

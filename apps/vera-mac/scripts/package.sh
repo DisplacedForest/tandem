@@ -7,7 +7,7 @@ cd "$APP_ROOT"
 NAME="Tandem"
 DISPLAY_NAME="Tandem"
 BUNDLE_NAME="Tandem"
-BUNDLE_ID="app.vera.mac"
+BUNDLE_ID="app.tandem.mac"
 LOGO="Sources/Vera/Resources/vera-icon.png"
 BUILD_DIR="build"
 
