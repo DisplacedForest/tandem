@@ -4,6 +4,7 @@ import PackageDescription
 let package = Package(
     name: "Vera",
     platforms: [.macOS(.v26)],
+    products: [.executable(name: "Tandem", targets: ["Vera"])],
     dependencies: [
         .package(url: "https://github.com/apple/swift-log.git", exact: "1.16.1"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1"),

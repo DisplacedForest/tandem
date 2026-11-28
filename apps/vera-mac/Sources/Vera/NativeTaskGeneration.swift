@@ -112,7 +112,11 @@ struct NativeTaskGenerationBudget: Equatable, Sendable {
     }
 
     static func forWorker(_ workerType: String, binding: NativeTaskAdmissionBinding? = nil) -> NativeTaskGenerationBudget {
-        if workerType == "companion" { return dot }
+        if workerType == "companion" {
+            guard let context = binding?.contextTokens, context > 0 else { return dot }
+            return NativeTaskGenerationBudget(maximumMessages: nil,
+                maximumBytes: max(dot.maximumBytes, min(4 * 1024 * 1024, min(context, 1048576) * 4)), allowsTools: true)
+        }
         let policy = NativeResourcePolicy(binding)
         guard !policy.legacy else { return standard }
         return NativeTaskGenerationBudget(maximumMessages: standard.maximumMessages,
@@ -121,6 +125,7 @@ struct NativeTaskGenerationBudget: Equatable, Sendable {
 }
 
 struct NativeTaskGenerationCompletion: Codable, Equatable, Sendable {
+    static let maximumBytes = 4 * 1024 * 1024
     let content: String
     let toolCalls: [NativeTaskGenerationToolCall]
     let finishReason: String
@@ -145,7 +150,7 @@ struct NativeTaskGenerationCompletion: Codable, Equatable, Sendable {
               Set(ids).count == ids.count,
               toolCalls.allSatisfy({ NativeTaskGenerationJob.validCall($0) }),
               !toolCalls.isEmpty || !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              content.utf8.count <= 262144 else {
+              content.utf8.count <= NativeTaskGenerationCompletion.maximumBytes else {
             throw NativeTaskGenerationFailure(code: "provider_response")
         }
         return self
@@ -255,11 +260,11 @@ struct NativeTaskGenerationJob: Codable, Equatable, Sendable {
     }
 
     static func decode(_ data: Data) throws -> NativeTaskGenerationJob {
-        try NativeTaskJSON.validate(data)
+        try NativeTaskJSON.validate(data, maximumBytes: 8_000_000)
         let expected: Set<String> = ["id", "task_id", "binding_id", "enrollment_digest", "admission_base",
             "phase", "attempt", "messages", "messages_digest", "deadline_seconds", "generation"]
         let messageKeys: Set<String> = ["role", "content", "tool_calls", "tool_call_id"]
-        guard data.count <= 1048576,
+        guard data.count <= 8_000_000,
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys).subtracting(["tools", "tool_choice"]) == expected,
               let messages = object["messages"] as? [[String: Any]],

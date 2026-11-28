@@ -46,8 +46,8 @@ extension NativeTaskClient {
         let (data, status) = try await request(
             "POST", reference.engine.base.appendingPathComponent("tasks/\(id)/decision"), body, 5)
         guard status == 200 else { throw NativeTaskHTTPError.status(status) }
-        guard data.count <= 1048576 else { throw NativeTaskHTTPError.invalidResponse }
-        try NativeTaskJSON.validate(data)
+        guard data.count <= NativeTaskStore.maximumSnapshotBytes else { throw NativeTaskHTTPError.invalidResponse }
+        try NativeTaskJSON.validate(data, maximumBytes: NativeTaskStore.maximumSnapshotBytes)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let received = object["payload"] as? [String: Any],
               let original = try JSONSerialization.jsonObject(with: reference.body) as? [String: Any],

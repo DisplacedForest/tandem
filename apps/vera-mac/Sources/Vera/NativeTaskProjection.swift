@@ -127,6 +127,8 @@ enum NativeTaskProjection {
             card.status = .failed
             let again = neutral ? "Start the work again" : document ? "Start a new document" : "Start a new research request"
             switch snapshot.checkpoint.failureReason {
+            case "execution_unavailable" where dot: card.milestone = NativeDSHWorker.unavailableMessage
+            case "execution_failed" where dot: card.milestone = NativeDSHWorker.stoppedMessage
             case "input_limit" where dot: card.milestone = "The assignment and its notes are too large. Start the work again with less."
             case "input_limit" where scheduled: card.milestone = "What the schedule asks for is too large. Edit the schedule to ask for less."
             case "input_limit": card.milestone = document ? "The brief, inputs or outline are too large. Start a new document with a shorter brief." : "The research input is too large. Start a smaller research request."
@@ -167,7 +169,7 @@ enum NativeTaskProjection {
         case .completed where dot:
             guard let result = snapshot.result, result.query == reference.request.objective,
                   result.kind == "companion_report",
-                  result.report.unicodeScalars.count <= NativeCompanionWorker.reportScalars,
+                  result.report.utf8.count <= NativeTaskStore.maximumResultBytes,
                   (result.summary ?? "").unicodeScalars.count <= 2000,
                   (result.title ?? "").unicodeScalars.count <= 200,
                   [nil, NativeCompanionShape.answer, NativeCompanionShape.document].contains(result.shape) else {

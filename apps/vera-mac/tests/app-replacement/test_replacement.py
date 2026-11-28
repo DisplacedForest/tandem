@@ -46,19 +46,19 @@ class ReplacementTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="vera-replacement-fixture-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.target = self.root / "User's Vera.app"
-        self.source = self.root / "New Vera.app"
+        self.target = self.root / "User's Tandem.app"
+        self.source = self.root / "New Tandem.app"
         self.bundle(self.target, "1.0.0", "old")
         self.bundle(self.source, "2.0.0", "new")
 
-    def bundle(self, path: Path, version: str, text: str, identifier: str = "app.vera.mac") -> None:
-        executable = path / "Contents/MacOS/Vera"
+    def bundle(self, path: Path, version: str, text: str, identifier: str = "app.vera.mac", executable_name: str = "Tandem") -> None:
+        executable = path / "Contents/MacOS" / executable_name
         executable.parent.mkdir(parents=True)
         executable.write_text(f"#!/bin/sh\nprintf '%s' '{text}'\n")
         executable.chmod(0o755)
         (path / "Contents/Info.plist").write_bytes(plistlib.dumps({
             "CFBundleIdentifier": identifier, "CFBundlePackageType": "APPL",
-            "CFBundleShortVersionString": version, "CFBundleExecutable": "Vera",
+            "CFBundleShortVersionString": version, "CFBundleExecutable": executable_name,
         }))
 
     def run_fixture(self, mode: str = "mock", first: bool = False) -> subprocess.CompletedProcess[str]:
@@ -66,7 +66,9 @@ class ReplacementTests(unittest.TestCase):
                                "2.0.0", "first" if first else "update"], capture_output=True, text=True)
 
     def output(self, bundle: Path | None = None) -> str:
-        return subprocess.check_output([str((bundle or self.target) / "Contents/MacOS/Vera")], text=True)
+        app = bundle or self.target
+        executable_name = plistlib.loads((app / "Contents/Info.plist").read_bytes())["CFBundleExecutable"]
+        return subprocess.check_output([str(app / "Contents/MacOS" / executable_name)], text=True)
 
     def receipt_state(self, receipt: Path) -> str:
         return subprocess.check_output([str(self.runner), "inspect", str(receipt)], text=True).strip()
@@ -74,7 +76,7 @@ class ReplacementTests(unittest.TestCase):
     def test_atomic_swap_retains_executable_rollback_and_xattrs(self) -> None:
         set_xattr(self.target, "org.vera.test", b"old")
         set_xattr(self.source, "org.vera.test", b"new")
-        set_xattr(self.source / "Contents/MacOS/Vera", "org.vera.test", b"resource")
+        set_xattr(self.source / "Contents/MacOS/Tandem", "org.vera.test", b"resource")
         result = self.run_fixture()
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = Path(result.stdout.strip())
@@ -83,8 +85,26 @@ class ReplacementTests(unittest.TestCase):
         self.assertEqual(self.output(previous), "old")
         self.assertEqual(get_xattr(self.target, "org.vera.test"), b"new")
         self.assertEqual(get_xattr(previous, "org.vera.test"), b"old")
-        self.assertEqual(get_xattr(self.target / "Contents/MacOS/Vera", "org.vera.test"), b"resource")
+        self.assertEqual(get_xattr(self.target / "Contents/MacOS/Tandem", "org.vera.test"), b"resource")
         self.assertEqual(self.receipt_state(receipt), "installed")
+
+    def test_legacy_executable_upgrade_and_rollback(self) -> None:
+        shutil.rmtree(self.target)
+        self.bundle(self.target, "1.0.0", "old", executable_name="Vera")
+        result = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = Path(result.stdout.strip())
+        previous = receipt.parent / self.target.name
+        self.assertTrue((self.target / "Contents/MacOS/Tandem").is_file())
+        self.assertFalse((self.target / "Contents/MacOS/Vera").exists())
+        self.assertTrue((previous / "Contents/MacOS/Vera").is_file())
+        self.assertEqual(self.output(), "new")
+        self.assertEqual(self.output(previous), "old")
+        rollback = subprocess.run([str(self.runner), "rollback-mock", str(receipt)], capture_output=True, text=True)
+        self.assertEqual(rollback.returncode, 0, rollback.stderr)
+        self.assertTrue((self.target / "Contents/MacOS/Vera").is_file())
+        self.assertFalse((self.target / "Contents/MacOS/Tandem").exists())
+        self.assertEqual(self.output(), "old")
 
     def test_copy_signature_and_swap_failures_preserve_old_app(self) -> None:
         for mode in ("copy-failure", "reject-signature", "fail-copied", "fail-prepared", "swap-failure"):
@@ -97,7 +117,7 @@ class ReplacementTests(unittest.TestCase):
                 self.assertEqual(list(self.root.glob(".Vera-replacement-*")), [])
 
     def test_missing_executable_rejected_before_copy(self) -> None:
-        (self.source / "Contents/MacOS/Vera").unlink()
+        (self.source / "Contents/MacOS/Tandem").unlink()
         result = self.run_fixture()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.output(), "old")
@@ -301,13 +321,13 @@ class ReplacementTests(unittest.TestCase):
         result = self.run_fixture()
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = Path(result.stdout.strip())
-        executable = self.target / "Contents/MacOS/Vera"
+        executable = self.target / "Contents/MacOS/Tandem"
         original = executable.read_bytes()
         executable.write_text("different code")
         self.assertEqual(self.receipt_state(receipt), "changed")
         executable.write_bytes(original)
         self.assertEqual(self.receipt_state(receipt), "installed")
-        (receipt.parent / self.target.name / "Contents/MacOS/Vera").write_text("different prior code")
+        (receipt.parent / self.target.name / "Contents/MacOS/Tandem").write_text("different prior code")
         self.assertEqual(self.receipt_state(receipt), "changed")
         rollback = subprocess.run([str(self.runner), "rollback", str(receipt)], capture_output=True, text=True)
         self.assertNotEqual(rollback.returncode, 0)

@@ -286,6 +286,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         migrator.registerMigration(NativeInstructionUseStore.migration) { db in try NativeInstructionUseStore.migrate(db) }
         migrator.registerMigration(NativeTaskStore.pauseMigration) { db in try NativeTaskStore.migratePause(db) }
         migrator.registerMigration(Self.generationDetailMigration) { db in try Self.migrateGenerationDetail(db) }
+        migrator.registerMigration("dshSnapshotsV45") { db in try NativeDSHStateStore.migrate(db) }
         return migrator
     }
 

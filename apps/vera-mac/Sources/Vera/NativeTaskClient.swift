@@ -56,8 +56,9 @@ struct NativeTaskClient: Sendable {
             let (bytes, response) = try await session.bytes(for: request)
             guard let response = response as? HTTPURLResponse else { throw NativeTaskHTTPError.invalidResponse }
             var data = Data()
+            let maximumBytes = url.path.hasSuffix("/native/ready") ? 8_000_000 : NativeTaskStore.maximumSnapshotBytes
             for try await byte in bytes {
-                guard data.count < 1048576 else { throw NativeTaskHTTPError.invalidResponse }
+                guard data.count < maximumBytes else { throw NativeTaskHTTPError.invalidResponse }
                 data.append(byte)
             }
             return (data, response.statusCode)
@@ -77,8 +78,8 @@ struct NativeTaskClient: Sendable {
         let (data, status) = try await request(
             "POST", reference.engine.base.appendingPathComponent("tasks"), reference.body, 5)
         guard (200..<300).contains(status) else { throw NativeTaskHTTPError.status(status) }
-        try NativeTaskJSON.validate(data)
-        guard data.count <= 1048576,
+        try NativeTaskJSON.validate(data, maximumBytes: NativeTaskStore.maximumSnapshotBytes)
+        guard data.count <= NativeTaskStore.maximumSnapshotBytes,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let receivedPayload = object["payload"] as? [String: Any],
               let original = try? JSONSerialization.jsonObject(with: reference.body) as? [String: Any],
@@ -94,7 +95,7 @@ struct NativeTaskClient: Sendable {
         guard let id = reference.remoteTaskID, UUID(uuidString: id) != nil else { throw NativeTaskHTTPError.invalidResponse }
         let (data, status) = try await request("GET", reference.engine.base.appendingPathComponent("tasks/\(id)"), nil, 5)
         guard status == 200 else { throw NativeTaskHTTPError.status(status) }
-        try NativeTaskJSON.validate(data)
+        try NativeTaskJSON.validate(data, maximumBytes: NativeTaskStore.maximumSnapshotBytes)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let received = object["payload"] as? [String: Any],
               let original = try JSONSerialization.jsonObject(with: reference.body) as? [String: Any],
@@ -125,8 +126,8 @@ struct NativeTaskClient: Sendable {
             "POST", reference.engine.base.appendingPathComponent("tasks").appendingPathComponent(id)
                 .appendingPathComponent(verb), Data("{}".utf8), 5)
         guard (200..<300).contains(status) else { throw NativeTaskHTTPError.status(status) }
-        try NativeTaskJSON.validate(data)
-        guard data.count <= 1048576,
+        try NativeTaskJSON.validate(data, maximumBytes: NativeTaskStore.maximumSnapshotBytes)
+        guard data.count <= NativeTaskStore.maximumSnapshotBytes,
               let snapshot = try? JSONDecoder().decode(NativeTaskSnapshot.self, from: data),
               snapshot.id == id, snapshot.workerType == reference.createRequest.workerType else {
             throw NativeTaskHTTPError.invalidResponse

@@ -58,7 +58,7 @@ extension LocalChatRepository: NativeTaskGenerationRepository {
         let allowedFailures = Set<String>(["provider_unavailable", "provider_auth", "provider_quota",
             "provider_response", "canceled", "request_timeout", "profile_changed", "credential_unavailable"])
             .union(NativeTaskWorkerFailures.replyCodes)
-        guard (response == nil) != (failure == nil), response.map({ $0.utf8.count <= 262144 }) ?? true,
+        guard (response == nil) != (failure == nil), response.map({ $0.utf8.count <= NativeTaskGenerationCompletion.maximumBytes }) ?? true,
               failure.map({ allowedFailures.contains($0) }) ?? true else { throw NativeTaskHTTPError.invalidResponse }
         let storedDetail = failure == nil ? nil : detail?.stored()
         try database.write { db in

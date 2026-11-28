@@ -203,7 +203,7 @@ actor NativeTaskGenerationBroker {
                     guard !Task.isCancelled else { throw CancellationError() }
                     let stored = try result.stored(for: job)
                     guard started.duration(to: .now) < .seconds(job.deadlineSeconds),
-                          stored.utf8.count <= 262144 else {
+                          stored.utf8.count <= NativeTaskGenerationCompletion.maximumBytes else {
                         throw NativeTaskGenerationFailure(code: "request_timeout")
                     }
                     try repository.finishTaskGeneration(referenceID: reference.id, job: job, response: stored, failure: nil)

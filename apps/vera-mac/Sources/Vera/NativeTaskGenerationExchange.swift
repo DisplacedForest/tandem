@@ -85,7 +85,7 @@ actor NativeTaskGenerationExchange {
         if let failure = body.failure, !Self.failures.contains(failure) {
             throw NativeTaskLocalStatus(code: 422, detail: "Unknown generation failure")
         }
-        if let response = body.response, response.utf8.count > 262144 {
+        if let response = body.response, response.utf8.count > NativeTaskGenerationCompletion.maximumBytes {
             throw NativeTaskLocalStatus(code: 422, detail: "Generation output exceeds its limit")
         }
         if let calls = body.toolCalls {

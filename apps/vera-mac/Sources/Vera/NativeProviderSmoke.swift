@@ -334,7 +334,7 @@ enum NativeProviderSmoke {
                     reads += 1
                     if readStatus == errSecSuccess { result?.pointee = Data("synthetic-diagnostic-never-output".utf8) as CFData }
                     return readStatus
-                })
+                }, refreshLabel: { _ in errSecSuccess })
                 let report = credentialReport(profileID: "synthetic-profile", operations: operations)
                 let attempted = scenario != "suppression-failed"
                 try require(interaction && reads == (attempted ? 1 : 0), "Diagnostic changed the credential boundary")

@@ -49,7 +49,7 @@ run = "python3 -m unittest discover -s scripts/tests -p 'test_openrouter_smoke.p
 [tasks.native-provider-test]
 dir = "apps/vera-mac"
 depends = ["mac-build"]
-run = ".build/debug/Vera --provider-smoke-selftest"
+run = ".build/debug/Tandem --provider-smoke-selftest"
 
 [tasks.native-task-test]
 depends = ["mac-build"]
@@ -61,7 +61,7 @@ run = '"{{config_root}}/scripts/api-python.sh" -m pytest -q tests/test_native_ta
 depends = ["mac-build"]
 dir = "apps/vera-mac"
 env = { VERA_TASK_ENGINE_SELFTEST = "1" }
-run = ".build/debug/Vera --selftest"
+run = ".build/debug/Tandem --selftest"
 
 [tasks.signing-test]
 run = "python3 -m unittest discover -s scripts/tests -p 'test_local_signing.py' -v"
@@ -77,15 +77,15 @@ dir = "prototypes/assistant-ui"
 run = "swift build && .build/debug/VeraPrototype --selftest"
 
 [tasks.check]
-depends = ["lint", "name-ratchet", "name-ratchet-test", "words-ratchet", "words-ratchet-test", "data-folder-check", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "native-memory-gate-test", "native-tool-eval-test", "shared-runtime-memory-test", "domain-state-test", "domain-extraction-test", "native-entry-test", "native-mcp-test", "native-document-test", "native-preferences-test", "native-rule-records-test"]
+depends = ["native-dsh-test", "dsh-test", "lint", "name-ratchet", "name-ratchet-test", "words-ratchet", "words-ratchet-test", "data-folder-check", "test", "mac-build", "assistant-ui-test", "pi-integration-test", "pi-native-transport-test", "pi-native-integration-test", "pi-app-broker-test", "engine-lifecycle-test", "selected-credential-authorization-test", "app-replacement-test", "pi-native-ui-test", "native-memory-evidence-test", "native-memory-gate-test", "native-tool-eval-test", "shared-runtime-memory-test", "domain-state-test", "domain-extraction-test", "native-entry-test", "native-mcp-test", "native-document-test", "native-preferences-test", "native-rule-records-test"]
 
 [tasks.native-preferences-test]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --preferences-selftest"
+run = "apps/vera-mac/.build/debug/Tandem --preferences-selftest"
 
 [tasks.native-rule-records-test]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --rule-records-selftest"
+run = "apps/vera-mac/.build/debug/Tandem --rule-records-selftest"
 
 [tasks.selected-credential-authorization-test]
 run = "bash apps/vera-mac/scripts/test-selected-credential-authorization.sh"
@@ -122,7 +122,7 @@ run = '"{{config_root}}/scripts/api-python.sh" -m pytest -q -p no:cacheprovider 
 [tasks.pi-app-broker-test]
 depends = ["mac-build", "pi-prototype-deps"]
 env = { PYTHONDONTWRITEBYTECODE = "1" }
-run = 'apps/vera-mac/.build/debug/Vera --pi-broker-selftest && "{{config_root}}/scripts/api-python.sh" -m pytest -q -p no:cacheprovider prototypes/pi_assistant/app_tests'
+run = 'apps/vera-mac/.build/debug/Tandem --pi-broker-selftest && "{{config_root}}/scripts/api-python.sh" -m pytest -q -p no:cacheprovider prototypes/pi_assistant/app_tests'
 
 [tasks.engine-lifecycle-test]
 run = "sh apps/vera-mac/scripts/test-engine-lifecycle.sh"
@@ -132,11 +132,11 @@ run = "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s apps/vera-mac/t
 
 [tasks.pi-native-ui-test]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --pi-native-selftest"
+run = "apps/vera-mac/.build/debug/Tandem --pi-native-selftest"
 
 [tasks.native-memory-evidence-test]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --memory-evidence-selftest"
+run = "apps/vera-mac/.build/debug/Tandem --memory-evidence-selftest"
 
 [tasks.native-memory-gate-test]
 depends = ["mac-build"]
@@ -144,7 +144,7 @@ run = "sh apps/vera-mac/scripts/test-native-memory-gate.sh"
 
 [tasks.memory-gate-live]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --memory-gate-live"
+run = "apps/vera-mac/.build/debug/Tandem --memory-gate-live"
 
 [tasks.native-tool-eval-test]
 depends = ["mac-build"]
@@ -152,19 +152,19 @@ run = "sh apps/vera-mac/scripts/test-native-tool-eval.sh"
 
 [tasks.tool-eval-live]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --tool-eval-live"
+run = "apps/vera-mac/.build/debug/Tandem --tool-eval-live"
 
 [tasks.shared-runtime-memory-test]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --shared-runtime-memory-selftest"
+run = "apps/vera-mac/.build/debug/Tandem --shared-runtime-memory-selftest"
 
 [tasks.domain-state-test]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --domain-state-selftest"
+run = "apps/vera-mac/.build/debug/Tandem --domain-state-selftest"
 
 [tasks.domain-extraction-test]
 depends = ["mac-build"]
-run = "apps/vera-mac/.build/debug/Vera --domain-extraction-selftest"
+run = "apps/vera-mac/.build/debug/Tandem --domain-extraction-selftest"
 
 [tasks.native-entry-test]
 run = "sh apps/vera-mac/scripts/test-native-entry.sh"
@@ -178,4 +178,18 @@ run = "sh scripts/test-native-mcp.sh"
 depends = ["mac-build"]
 dir = "services/vera-api"
 env = { VERA_NATIVE_DOCUMENT_TEST = "1", PYTHONDONTWRITEBYTECODE = "1" }
-run = "../../apps/vera-mac/.build/debug/Vera --document-artifact-selftest && python -m pytest -q tests/test_task_document_native.py"
+run = "../../apps/vera-mac/.build/debug/Tandem --document-artifact-selftest && python -m pytest -q tests/test_task_document_native.py"
+
+[tasks.dsh-deps]
+run = "npm ci --ignore-scripts --no-audit --no-fund --prefix services/dsh-runtime"
+
+[tasks.dsh-test]
+depends = ["dsh-deps"]
+dir = "services/dsh-runtime"
+run = "npm test"
+
+[tasks.native-dsh-test]
+depends = ["mac-build", "dsh-deps"]
+dir = "apps/vera-mac"
+env = { TANDEM_DSH_SELFTEST = "1" }
+run = ".build/debug/Tandem --selftest"

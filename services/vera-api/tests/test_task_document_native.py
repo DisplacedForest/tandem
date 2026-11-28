@@ -85,7 +85,7 @@ def test_actual_document_api_result_and_native_consumer(tmp_path, monkeypatch):
     if native:
         assert sys.platform == 'darwin'
         repo = Path(__file__).resolve().parents[3]
-        binary = repo / 'apps/vera-mac/.build/debug/Vera'
+        binary = repo / 'apps/vera-mac/.build/debug/Tandem'
         result = subprocess.run([str(binary), '--document-artifact-selftest', '--snapshot', str(output)], capture_output=True, text=True, timeout=20)
         assert result.returncode == 0, result.stdout + result.stderr
         consumer = json.loads(result.stdout)

@@ -73,9 +73,14 @@ struct NativeCompanionCheckpoint: Codable, Equatable, Sendable {
     var note: NativeTaskNote?
     var finishing: Bool?
     var repairs: NativeToolRepairs?
+    var failureReason: String?
+    var dshAttempt: String?
+    var dshRevision: String?
+    var dsh: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases, note, finishing, repairs
+        case transcript, rounds, calls, attempt, pending, effects, keep, sources, aliases, note, finishing, repairs, dshRevision, dsh, dshAttempt
+        case failureReason = "failure_reason"
         case refused = "instruction_refused"
         case nativeUnavailable = "native_unavailable"
         case threadID = "thread_id"
@@ -632,7 +637,8 @@ enum NativeCompanionWorker {
         var done = checkpoint
         done.pending = nil
         let effects = checkpoint.effects.map { ["title": cut($0.title, scalars: noteScalars), "outcome": $0.outcome] }
-        var room = reportScalars
+        let resultLimit = checkpoint.dsh == true ? NativeTaskStore.maximumResultBytes : NativeTaskStore.maximumJSONBytes
+        var room = checkpoint.dsh == true ? text.unicodeScalars.count + notices.reduce(0) { $0 + $1.unicodeScalars.count + 2 } : reportScalars
         var lean = false
         while true {
             let share = room / (2 * max(1, notices.count))
@@ -651,7 +657,8 @@ enum NativeCompanionWorker {
                 result["stop"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(kept))
             }
             let data = try JSONSerialization.data(withJSONObject: result)
-            if data.count > NativeTaskStore.maximumJSONBytes {
+            if data.count > resultLimit {
+                if checkpoint.dsh == true { throw NativeDSHFailure(code: "report_limit") }
                 if room > NativeResourcePolicy.companionShortestReportScalars {
                     room /= 2
                     continue
@@ -662,7 +669,7 @@ enum NativeCompanionWorker {
                 }
             }
             return NativeTaskStepResult(state: .completed, checkpoint: try done.encoded(),
-                result: try NativeTaskStore.canonical(result), event: "completed")
+                result: try NativeTaskStore.canonical(result, limit: resultLimit), event: "completed")
         }
     }
 }
@@ -727,7 +734,7 @@ struct NativeCompanionResultRoom: Equatable, Sendable {
     var besideBytes = 0
 }
 
-private struct NativeCompanionRun {
+struct NativeCompanionRun {
     let task: NativeTaskRecord
     let dot: NativeCompanionTaskPayload
     let context: NativeCompanionWorkerContext

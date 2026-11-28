@@ -322,7 +322,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes])
         applyAuthorization(to: &request)
         return request
     }

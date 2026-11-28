@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 import tempfile
 
@@ -33,7 +34,14 @@ def main() -> None:
     spec = importlib.util.spec_from_file_location('app_contract', ROOT / 'prototypes/pi_assistant/app_tests/test_app_broker.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    binary = app / 'Contents/MacOS/Vera'
+    binary = app / 'Contents/MacOS/Tandem'
+    metadata = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+    assert metadata['CFBundleExecutable'] == 'Tandem'
+    assert metadata['CFBundleDisplayName'] == 'Tandem'
+    assert metadata['CFBundleIdentifier'] == 'app.vera.mac'
+    assert (app / 'Contents/Resources' / (metadata['CFBundleIconFile'] + '.icns')).is_file()
+    assert (app / 'Contents/Resources/Vera_Vera.bundle').is_dir()
+    assert binary.is_file() and os.access(binary, os.X_OK)
 
     class PackagedApp(module.App):
         def __init__(self, root, repo=None):
@@ -51,6 +59,13 @@ def main() -> None:
 
     module.App = PackagedApp
     checks = []
+    dsh = subprocess.run(prefix + [str(binary), '--selftest'], cwd=output,
+        env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'VERA_NO_UPDATE': '1', 'TANDEM_DSH_SELFTEST': '1'},
+        capture_output=True, text=True, timeout=180)
+    (output / 'dsh-selftest.log').write_text(dsh.stdout + dsh.stderr)
+    if dsh.returncode != 0 or 'DSH SELFTEST OK' not in dsh.stdout:
+        raise AssertionError('Packaged execution checks failed without checkout or global runtime access')
+    checks.append('bundled DSH loop, permissions, pause and crash recovery, full answers, cancellation without checkout, global Node or model access')
     with tempfile.TemporaryDirectory(prefix='workflow-', dir=output) as temporary:
         module.test_actual_app_pi_http_responsiveness_and_restart(Path(temporary))
         checks.append('approval, independent foreground, artifact, one delivery, restart identity, no replay')

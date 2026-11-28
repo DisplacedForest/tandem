@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
-BINARY = REPO / 'apps/vera-mac/.build/debug/Vera'
+BINARY = REPO / 'apps/vera-mac/.build/debug/Tandem'
 
 
 def arguments(root: Path, repo: Path = REPO) -> list[str]:

@@ -125,6 +125,6 @@ def test_corrupt_ledger_refuses_without_crashing_app(tmp_path, column, value):
         app.close()
     with sqlite3.connect(root / 'broker.sqlite') as db:
         db.execute('UPDATE requests SET ' + column + '=?', (value,))
-    process = subprocess.Popen([str(REPO / 'apps/vera-mac/.build/debug/Vera'), '--pi-broker-mock', '--root', str(root), '--repo', str(repo), '--python', sys.executable, '--node', shutil.which('node'), '--port', '0'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen([str(REPO / 'apps/vera-mac/.build/debug/Tandem'), '--pi-broker-mock', '--root', str(root), '--repo', str(repo), '--python', sys.executable, '--node', shutil.which('node'), '--port', '0'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     output, error = process.communicate(timeout=5)
     assert process.returncode == 1 and output == b'' and b'Fatal error' not in error

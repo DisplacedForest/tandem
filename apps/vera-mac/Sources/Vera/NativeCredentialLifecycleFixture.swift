@@ -213,7 +213,7 @@ enum NativeCredentialLifecycleFixture {
             result?.pointee = Data("synthetic-explicit-read".utf8) as CFData
             return errSecSuccess
         }, update: { _, _ in writes += 1; return errSecSuccess },
-           add: { _, _ in writes += 1; return errSecSuccess }, delete: { _ in writes += 1; return errSecSuccess })
+           add: { _, _ in writes += 1; return errSecSuccess }, delete: { _ in writes += 1; return errSecSuccess }, refreshLabel: { _ in errSecSuccess })
         let credentials = KeychainNativeCredentialStore(operations: operations)
         let raw = configuration()
         let config = ConfigStore(credentialStore: credentials, readConfiguration: { raw }, writeConfiguration: { _ in })
@@ -258,6 +258,7 @@ enum NativeCredentialLifecycleFixture {
         var readValue: CFTypeRef = Data("synthetic-read".utf8) as CFData
         var checkedContext = false
         var onlyValueUpdated = false
+        var labelsRefreshed = 0
         let operations = NativeKeychainOperations(authenticationContext: { NativeCredentialFixtureContext() }, read: { query, result in
             calls.append("read")
             let dictionary = query as NSDictionary
@@ -267,12 +268,17 @@ enum NativeCredentialLifecycleFixture {
         }, update: { _, attributes in
             calls.append("update")
             let dictionary = attributes as NSDictionary
-            onlyValueUpdated = dictionary.count == 1 && dictionary[kSecValueData] is Data
+            onlyValueUpdated = dictionary.count == 2 && dictionary[kSecValueData] is Data && dictionary[kSecAttrLabel] as? String == "Tandem model API key"
             return updateStatus
-        }, add: { _, _ in calls.append("add"); return addStatus }, delete: { _ in calls.append("delete"); return deleteStatus })
+        }, add: { _, _ in calls.append("add"); return addStatus }, delete: { _ in calls.append("delete"); return deleteStatus }, refreshLabel: { query in
+            let dictionary = query as NSDictionary
+            if dictionary[kSecAttrAccount] as? String == "fixture-profile" { labelsRefreshed += 1 }
+            return errSecInteractionNotAllowed
+        })
         let store = KeychainNativeCredentialStore(allowsInteraction: false, operations: operations)
         try NativeTaskFixture.require(try store.read(for: "fixture-profile") == "synthetic-read" && checkedContext,
             "Noninteractive reads must retain the existing no-prompt authentication context")
+        try NativeTaskFixture.require(labelsRefreshed == 1, "Display-name repair cannot block an authorized credential read")
         for malformed: CFTypeRef in [Data([0xff]) as CFData, "synthetic-invalid-type" as CFString] {
             readValue = malformed
             do {
@@ -284,10 +290,11 @@ enum NativeCredentialLifecycleFixture {
         try NativeTaskFixture.require(try store.read(for: "fixture-profile") == nil, "Only item-not-found is absence")
         readStatus = errSecAuthFailed
         try expectFailure { _ = try store.read(for: "fixture-profile") }
+        try NativeTaskFixture.require(labelsRefreshed == 1, "Denied and malformed credential reads cannot trigger display-name repair")
         calls = []
         try store.set("synthetic-update", for: "fixture-profile")
         try NativeTaskFixture.require(calls == ["update"] && onlyValueUpdated,
-            "In-place writes must update only value data and preserve item access attributes")
+            "In-place writes update the value and display name while preserving item access attributes")
         calls = []
         updateStatus = errSecItemNotFound
         try store.set("synthetic-new", for: "fixture-profile")

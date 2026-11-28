@@ -17,7 +17,7 @@ from routers.task_runtime import Dispatcher, StepResult
 from routers.task_store import TaskStore
 
 ROOT = Path(__file__).resolve().parents[3]
-BINARY = ROOT / 'apps/vera-mac/.build/debug/Vera'
+BINARY = ROOT / 'apps/vera-mac/.build/debug/Tandem'
 HANG_CEILING = 300
 SERVER_HOLD = 120
 LATE_SLACK = 2

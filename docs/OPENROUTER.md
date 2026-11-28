@@ -62,9 +62,9 @@ Reports contain the exact model, pass/fail checks, durations, and reported costs
 If the OpenRouter key is already saved in Vera, use the native test entry point so the key never needs to be entered again or exported to another process. Build the app, then run from `apps/vera-mac`:
 
 ```sh
-.build/debug/Vera --openrouter-smoke --credential-status
-.build/debug/Vera --openrouter-smoke --access-status
-.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash
+.build/debug/Tandem --openrouter-smoke --credential-status
+.build/debug/Tandem --openrouter-smoke --access-status
+.build/debug/Tandem --openrouter-smoke --model qwen/qwen3.8-flash
 ```
 
 The first command reads only the active saved endpoint and checks the existing Keychain store with interaction disabled. It prints a boolean, never the key. The access-status command validates that credential using the free key-status endpoint and prints only whether authentication succeeded. The model preflight refreshes the public catalog and forecast without reading the key. None of these commands writes configuration or credentials. A missing model selection in the app is acceptable because the test requires its own explicit model ID.
@@ -72,14 +72,14 @@ The first command reads only the active saved endpoint and checks the existing K
 With the model and credit usage authorized, run:
 
 ```sh
-.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash --live --approved-budget-usd 0.01
+.build/debug/Tandem --openrouter-smoke --model qwen/qwen3.8-flash --live --approved-budget-usd 0.01
 ```
 
 This uses the native request builder and response parser with fresh synthetic messages. It does not initialize the app's configuration store, import a persona, load conversations, enable tools, or access project/Home data. The only callable test tool adds the fixed integers. The saved key stays in the native process and is sent only as authentication to the saved, validated OpenRouter HTTPS API root. No environment key fallback or second credential lookup is attempted. Redirects, persistent URL caches, and cookie storage are disabled. Each request has a 45-second resource deadline and a two-megabyte response limit.
 
 If the saved credential cannot be read without user interaction, the command stops without opening a Keychain prompt. A successful credential-availability check is not authentication validation. An HTTP authentication, account-limit, or provider error stops the test without retries or alternate keys. Both harnesses use the same three-request plan and forecast, and both stop between requests when reported cost leaves insufficient budget. The native command reports each usage receipt before checking the final result.
 
-`mise run check` includes the offline native provider self-test. Run it separately with `.build/debug/Vera --provider-smoke-selftest`. Native provider smoke results do not establish API worker integration: the server's `model_client` authentication path is separate.
+`mise run check` includes the offline native provider self-test. Run it separately with `.build/debug/Tandem --provider-smoke-selftest`. Native provider smoke results do not establish API worker integration: the server's `model_client` authentication path is separate.
 
 
 ## Diagnose a routing failure
@@ -89,9 +89,9 @@ A model can advertise `tool_choice` while supporting only some of its modes. The
 The native harness can isolate each surface while retaining the same saved credential and exact model:
 
 ```sh
-.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash --case minimal-text --live --approved-budget-usd 0.01
-.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash --case tools --live --approved-budget-usd 0.01
-.build/debug/Vera --openrouter-smoke --model qwen/qwen3.8-flash --case image --live --approved-budget-usd 0.01
+.build/debug/Tandem --openrouter-smoke --model qwen/qwen3.8-flash --case minimal-text --live --approved-budget-usd 0.01
+.build/debug/Tandem --openrouter-smoke --model qwen/qwen3.8-flash --case tools --live --approved-budget-usd 0.01
+.build/debug/Tandem --openrouter-smoke --model qwen/qwen3.8-flash --case image --live --approved-budget-usd 0.01
 ```
 
 Each invocation requires prior credit authorization. `minimal-text` sends just model, synthetic messages, `stream: false`, and `max_tokens: 256`. It uses provider/account defaults without custom routing or reasoning parameters and never changes those settings. It may spend its output allowance on reasoning if the model defaults to thinking. `tools` performs the validated call and continuation; `image` independently submits the generated PNG. Those cases retain price ceilings, required-parameter routing, disabled provider fallbacks, and disabled reasoning. Omit `--case` for the original three-request combined test. The displayed three-request forecast remains a catalog-based estimate for each smaller case. Minimal text has no per-route price ceiling; the account/key cap remains authoritative.
