@@ -1950,7 +1950,9 @@ enum CompanionWorkAsideFixture {
         try require(busy.tools.allSatisfy { !CompanionTalkTools.names.contains($0.name) }, "An ordinary chat is offered none of the tools")
         try require(busy.tools == plain.tools, "The ordinary chat's tool list is the same as with no companion work")
         let busyPrompt = Talk.system(busy.messages)
-        try require(busyPrompt == Talk.system(plain.messages), "The ordinary chat's system prompt is the same as with no companion work")
+        let withoutClock: (String) -> [String] = { $0.components(separatedBy: "\n").filter { !$0.hasPrefix("Current date and time: ") } }
+        try require(withoutClock(busyPrompt) == withoutClock(Talk.system(plain.messages)),
+                    "The ordinary chat's system prompt is the same as with no companion work, apart from its message clock")
         try require(!busyPrompt.contains(CompanionHoldTools.setAsideName) && !busyPrompt.contains(CompanionHoldCopy.guide)
                     && busyPrompt.contains("Other accepted turns may still be working; this message does not cancel or change them."),
                     "An ordinary chat keeps its fixed sentence and gets no section")
